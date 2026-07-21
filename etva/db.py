@@ -1,4 +1,9 @@
-"""SQLCipher-encrypted SQLite access + schema."""
+"""SQLCipher-encrypted SQLite access + schema.
+
+Identity (users, roles) now lives in the account portal; this schema keeps
+only firm-local data. `client_assignments` and `audit_log` reference portal
+usernames as plain strings.
+"""
 try:
     from sqlcipher3 import dbapi2 as sqlcipher
 except ImportError:  # sqlcipher3-binary exposes the same API
@@ -17,7 +22,7 @@ PERMISSIONS = {
     "reconciliere.editare": "Editare reconcilieri",
     "reconciliere.stergere": "Stergere reconcilieri",
     "rapoarte.export": "Export rapoarte",
-    "useri.gestionare": "Gestionare utilizatori si roluri",
+    "useri.gestionare": "Gestionare utilizatori si alocari",
     "audit.vizualizare": "Vizualizare jurnal de audit",
 }
 
@@ -32,27 +37,14 @@ DEFAULT_ROLES = {
 }
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS users(
-  id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS roles(
-  id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
-CREATE TABLE IF NOT EXISTS permissions(
-  code TEXT PRIMARY KEY, description TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS role_permissions(
-  role_id INTEGER NOT NULL, permission_code TEXT NOT NULL,
-  PRIMARY KEY(role_id, permission_code));
-CREATE TABLE IF NOT EXISTS user_roles(
-  user_id INTEGER NOT NULL, role_id INTEGER NOT NULL,
-  PRIMARY KEY(user_id, role_id));
 CREATE TABLE IF NOT EXISTS clients(
   id INTEGER PRIMARY KEY, cui TEXT UNIQUE NOT NULL, name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS client_assignments(
-  user_id INTEGER NOT NULL, client_id INTEGER NOT NULL,
-  PRIMARY KEY(user_id, client_id));
+  username TEXT NOT NULL, client_id INTEGER NOT NULL,
+  PRIMARY KEY(username, client_id));
 CREATE TABLE IF NOT EXISTS reconciliations(
   id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL, period TEXT NOT NULL,
-  created_at TEXT NOT NULL, created_by INTEGER NOT NULL);
+  created_at TEXT NOT NULL, created_by TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices_company(
   id INTEGER PRIMARY KEY, reconciliation_id INTEGER NOT NULL,
   partner_cui TEXT, invoice_no TEXT, date TEXT,
@@ -65,13 +57,15 @@ CREATE TABLE IF NOT EXISTS differences(
   id INTEGER PRIMARY KEY, reconciliation_id INTEGER NOT NULL,
   diff_type TEXT NOT NULL, details TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_log(
-  id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT NOT NULL,
+  id INTEGER PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
   entity TEXT, entity_id TEXT, ts TEXT NOT NULL);
 """
 
 
 def open_db(path: str, key: bytes):
-    conn = sqlcipher.connect(path)
+    # Served from a threaded local server; access is effectively serialized
+    # (one desktop user), so cross-thread use of the connection is safe.
+    conn = sqlcipher.connect(path, check_same_thread=False)
     conn.row_factory = sqlcipher.Row
     conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
     try:
@@ -85,16 +79,4 @@ def open_db(path: str, key: bytes):
 
 def init_schema(conn) -> None:
     conn.executescript(_SCHEMA)
-    for code, desc in PERMISSIONS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO permissions(code, description) VALUES(?,?)",
-            (code, desc))
-    for name, perms in DEFAULT_ROLES.items():
-        conn.execute("INSERT OR IGNORE INTO roles(name) VALUES(?)", (name,))
-        role_id = conn.execute(
-            "SELECT id FROM roles WHERE name=?", (name,)).fetchone()["id"]
-        for p in perms:
-            conn.execute(
-                "INSERT OR IGNORE INTO role_permissions VALUES(?,?)",
-                (role_id, p))
     conn.commit()

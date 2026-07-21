@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block titlu %}Master — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card">
+    <h2>Firme inregistrate</h2>
+    <p class="sub">Vedere de ansamblu a platformei. Dezactivarea unei firme
+      blocheaza autentificarea tuturor utilizatorilor ei.</p>
+    <table>
+      <tr><th>Firma</th><th>CUI</th><th>Utilizatori</th><th>Status</th><th></th></tr>
+      {% for f in firms %}
+      <tr>
+        <td>{{ f['name'] }}</td>
+        <td>{{ f['cui'] }}</td>
+        <td>{{ f['n_users'] }}</td>
+        <td>{% if f['active'] %}<span class="chip ok">Activa</span>
+            {% else %}<span class="chip oprit">Dezactivata</span>{% endif %}</td>
+        <td style="text-align:right">
+          <form class="inline" method="post" action="/master/firma/{{ f['id'] }}/comutare">
+            <button class="mic" type="submit">
+              {% if f['active'] %}Dezactiveaza{% else %}Reactiveaza{% endif %}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:var(--muted)">Nicio firma inregistrata inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

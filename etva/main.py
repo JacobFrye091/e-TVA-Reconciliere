@@ -1,12 +1,14 @@
 """Desktop entry point: local Flask in a background thread + pywebview window.
 
-Flow: create_setup_app serves the unlock/setup wizard; once the DB is open,
-the main app's routes are registered on the same server via a swap.
+The window starts on the login gate; after portal authentication succeeds
+the same server switches to the main app for that identity. Logout resets
+back to the gate.
 """
 import os, socket, threading
 import webview
 from werkzeug.serving import make_server
-from etva.server import create_app, create_setup_app
+from etva.server import create_app, create_gate_app
+from etva.portal_client import DEFAULT_PORTAL_URL
 
 
 def _app_dir() -> str:
@@ -23,26 +25,32 @@ def _free_port() -> int:
 
 
 class AppHolder:
-    """Dispatches WSGI calls to setup app until unlocked, then to main app."""
-    def __init__(self, app_dir):
-        self.main_app = None
-        self.setup_app = create_setup_app(app_dir, self._on_ready)
-        self.app_dir = app_dir
+    """Dispatches WSGI calls to the gate until login, then to the main app."""
 
-    def _on_ready(self, conn):
-        self.main_app = create_app(conn, os.path.join(self.app_dir, "uploads"))
+    def __init__(self, app_dir, portal_url):
+        self.app_dir = app_dir
+        self.main_app = None
+        self.gate_app = create_gate_app(app_dir, portal_url, self._on_ready)
+
+    def _on_ready(self, conn, identity):
+        self.main_app = create_app(
+            conn, os.path.join(self.app_dir, "uploads"), identity,
+            on_logout=self.reset)
+
+    def reset(self):
+        self.main_app = None
 
     def __call__(self, environ, start_response):
-        if self.main_app is not None and not environ["PATH_INFO"].startswith("/api/setup"):
-            return self.main_app(environ, start_response)
-        return self.setup_app(environ, start_response)
+        app = self.main_app if self.main_app is not None else self.gate_app
+        return app(environ, start_response)
 
 
 def main():
     app_dir = _app_dir()
-    holder = AppHolder(app_dir)
+    portal_url = os.environ.get("ETVA_PORTAL_URL", DEFAULT_PORTAL_URL)
+    holder = AppHolder(app_dir, portal_url)
     port = _free_port()
-    server = make_server("127.0.0.1", port, holder)
+    server = make_server("127.0.0.1", port, holder, threaded=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     webview.create_window("e-TVA Reconciliere",
                           f"http://127.0.0.1:{port}/",

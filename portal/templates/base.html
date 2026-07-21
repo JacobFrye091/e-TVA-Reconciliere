@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block titlu %}e-TVA Reconciliere{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --ink:#0e1626; --ink-2:#16233c; --paper:#f7f9fb; --surface:#fff;
+  --border:#e1e7ef; --text:#1b2430; --muted:#64718a; --muted-inv:#93a1bd;
+  --accent:#0d5c63; --accent-2:#12777f; --danger:#c23a32; --danger-bg:#fdeeed;
+  --ok:#1a7f4b; --ok-bg:#e7f5ec; }
+* { box-sizing:border-box; margin:0; }
+body { font-family:Inter,system-ui,sans-serif; background:var(--paper);
+  color:var(--text); font-size:15px; line-height:1.55; min-height:100vh; }
+h1,h2,h3 { font-family:Archivo,system-ui,sans-serif; }
+.topbar { background:var(--ink); }
+.topbar .inv { max-width:1040px; margin:auto; padding:0 24px; height:60px;
+  display:flex; align-items:center; justify-content:space-between; }
+.brand { display:flex; align-items:center; gap:10px; text-decoration:none; }
+.brand img { width:32px; height:32px; }
+.brand b { color:#fff; font-family:Archivo,sans-serif; font-size:15px; }
+.topbar a.iesire { color:var(--muted-inv); font-size:13.5px; text-decoration:none; }
+.topbar a.iesire:hover { color:#fff; }
+main { max-width:1040px; margin:0 auto; padding:36px 24px 60px; }
+main.ingust { max-width:460px; padding-top:56px; }
+.card { background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:28px; margin-bottom:18px; }
+.card h2 { font-size:19px; margin-bottom:4px; }
+.card .sub { color:var(--muted); font-size:13.5px; margin-bottom:18px; }
+label { display:block; font-size:12.5px; font-weight:600; color:var(--muted);
+  margin:12px 0 5px; }
+input, select { width:100%; padding:9px 11px; border:1px solid var(--border);
+  border-radius:6px; font:inherit; }
+input:focus, select:focus { outline:2px solid var(--accent); border-color:var(--accent); }
+button, .btn { font:inherit; font-family:Archivo,sans-serif; font-weight:700;
+  border:0; border-radius:7px; cursor:pointer; padding:10px 18px;
+  background:var(--accent); color:#fff; text-decoration:none; display:inline-block; }
+button:hover, .btn:hover { background:var(--accent-2); }
+.btn-lat { width:100%; margin-top:18px; }
+.eroare { color:var(--danger); font-size:13.5px; margin-top:12px; }
+.nota { color:var(--muted); font-size:13px; margin-top:16px; }
+.nota a { color:var(--accent); }
+table { border-collapse:collapse; width:100%; }
+th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--border);
+  font-size:14px; }
+th { font-size:11px; text-transform:uppercase; letter-spacing:.07em;
+  color:var(--muted); }
+tr:last-child td { border-bottom:0; }
+.chip { display:inline-block; font-size:12px; font-weight:600; padding:2px 10px;
+  border-radius:999px; }
+.chip.ok { color:var(--ok); background:var(--ok-bg); }
+.chip.oprit { color:var(--muted); background:var(--paper); }
+.rand { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.rand > div { flex:1; min-width:140px; }
+.rand button { margin-bottom:1px; }
+form.inline { display:inline; }
+button.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--danger); border:1px solid var(--border); }
+button.mic:hover { background:var(--danger-bg); }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="inv">
+  <a class="brand" href="/"><img src="/favicon.svg" alt="Logo"><b>e-TVA Reconciliere</b></a>
+  {% if user %}<a class="iesire" href="/iesire">Iesire ({{ user['username'] }})</a>
+  {% else %}<a class="iesire" href="/autentificare">Autentificare</a>{% endif %}
+</div></header>
+{% block continut %}{% endblock %}
+</body>
+</html>

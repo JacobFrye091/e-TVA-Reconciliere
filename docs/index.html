@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>e-TVA Reconciliere — Decontul precompletat ANAF, verificat în minute</title>
 <meta name="description" content="Compară jurnalul firmei cu datele e-TVA de la ANAF, factură cu factură. Diferențele exacte, valorile corectate pentru D300 și raport Excel — totul local, criptat AES-256.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -49,6 +50,7 @@ a { color: inherit; }
   color: #fff; display: grid; place-items: center; font-family: var(--disp);
   font-weight: 800; font-size: 12px; }
 .brand-name { color: #fff; font-family: var(--disp); font-weight: 700; font-size: 16px; }
+.brand img { width: 36px; height: 36px; display: block; }
 .nav { display: flex; align-items: center; gap: 26px; }
 .nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
 .nav a:hover { color: #fff; }
@@ -188,14 +190,15 @@ footer a:hover { color: #fff; }
 <header class="topbar">
   <div class="inv">
     <a class="brand" href="#">
-      <span class="brand-mark">TVA</span>
+      <img src="favicon.svg" alt="Logo e-TVA Reconciliere">
       <span class="brand-name">e-TVA Reconciliere</span>
     </a>
     <nav class="nav">
       <a href="#functionalitati">Funcționalități</a>
       <a href="#cum">Cum funcționează</a>
       <a href="#securitate">Securitate</a>
-      <a class="btn btn-plin" href="#descarca">Descarcă aplicația</a>
+      <a href="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare">Creează cont</a>
     </nav>
   </div>
 </header>
@@ -209,8 +212,8 @@ footer a:hover { color: #fff; }
         factură cu factură. Vezi exact ce lipsește, ce diferă și ce valori corectate
         să folosești în D300 — cu raport Excel gata de predat.</p>
       <div class="hero-cta">
-        <a class="btn btn-plin" href="#descarca">Descarcă pentru Windows</a>
-        <a class="btn btn-gol" href="https://github.com/JacobFrye091/e-TVA-Reconciliere" target="_blank" rel="noopener">Vezi codul pe GitHub</a>
+        <a class="btn btn-plin" href="inregistrare">Creează cont de firmă</a>
+        <a class="btn btn-gol" href="#descarca">Descarcă pentru Windows</a>
       </div>
       <div class="hero-punkte">
         <span>Datele rămân pe calculatorul tău</span>

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block titlu %}Panoul firmei — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card">
+    <h2>{{ firm['name'] }}</h2>
+    <p class="sub">CUI {{ firm['cui'] }} · Contul tau: {{ user['username'] }}
+      ({{ user['role'] }})</p>
+    <a class="btn" href="https://github.com/JacobFrye091/e-TVA-Reconciliere/releases"
+       target="_blank" rel="noopener">Descarca aplicatia desktop</a>
+    <p class="nota">In aplicatie te loghezi cu acelasi utilizator si aceeasi parola
+      ca aici. Fiecare membru al echipei foloseste contul lui.</p>
+  </div>
+
+  <div class="card">
+    <h2>Echipa</h2>
+    <p class="sub">Rolul stabileste ce poate face fiecare in aplicatie:
+      manager (vede tot, exporta), contabil (clientii alocati, exporta),
+      junior (fara export).</p>
+    <table>
+      <tr><th>Utilizator</th><th>Rol</th><th>Status</th><th></th></tr>
+      {% for m in members %}
+      <tr>
+        <td>{{ m['username'] }}</td>
+        <td>{{ m['role'] }}</td>
+        <td>{% if m['active'] %}<span class="chip ok">Activ</span>
+            {% else %}<span class="chip oprit">Dezactivat</span>{% endif %}</td>
+        <td style="text-align:right">
+          {% if user['role'] == 'admin' and m['role'] != 'admin' and m['active'] %}
+          <form class="inline" method="post"
+                action="/panou/utilizatori/{{ m['username'] }}/dezactivare">
+            <button class="mic" type="submit">Dezactiveaza</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  {% if user['role'] == 'admin' %}
+  <div class="card">
+    <h2>Membru nou</h2>
+    <form method="post" action="/panou/utilizatori">
+      <div class="rand">
+        <div><label for="mu">Utilizator</label><input id="mu" name="username" required></div>
+        <div><label for="mp">Parola</label>
+          <input id="mp" name="password" type="password" required minlength="10"></div>
+        <div><label for="mr">Rol</label>
+          <select id="mr" name="role">
+            {% for r in subroles %}<option>{{ r }}</option>{% endfor %}
+          </select></div>
+        <button type="submit">Adauga</button>
+      </div>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block titlu %}Creeaza cont — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card">
+    <h2>Cont nou de firma</h2>
+    <p class="sub">Gratuit in perioada de lansare. Din acest cont iti vei
+      administra echipa si vei folosi aplicatia desktop.</p>
+    <form method="post">
+      <label for="name">Denumirea firmei</label>
+      <input id="name" name="name" required autofocus>
+      <label for="cui">CUI</label>
+      <input id="cui" name="cui" required placeholder="ex: RO12345678">
+      <label for="username">Utilizator (administratorul firmei)</label>
+      <input id="username" name="username" required>
+      <label for="password">Parola (minim 10 caractere)</label>
+      <input id="password" name="password" type="password" required minlength="10">
+      <button class="btn-lat" type="submit">Creeaza contul</button>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+    <p class="nota">Ai deja cont? <a href="/autentificare">Autentifica-te</a>.</p>
+  </div>
+</main>
+{% endblock %}

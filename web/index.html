@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>e-TVA Reconciliere</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <style>
 :root {
   --ink: #121d33;
@@ -196,72 +197,13 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 <!-- ============ AUTH LAYER ============ -->
 <div id="strat-auth">
 
-<div id="setup" class="view">
-  <div class="auth-layer"><div class="auth-card wide">
-    <div class="brand"><div class="brand-mark">TVA</div>
-      <div><div class="brand-name">e-TVA Reconciliere</div>
-      <div class="brand-sub">Reconciliere decont TVA cu evidenta ANAF</div></div></div>
-    <h2>Configurare initiala</h2>
-    <p class="auth-hint">Prima pornire: seteaza parola master care cripteaza baza de date si creeaza contul de administrator.</p>
-    <div class="field"><label for="setupMaster">Parola master (criptare)</label>
-      <input id="setupMaster" type="password" autocomplete="new-password"></div>
-    <div class="grila-2">
-      <div class="field"><label for="setupAdminUser">Utilizator administrator</label>
-        <input id="setupAdminUser"></div>
-      <div class="field"><label for="setupAdminPass">Parola administrator</label>
-        <input id="setupAdminPass" type="password" autocomplete="new-password"></div>
-    </div>
-    <button class="btn-lat" onclick="ruleazaSetup()">Initializeaza aplicatia</button>
-    <p id="setupErr" class="eroare"></p>
-  </div></div>
-</div>
-
-<div id="fraza" class="view">
-  <div class="auth-layer"><div class="auth-card wide">
-    <h2>Fraza de recuperare</h2>
-    <p class="avert"><strong>Se afiseaza o singura data.</strong> Fara aceasta fraza si fara parola master,
-      datele criptate sunt irecuperabile. Tipareste-o sau pastreaz-o intr-un loc sigur (ex: seif).</p>
-    <p id="frazaText" class="fraza-box"></p>
-    <label class="check"><input id="frazaConfirm" type="checkbox">
-      Am salvat fraza de recuperare intr-un loc sigur</label>
-    <button class="btn-lat" onclick="continuaDupaFraza()">Continua catre autentificare</button>
-  </div></div>
-</div>
-
-<div id="unlock" class="view">
-  <div class="auth-layer"><div class="auth-card">
-    <div class="brand"><div class="brand-mark">TVA</div>
-      <div><div class="brand-name">e-TVA Reconciliere</div>
-      <div class="brand-sub">Baza de date este criptata</div></div></div>
-    <h2>Deblocare aplicatie</h2>
-    <div class="field"><label for="unlockPass">Parola master</label>
-      <input id="unlockPass" type="password" onkeydown="if(event.key==='Enter')deblocheaza()"></div>
-    <button class="btn-lat" onclick="deblocheaza()">Deblocheaza</button>
-    <p id="unlockErr" class="eroare"></p>
-    <a class="auth-link" href="#" onclick="arata('recuperare');return false">Am uitat parola master</a>
-  </div></div>
-</div>
-
-<div id="recuperare" class="view">
-  <div class="auth-layer"><div class="auth-card wide">
-    <h2>Recuperare cu fraza</h2>
-    <p class="auth-hint">Introdu fraza de recuperare (24 de cuvinte) si seteaza o parola master noua.</p>
-    <div class="field"><label for="recFraza">Fraza de recuperare</label>
-      <textarea id="recFraza" rows="3"></textarea></div>
-    <div class="field"><label for="recParolaNoua">Parola master noua</label>
-      <input id="recParolaNoua" type="password" autocomplete="new-password"></div>
-    <button class="btn-lat" onclick="recupereaza()">Recupereaza accesul</button>
-    <p id="recErr" class="eroare"></p>
-    <a class="auth-link" href="#" onclick="arata('unlock');return false">Inapoi la deblocare</a>
-  </div></div>
-</div>
-
 <div id="login" class="view">
   <div class="auth-layer"><div class="auth-card">
     <div class="brand"><div class="brand-mark">TVA</div>
       <div><div class="brand-name">e-TVA Reconciliere</div>
       <div class="brand-sub">Reconciliere decont TVA cu evidenta ANAF</div></div></div>
     <h2>Autentificare</h2>
+    <p class="auth-hint">Foloseste contul firmei tale, creat pe portalul e-TVA Reconciliere.</p>
     <div class="field"><label for="loginUser">Utilizator</label><input id="loginUser"></div>
     <div class="field"><label for="loginPass">Parola</label>
       <input id="loginPass" type="password" onkeydown="if(event.key==='Enter')login()"></div>
@@ -284,7 +226,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
     <span class="ic">Δ</span> Rezultate</button>
   <div class="nav-grup" id="grupAdmin" style="display:none">Administrare</div>
   <button class="nav-btn" data-view="admin" id="btnAdmin" onclick="navigheaza('admin')" style="display:none">
-    <span class="ic">⚙</span> Utilizatori si roluri</button>
+    <span class="ic">⚙</span> Alocari clienti</button>
   <button class="nav-btn" data-view="audit" id="btnAudit" onclick="navigheaza('audit'); incarcaAudit()" style="display:none">
     <span class="ic">☰</span> Jurnal de audit</button>
   <div class="jos">
@@ -356,28 +298,19 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
   <div id="admin" class="view">
     <div class="card">
-      <h3>Utilizator nou</h3>
-      <p class="sub">Creeaza un cont pentru un angajat si atribuie-i un rol.</p>
-      <div class="actiuni">
-        <input id="adminUser" placeholder="Utilizator" style="max-width:200px">
-        <input id="adminPass" type="password" placeholder="Parola" style="max-width:200px">
-        <select id="adminRol" style="max-width:160px"></select>
-        <button class="secundar" onclick="adaugaUser()">Creeaza cont</button>
-      </div>
+      <h3>Conturile echipei</h3>
+      <p class="sub">Utilizatorii si rolurile se administreaza din portalul de conturi
+        (acolo unde firma s-a inregistrat) — sectiunea &bdquo;Echipa&rdquo; din panoul firmei.</p>
     </div>
     <div class="card">
-      <h3>Utilizatori</h3>
-      <p class="sub">Conturile dezactivate raman in jurnalul de audit.</p>
-      <div id="listaUseri"></div>
-    </div>
-    <div class="card">
-      <h3>Alocare client la utilizator</h3>
-      <p class="sub">Contabilii vad doar clientii care le sunt alocati.</p>
+      <h3>Alocare client la contabil</h3>
+      <p class="sub">Contabilii si juniorii vad doar clientii care le sunt alocati aici.</p>
       <div class="actiuni">
-        <select id="alocUser" style="max-width:220px"></select>
+        <input id="alocUser" placeholder="Utilizator (din portal)" style="max-width:220px">
         <select id="alocClient" style="max-width:280px"></select>
         <button class="secundar" onclick="aloca()">Aloca clientul</button>
       </div>
+      <p id="alocErr" class="eroare"></p>
     </div>
   </div>
 
@@ -397,7 +330,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 let permisiuni = [], reconCurent = null, userCurent = '';
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
-                  admin: 'Utilizatori si roluri', audit: 'Jurnal de audit' };
+                  admin: 'Alocari clienti', audit: 'Jurnal de audit' };
 const TIP_DIFERENTA = { suma_diferita: 'Suma diferita', lipsa_in_anaf: 'Lipsa in ANAF',
                         lipsa_la_companie: 'Lipsa la companie', duplicat: 'Duplicat' };
 const fmt = new Intl.NumberFormat('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -427,9 +360,10 @@ function navigheaza(id) {
 
 window.addEventListener('DOMContentLoaded', async () => {
   try {
-    const st = await (await fetch('/api/setup/status')).json();
-    arata(st.initialized ? 'unlock' : 'setup');
-  } catch (e) { arata('login'); }
+    const r = await fetch('/api/me');
+    if (r.ok) { await intraInAplicatie(await r.json()); return; }
+  } catch (e) { /* gate not reachable yet */ }
+  arata('login');
 });
 
 async function api(url, opts = {}) {
@@ -438,44 +372,7 @@ async function api(url, opts = {}) {
   return r;
 }
 
-/* ---------- Setup / unlock / recovery ---------- */
-async function ruleazaSetup() {
-  const r = await fetch('/api/setup', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({master_password: setupMaster.value,
-                          admin_username: setupAdminUser.value,
-                          admin_password: setupAdminPass.value})});
-  const body = await r.json();
-  if (!r.ok) { setupErr.textContent = body.error; return; }
-  frazaText.textContent = body.recovery_phrase;
-  arata('fraza');
-}
-
-function continuaDupaFraza() {
-  if (!frazaConfirm.checked) return;
-  frazaText.textContent = '';
-  arata('login');
-}
-
-async function deblocheaza() {
-  const r = await fetch('/api/setup/unlock', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({master_password: unlockPass.value})});
-  if (!r.ok) { unlockErr.textContent = (await r.json()).error; return; }
-  unlockPass.value = '';
-  arata('login');
-}
-
-async function recupereaza() {
-  const r = await fetch('/api/setup/recover', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({recovery_phrase: recFraza.value,
-                          new_master_password: recParolaNoua.value})});
-  if (!r.ok) { recErr.textContent = (await r.json()).error; return; }
-  arata('login');
-}
-
-/* ---------- Session ---------- */
+/* ---------- Session (portal accounts) ---------- */
 async function login() {
   loginErr.textContent = '';
   let r;
@@ -487,11 +384,18 @@ async function login() {
     loginErr.textContent = 'Serverul local nu raspunde. Inchide si redeschide aplicatia.';
     return;
   }
-  if (!r.ok) { loginErr.textContent = (await r.json()).error; return; }
-  permisiuni = (await r.json()).permissions;
-  userCurent = loginUser.value;
+  const body = await r.json();
+  if (!r.ok) { loginErr.textContent = body.error; return; }
   loginPass.value = ''; loginErr.textContent = '';
+  await intraInAplicatie(body);
+}
+
+async function intraInAplicatie(ident) {
+  permisiuni = ident.permissions;
+  userCurent = ident.username;
   numeUser.textContent = userCurent;
+  document.querySelector('.user-rol').textContent =
+    ident.firm_name || 'Sesiune activa';
   avatarUser.textContent = userCurent.slice(0, 2).toUpperCase();
   const esteAdmin = permisiuni.includes('useri.gestionare');
   btnAdmin.style.display = esteAdmin ? '' : 'none';
@@ -500,7 +404,6 @@ async function login() {
   cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
   btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
   await incarcaClienti();
-  if (esteAdmin) await incarcaAdmin();
   navigheaza('dashboard');
 }
 
@@ -518,8 +421,10 @@ async function incarcaClienti() {
     (cl.map(c => `<tr><td class="cod">${c.cui}</td><td>${c.name}</td></tr>`).join('') ||
      '<tr><td colspan="2" class="gol">Niciun client inca. Adauga primul client mai jos.</td></tr>') +
     '</tbody></table>';
-  selClient.innerHTML = alocClient.innerHTML =
-    cl.map(c => `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
+  const optiuni = cl.map(c =>
+    `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
+  selClient.innerHTML = optiuni;
+  if (document.getElementById('alocClient')) alocClient.innerHTML = optiuni;
 }
 
 async function adaugaClient() {
@@ -604,42 +509,18 @@ function exporta() {
   window.location = `/api/reconciliations/${reconCurent}/export`;
 }
 
-/* ---------- Admin ---------- */
-async function incarcaAdmin() {
-  const useri = await (await api('/api/admin/users')).json();
-  listaUseri.innerHTML =
-    '<table><thead><tr><th>Utilizator</th><th>Roluri</th><th>Status</th><th></th></tr></thead><tbody>' +
-    useri.map(u => `<tr><td>${u.username}</td><td>${u.roles || '—'}</td>` +
-      `<td>${u.active ? '<span class="chip ok">Activ</span>'
-                      : '<span class="chip neutru">Dezactivat</span>'}</td>` +
-      `<td style="text-align:right">${u.active
-          ? `<button class="discret" onclick="dezactiveaza(${u.id})">Dezactiveaza</button>` : ''}</td></tr>`
-    ).join('') + '</tbody></table>';
-  alocUser.innerHTML = useri.filter(u => u.active).map(u =>
-    `<option value="${u.id}">${u.username}</option>`).join('');
-  adminRol.innerHTML = ['Admin', 'Manager', 'Contabil', 'Junior'].map(r =>
-    `<option>${r}</option>`).join('');
-}
-
-async function adaugaUser() {
-  await api('/api/admin/users', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username: adminUser.value, password: adminPass.value,
-                          role: adminRol.value})});
-  adminUser.value = ''; adminPass.value = '';
-  await incarcaAdmin();
-}
-
-async function dezactiveaza(id) {
-  await api(`/api/admin/users/${id}/deactivate`, {method: 'POST'});
-  await incarcaAdmin();
-}
-
+/* ---------- Alocari ---------- */
 async function aloca() {
-  await api('/api/admin/assign', {
+  alocErr.textContent = '';
+  if (!alocUser.value.trim()) {
+    alocErr.textContent = 'Introdu numele de utilizator din portal.';
+    return;
+  }
+  const r = await api('/api/assignments', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({user_id: +alocUser.value,
+    body: JSON.stringify({username: alocUser.value,
                           client_id: +alocClient.value})});
+  if (r.ok) alocUser.value = '';
 }
 
 /* ---------- Audit ---------- */

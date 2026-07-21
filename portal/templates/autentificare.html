@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block titlu %}Autentificare — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card">
+    <h2>Autentificare</h2>
+    <p class="sub">Intra in contul firmei tale.</p>
+    <form method="post">
+      <label for="username">Utilizator</label>
+      <input id="username" name="username" required autofocus>
+      <label for="password">Parola</label>
+      <input id="password" name="password" type="password" required>
+      <button class="btn-lat" type="submit">Intra in cont</button>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+    <p class="nota">Nu ai cont? <a href="/inregistrare">Creeaza un cont de firma</a>.</p>
+  </div>
+</main>
+{% endblock %}

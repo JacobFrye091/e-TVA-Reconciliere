@@ -1,5 +1,9 @@
-"""Clients CRUD and user-client assignments."""
-from etva.permissions import user_permissions
+"""Clients CRUD and username-based assignments.
+
+Visibility: users whose portal permissions include `clienti.creare` or
+`useri.gestionare` (firm admins, managers) see every client; everyone else
+sees only the clients assigned to their username.
+"""
 
 
 class ClientError(Exception):
@@ -15,21 +19,21 @@ def create_client(conn, cui: str, name: str) -> int:
     return cur.lastrowid
 
 
-def assign(conn, user_id: int, client_id: int) -> None:
+def assign(conn, username: str, client_id: int) -> None:
     conn.execute("INSERT OR IGNORE INTO client_assignments VALUES(?,?)",
-                 (user_id, client_id))
+                 (username, client_id))
     conn.commit()
 
 
-def visible_clients(conn, user_id: int) -> list:
-    perms = user_permissions(conn, user_id)
+def visible_clients(conn, identity: dict) -> list:
+    perms = set(identity.get("permissions", []))
     if "clienti.creare" in perms or "useri.gestionare" in perms:
         rows = conn.execute("SELECT * FROM clients ORDER BY name")
     else:
         rows = conn.execute(
             "SELECT c.* FROM clients c JOIN client_assignments a "
-            "ON a.client_id = c.id WHERE a.user_id=? ORDER BY c.name",
-            (user_id,))
+            "ON a.client_id = c.id WHERE a.username=? ORDER BY c.name",
+            (identity["username"],))
     return [dict(r) for r in rows]
 
 

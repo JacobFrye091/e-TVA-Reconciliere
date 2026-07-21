@@ -1,5 +1,9 @@
 import os, pytest
-from etva import db, auth, permissions as pm, clients
+from etva import db, clients
+
+ADMIN = {"username": "sef", "permissions": list(db.PERMISSIONS)}
+JUNIOR = {"username": "junior1",
+          "permissions": db.DEFAULT_ROLES["Junior"]}
 
 @pytest.fixture
 def conn(tmp_path):
@@ -14,22 +18,20 @@ def test_create_and_duplicate(conn):
         clients.create_client(conn, "RO123", "Alta")
 
 def test_visibility_assigned_only(conn):
-    uid = auth.create_user(conn, "ana", "x")
-    pm.assign_role(conn, uid, "Contabil")
     c1 = clients.create_client(conn, "RO1", "A")
     clients.create_client(conn, "RO2", "B")
-    clients.assign(conn, uid, c1)
-    vis = clients.visible_clients(conn, uid)
+    clients.assign(conn, "junior1", c1)
+    vis = clients.visible_clients(conn, JUNIOR)
     assert [c["cui"] for c in vis] == ["RO1"]
 
-def test_visibility_manager_sees_all(conn):
-    uid = auth.create_user(conn, "boss", "x")
-    pm.assign_role(conn, uid, "Manager")
+def test_visibility_admin_sees_all(conn):
     clients.create_client(conn, "RO1", "A")
     clients.create_client(conn, "RO2", "B")
-    assert len(clients.visible_clients(conn, uid)) == 2
+    assert len(clients.visible_clients(conn, ADMIN)) == 2
 
 def test_delete(conn):
     cid = clients.create_client(conn, "RO1", "A")
+    clients.assign(conn, "junior1", cid)
     clients.delete_client(conn, cid)
-    assert clients.visible_clients(conn, 999) == []
+    assert clients.visible_clients(conn, ADMIN) == []
+    assert clients.visible_clients(conn, JUNIOR) == []

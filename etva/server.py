@@ -1,9 +1,15 @@
-"""Local Flask API. Runs only on 127.0.0.1, rendered inside pywebview."""
+"""Local Flask apps for the desktop shell.
+
+`create_gate_app` runs before login: it authenticates against the account
+portal, opens the firm's encrypted DB with the key received and hands the
+connection + identity to the caller. `create_app` serves the main product
+for one authenticated identity (single local user per window).
+"""
 import json, os, pathlib, secrets
 from datetime import datetime, timezone
 from functools import wraps
-from flask import Flask, request, session, jsonify, send_file
-from etva import auth, audit, clients, permissions as pm
+from flask import Flask, request, jsonify, send_file
+from etva import audit, clients, portal_client
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
 from etva.engine import reconcile
@@ -13,74 +19,69 @@ from etva import export as export_mod
 _WEB_DIR = str(pathlib.Path(__file__).resolve().parents[1] / "web")
 
 
-def create_app(conn, upload_dir: str) -> Flask:
+def create_app(conn, upload_dir: str, identity: dict, on_logout=None) -> Flask:
     app = Flask(__name__, static_folder=_WEB_DIR, static_url_path="/static")
     app.secret_key = secrets.token_hex(32)
+    perms = set(identity.get("permissions", []))
+    username = identity["username"]
 
     @app.get("/")
     def index():
         return app.send_static_file("index.html")
 
-    def current_user():
-        return session.get("user_id")
-
     def require(perm=None):
         def deco(fn):
             @wraps(fn)
             def wrapper(*a, **kw):
-                uid = current_user()
-                if uid is None:
-                    return jsonify({"error": "Neautentificat"}), 401
-                if perm and not pm.has_permission(conn, uid, perm):
+                if perm and perm not in perms:
                     return jsonify({"error": "Acces interzis"}), 403
-                return fn(uid, *a, **kw)
+                return fn(*a, **kw)
             return wrapper
         return deco
 
-    @app.post("/api/login")
-    def login():
-        data = request.get_json(force=True)
-        try:
-            uid = auth.verify_login(conn, data["username"], data["password"])
-        except auth.AuthError as e:
-            return jsonify({"error": str(e)}), 401
-        session["user_id"] = uid
-        audit.log(conn, uid, "login")
-        return jsonify({"user_id": uid,
-                        "permissions": sorted(pm.user_permissions(conn, uid))})
+    @app.get("/api/me")
+    def me():
+        return jsonify({"username": username,
+                        "role": identity.get("role"),
+                        "firm_name": identity.get("firm_name"),
+                        "permissions": sorted(perms)})
 
     @app.post("/api/logout")
     def logout():
-        session.clear()
+        audit.log(conn, username, "logout")
+        if on_logout:
+            on_logout()
         return jsonify({"ok": True})
 
-    @app.get("/api/me")
-    @require()
-    def me(uid):
-        return jsonify({"user_id": uid,
-                        "permissions": sorted(pm.user_permissions(conn, uid))})
-
     @app.get("/api/clients")
-    @require()
-    def list_clients(uid):
-        return jsonify(clients.visible_clients(conn, uid))
+    def list_clients():
+        return jsonify(clients.visible_clients(conn, identity))
 
     @app.post("/api/clients")
     @require("clienti.creare")
-    def add_client(uid):
+    def add_client():
         data = request.get_json(force=True)
         try:
             cid = clients.create_client(conn, data["cui"], data["name"])
         except clients.ClientError as e:
             return jsonify({"error": str(e)}), 400
-        audit.log(conn, uid, "client.creare", "client", str(cid))
+        audit.log(conn, username, "client.creare", "client", str(cid))
         return jsonify({"id": cid})
 
     @app.delete("/api/clients/<int:cid>")
     @require("clienti.stergere")
-    def del_client(uid, cid):
+    def del_client(cid):
         clients.delete_client(conn, cid)
-        audit.log(conn, uid, "client.stergere", "client", str(cid))
+        audit.log(conn, username, "client.stergere", "client", str(cid))
+        return jsonify({"ok": True})
+
+    @app.post("/api/assignments")
+    @require("useri.gestionare")
+    def assign_client():
+        data = request.get_json(force=True)
+        clients.assign(conn, data["username"].strip(), int(data["client_id"]))
+        audit.log(conn, username, "client.alocare", "client",
+                  str(data["client_id"]))
         return jsonify({"ok": True})
 
     def _save_upload(f):
@@ -88,12 +89,12 @@ def create_app(conn, upload_dir: str) -> Flask:
         f.save(path)
         return path
 
-    def _persist(uid, client_id, period, comp_rows, anaf_rows):
+    def _persist(client_id, period, comp_rows, anaf_rows):
         cur = conn.execute(
             "INSERT INTO reconciliations(client_id, period, created_at, "
             "created_by) VALUES(?,?,?,?)",
             (client_id, period,
-             datetime.now(timezone.utc).isoformat(), uid))
+             datetime.now(timezone.utc).isoformat(), username))
         rid = cur.lastrowid
         for table, rows in (("invoices_company", comp_rows),
                             ("invoices_anaf", anaf_rows)):
@@ -121,7 +122,7 @@ def create_app(conn, upload_dir: str) -> Flask:
 
     @app.post("/api/reconciliations")
     @require("reconciliere.creare")
-    def new_reconciliation(uid):
+    def new_reconciliation():
         client_id = int(request.form["client_id"])
         period = request.form["period"]
         mapping = None
@@ -135,8 +136,9 @@ def create_app(conn, upload_dir: str) -> Flask:
                 mapping).get_etva_data("", period)
         except ImportError_ as e:
             return jsonify({"errors": e.errors}), 400
-        rid = _persist(uid, client_id, period, comp_rows, anaf_rows)
-        audit.log(conn, uid, "reconciliere.creare", "reconciliation", str(rid))
+        rid = _persist(client_id, period, comp_rows, anaf_rows)
+        audit.log(conn, username, "reconciliere.creare",
+                  "reconciliation", str(rid))
         return jsonify(_result_payload(rid, comp_rows, anaf_rows))
 
     def _load_rows(rid, table):
@@ -146,15 +148,14 @@ def create_app(conn, upload_dir: str) -> Flask:
         return [dict(r) for r in rows]
 
     @app.get("/api/reconciliations/<int:rid>")
-    @require()
-    def get_reconciliation(uid, rid):
+    def get_reconciliation(rid):
         comp = _load_rows(rid, "invoices_company")
         anaf = _load_rows(rid, "invoices_anaf")
         return jsonify(_result_payload(rid, comp, anaf))
 
     @app.get("/api/reconciliations/<int:rid>/export")
     @require("rapoarte.export")
-    def export_report(uid, rid):
+    def export_report(rid):
         row = conn.execute(
             "SELECT r.period, c.name FROM reconciliations r "
             "JOIN clients c ON c.id = r.client_id WHERE r.id=?",
@@ -167,135 +168,49 @@ def create_app(conn, upload_dir: str) -> Flask:
         path = os.path.join(upload_dir, f"raport_{rid}.xlsx")
         export_mod.write_report(result, suggest_d300(result), path,
                                 row["name"], row["period"])
-        audit.log(conn, uid, "raport.export", "reconciliation", str(rid))
+        audit.log(conn, username, "raport.export", "reconciliation", str(rid))
         return send_file(path, as_attachment=True,
                          download_name=f"raport_{rid}.xlsx")
 
     @app.get("/api/audit")
     @require("audit.vizualizare")
-    def audit_view(uid):
+    def audit_view():
         return jsonify(audit.entries(conn))
-
-    @app.get("/api/admin/users")
-    @require("useri.gestionare")
-    def list_users(uid):
-        rows = conn.execute(
-            "SELECT u.id, u.username, u.active, "
-            "GROUP_CONCAT(r.name) AS roles FROM users u "
-            "LEFT JOIN user_roles ur ON ur.user_id=u.id "
-            "LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id")
-        return jsonify([dict(r) for r in rows])
-
-    @app.post("/api/admin/users")
-    @require("useri.gestionare")
-    def add_user(uid):
-        data = request.get_json(force=True)
-        try:
-            new_id = auth.create_user(conn, data["username"], data["password"])
-        except auth.AuthError as e:
-            return jsonify({"error": str(e)}), 400
-        if data.get("role"):
-            pm.assign_role(conn, new_id, data["role"])
-        audit.log(conn, uid, "user.creare", "user", str(new_id))
-        return jsonify({"id": new_id})
-
-    @app.post("/api/admin/users/<int:target>/deactivate")
-    @require("useri.gestionare")
-    def deactivate_user(uid, target):
-        auth.set_active(conn, target, False)
-        audit.log(conn, uid, "user.dezactivare", "user", str(target))
-        return jsonify({"ok": True})
-
-    @app.post("/api/admin/roles")
-    @require("useri.gestionare")
-    def add_role(uid):
-        data = request.get_json(force=True)
-        try:
-            rid = pm.create_role(conn, data["name"], data["permissions"])
-        except pm.PermError as e:
-            return jsonify({"error": str(e)}), 400
-        audit.log(conn, uid, "rol.creare", "role", str(rid))
-        return jsonify({"id": rid})
-
-    @app.put("/api/admin/roles/<name>")
-    @require("useri.gestionare")
-    def edit_role(uid, name):
-        data = request.get_json(force=True)
-        try:
-            pm.update_role(conn, name, data["permissions"])
-        except pm.PermError as e:
-            return jsonify({"error": str(e)}), 400
-        audit.log(conn, uid, "rol.editare", "role", name)
-        return jsonify({"ok": True})
-
-    @app.post("/api/admin/assign")
-    @require("useri.gestionare")
-    def assign_client(uid):
-        data = request.get_json(force=True)
-        clients.assign(conn, data["user_id"], data["client_id"])
-        audit.log(conn, uid, "client.alocare", "client",
-                  str(data["client_id"]))
-        return jsonify({"ok": True})
 
     return app
 
 
-def create_setup_app(app_dir: str, on_ready) -> Flask:
-    """Pre-unlock app: setup wizard, unlock, recovery."""
-    from etva import crypto, db as db_mod
+def create_gate_app(app_dir: str, portal_url: str, on_ready) -> Flask:
+    """Pre-login app: portal authentication + opening the firm DB."""
+    from etva import db as db_mod
     app = Flask(__name__, static_folder=_WEB_DIR, static_url_path="/static")
     app.secret_key = secrets.token_hex(32)
-    ks_path = os.path.join(app_dir, "keystore.json")
-    db_path = os.path.join(app_dir, "app.db")
 
     @app.get("/")
     def index():
         return app.send_static_file("index.html")
 
-    def _open_and_ready(key):
-        conn = db_mod.open_db(db_path, key)
-        db_mod.init_schema(conn)
-        on_ready(conn)
+    @app.get("/api/me")
+    def me():
+        return jsonify({"error": "Neautentificat"}), 401
 
-    @app.get("/api/setup/status")
-    def status():
-        return jsonify({"initialized": os.path.exists(ks_path)})
-
-    @app.post("/api/setup")
-    def setup():
-        data = request.get_json(force=True)
-        if os.path.exists(ks_path):
-            return jsonify({"error": "Aplicatia este deja initializata."}), 400
-        phrase = crypto.create_keystore(data["master_password"], ks_path)
-        key = crypto.unlock_keystore(data["master_password"], ks_path)
-        conn = db_mod.open_db(db_path, key)
-        db_mod.init_schema(conn)
-        uid = auth.create_user(conn, data["admin_username"],
-                               data["admin_password"])
-        pm.assign_role(conn, uid, "Admin")
-        audit.log(conn, uid, "setup.initializare")
-        on_ready(conn)
-        return jsonify({"recovery_phrase": phrase})
-
-    @app.post("/api/setup/unlock")
-    def unlock():
+    @app.post("/api/login")
+    def login():
         data = request.get_json(force=True)
         try:
-            key = crypto.unlock_keystore(data["master_password"], ks_path)
-        except crypto.KeystoreError as e:
-            return jsonify({"error": str(e)}), 401
-        _open_and_ready(key)
-        return jsonify({"ok": True})
-
-    @app.post("/api/setup/recover")
-    def recover():
-        data = request.get_json(force=True)
-        try:
-            key = crypto.recover_keystore(data["recovery_phrase"], ks_path,
-                                          data["new_master_password"])
-        except crypto.KeystoreError as e:
-            return jsonify({"error": str(e)}), 401
-        _open_and_ready(key)
-        return jsonify({"ok": True})
+            ident = portal_client.authenticate(
+                portal_url, data.get("username", ""), data.get("password", ""))
+        except portal_client.PortalError as e:
+            return jsonify({"error": str(e)}), e.status
+        key = bytes.fromhex(ident.pop("data_key"))
+        db_path = os.path.join(app_dir, f"firm_{ident['firm_id']}.db")
+        conn = db_mod.open_db(db_path, key)
+        db_mod.init_schema(conn)
+        audit.log(conn, ident["username"], "login")
+        on_ready(conn, ident)
+        return jsonify({"username": ident["username"],
+                        "role": ident["role"],
+                        "firm_name": ident.get("firm_name"),
+                        "permissions": ident["permissions"]})
 
     return app
