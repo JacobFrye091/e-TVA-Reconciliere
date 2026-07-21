@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<title>e-TVA Reconciliere</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6fa; }
+  header { background: #1e3a5f; color: #fff; padding: 12px 20px;
+           display: flex; justify-content: space-between; align-items: center; }
+  main { padding: 20px; max-width: 1100px; margin: auto; }
+  .view { display: none; } .view.activ { display: block; }
+  table { border-collapse: collapse; width: 100%; background: #fff;
+          margin: 12px 0; }
+  th, td { border: 1px solid #d0d4dc; padding: 6px 10px; text-align: left; }
+  th { background: #e8ebf2; }
+  tr.rosu td { background: #ffc7ce; }
+  button { background: #1e3a5f; color: #fff; border: 0; padding: 8px 14px;
+           border-radius: 4px; cursor: pointer; }
+  input, select, textarea { padding: 6px; margin: 4px 0; width: 100%;
+                            box-sizing: border-box; }
+  .card { background: #fff; border: 1px solid #d0d4dc; border-radius: 6px;
+          padding: 16px; margin: 12px 0; }
+  .eroare { color: #b00020; white-space: pre-wrap; }
+  nav button { margin-right: 8px; background: #35507a; }
+</style>
+</head>
+<body>
+<header>
+  <strong>e-TVA Reconciliere</strong>
+  <nav id="meniu" style="display:none">
+    <button onclick="arata('dashboard')">Clienti</button>
+    <button id="btnAdmin" onclick="arata('admin')" style="display:none">Administrare</button>
+    <button id="btnAudit" onclick="arata('audit'); incarcaAudit()" style="display:none">Audit</button>
+    <button onclick="logout()">Iesire</button>
+  </nav>
+</header>
+<main>
+
+<div id="login" class="view activ">
+  <div class="card" style="max-width:360px;margin:60px auto">
+    <h2>Autentificare</h2>
+    <input id="loginUser" placeholder="Utilizator">
+    <input id="loginPass" type="password" placeholder="Parola">
+    <button onclick="login()">Intra</button>
+    <p id="loginErr" class="eroare"></p>
+  </div>
+</div>
+
+<div id="dashboard" class="view">
+  <h2>Clienti</h2>
+  <div id="listaClienti"></div>
+  <div class="card" id="cardClientNou" style="display:none">
+    <h3>Client nou</h3>
+    <input id="cuiNou" placeholder="CUI">
+    <input id="numeNou" placeholder="Denumire">
+    <button onclick="adaugaClient()">Adauga</button>
+  </div>
+  <div class="card">
+    <h3>Reconciliere noua</h3>
+    <select id="selClient"></select>
+    <input id="perioada" placeholder="Perioada (ex: 2026-01)">
+    <label>Jurnal firma (xlsx/csv)</label>
+    <input id="fisierFirma" type="file">
+    <label>Fisier ANAF e-TVA (xlsx/csv)</label>
+    <input id="fisierAnaf" type="file">
+    <label>Mapare coloane ANAF (JSON, optional)</label>
+    <textarea id="mapareAnaf" rows="3"
+      placeholder='{"cui_partener":"CIF","nr_factura":"Numar",...}'></textarea>
+    <button onclick="ruleazaReconciliere()">Ruleaza reconcilierea</button>
+    <p id="reconErr" class="eroare"></p>
+  </div>
+</div>
+
+<div id="rezultate" class="view">
+  <h2>Rezultate reconciliere</h2>
+  <button id="btnExport" onclick="exporta()">Export raport Excel</button>
+  <h3>Sumar pe categorii</h3>
+  <table id="tabelSumar"></table>
+  <h3>Diferente pe facturi</h3>
+  <table id="tabelDiferente"></table>
+</div>
+
+<div id="admin" class="view">
+  <h2>Administrare</h2>
+  <div class="card">
+    <h3>Utilizator nou</h3>
+    <input id="adminUser" placeholder="Utilizator">
+    <input id="adminPass" type="password" placeholder="Parola">
+    <select id="adminRol"></select>
+    <button onclick="adaugaUser()">Creeaza</button>
+  </div>
+  <div class="card"><h3>Utilizatori</h3><div id="listaUseri"></div></div>
+  <div class="card">
+    <h3>Alocare client la utilizator</h3>
+    <select id="alocUser"></select>
+    <select id="alocClient"></select>
+    <button onclick="aloca()">Aloca</button>
+  </div>
+</div>
+
+<div id="audit" class="view">
+  <h2>Jurnal de audit</h2>
+  <table id="tabelAudit"></table>
+</div>
+
+</main>
+<script>
+let permisiuni = [], reconCurent = null;
+
+function arata(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('activ'));
+  document.getElementById(id).classList.add('activ');
+}
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (r.status === 401) { arata('login'); throw new Error('neautentificat'); }
+  return r;
+}
+
+async function login() {
+  const r = await fetch('/api/login', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: loginUser.value, password: loginPass.value})});
+  if (!r.ok) { loginErr.textContent = (await r.json()).error; return; }
+  permisiuni = (await r.json()).permissions;
+  meniu.style.display = '';
+  btnAdmin.style.display = permisiuni.includes('useri.gestionare') ? '' : 'none';
+  btnAudit.style.display = permisiuni.includes('audit.vizualizare') ? '' : 'none';
+  cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
+  btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
+  await incarcaClienti();
+  if (permisiuni.includes('useri.gestionare')) await incarcaAdmin();
+  arata('dashboard');
+}
+
+async function logout() {
+  await fetch('/api/logout', {method: 'POST'});
+  meniu.style.display = 'none';
+  arata('login');
+}
+
+async function incarcaClienti() {
+  const cl = await (await api('/api/clients')).json();
+  listaClienti.innerHTML = '<table><tr><th>CUI</th><th>Denumire</th></tr>' +
+    cl.map(c => `<tr><td>${c.cui}</td><td>${c.name}</td></tr>`).join('') +
+    '</table>';
+  selClient.innerHTML = alocClient.innerHTML =
+    cl.map(c => `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
+}
+
+async function adaugaClient() {
+  const r = await api('/api/clients', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cui: cuiNou.value, name: numeNou.value})});
+  if (r.ok) await incarcaClienti();
+}
+
+async function ruleazaReconciliere() {
+  reconErr.textContent = '';
+  const fd = new FormData();
+  fd.append('client_id', selClient.value);
+  fd.append('period', perioada.value);
+  fd.append('company_file', fisierFirma.files[0]);
+  fd.append('anaf_file', fisierAnaf.files[0]);
+  if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
+  const r = await api('/api/reconciliations', {method: 'POST', body: fd});
+  const body = await r.json();
+  if (!r.ok) {
+    reconErr.textContent = (body.errors || [body.error]).join('\n');
+    return;
+  }
+  reconCurent = body.id;
+  afiseazaRezultate(body);
+  arata('rezultate');
+}
+
+function afiseazaRezultate(b) {
+  tabelSumar.innerHTML =
+    '<tr><th>Categorie</th><th>Baza firma</th><th>TVA firma</th>' +
+    '<th>Baza ANAF</th><th>TVA ANAF</th><th>Baza sugerata</th>' +
+    '<th>TVA sugerata</th><th>Status</th></tr>' +
+    b.suggestions.map(s =>
+      `<tr class="${s.status === 'de_verificat' ? 'rosu' : ''}">` +
+      `<td>${s.category}</td><td>${s.company_base}</td><td>${s.company_vat}</td>` +
+      `<td>${s.anaf_base}</td><td>${s.anaf_vat}</td><td>${s.suggested_base}</td>` +
+      `<td>${s.suggested_vat}</td><td>${s.status}</td></tr>`).join('');
+  tabelDiferente.innerHTML =
+    '<tr><th>Tip</th><th>CUI</th><th>Factura</th><th>Categorie</th>' +
+    '<th>Delta baza</th><th>Delta TVA</th></tr>' +
+    (b.differences.map(d =>
+      `<tr class="rosu"><td>${d.diff_type}</td><td>${d.partner_cui}</td>` +
+      `<td>${d.invoice_no}</td><td>${d.category}</td>` +
+      `<td>${d.delta_base}</td><td>${d.delta_vat}</td></tr>`).join('') ||
+    '<tr><td colspan="6">Nicio diferenta — totul corespunde.</td></tr>');
+}
+
+function exporta() {
+  window.location = `/api/reconciliations/${reconCurent}/export`;
+}
+
+async function incarcaAdmin() {
+  const useri = await (await api('/api/admin/users')).json();
+  listaUseri.innerHTML =
+    '<table><tr><th>Utilizator</th><th>Roluri</th><th>Activ</th><th></th></tr>' +
+    useri.map(u => `<tr><td>${u.username}</td><td>${u.roles || ''}</td>` +
+      `<td>${u.active ? 'Da' : 'Nu'}</td>` +
+      `<td><button onclick="dezactiveaza(${u.id})">Dezactiveaza</button></td></tr>`
+    ).join('') + '</table>';
+  alocUser.innerHTML = useri.map(u =>
+    `<option value="${u.id}">${u.username}</option>`).join('');
+  adminRol.innerHTML = ['Admin', 'Manager', 'Contabil', 'Junior'].map(r =>
+    `<option>${r}</option>`).join('');
+}
+
+async function adaugaUser() {
+  await api('/api/admin/users', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: adminUser.value, password: adminPass.value,
+                          role: adminRol.value})});
+  await incarcaAdmin();
+}
+
+async function dezactiveaza(id) {
+  await api(`/api/admin/users/${id}/deactivate`, {method: 'POST'});
+  await incarcaAdmin();
+}
+
+async function aloca() {
+  await api('/api/admin/assign', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: +alocUser.value,
+                          client_id: +alocClient.value})});
+}
+
+async function incarcaAudit() {
+  const rows = await (await api('/api/audit')).json();
+  tabelAudit.innerHTML =
+    '<tr><th>Data</th><th>User</th><th>Actiune</th><th>Entitate</th></tr>' +
+    rows.map(r => `<tr><td>${r.ts}</td><td>${r.user_id}</td>` +
+      `<td>${r.action}</td><td>${r.entity || ''} ${r.entity_id || ''}</td></tr>`
+    ).join('');
+}
+</script>
+</body>
+</html>

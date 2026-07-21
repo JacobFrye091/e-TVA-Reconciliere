@@ -82,6 +82,12 @@ def test_import_errors_returned(app):
     assert r.status_code == 400
     assert "tva" in r.get_json()["errors"][0]
 
+def test_index_served(app):
+    c = app.test_client()
+    r = c.get("/")
+    assert r.status_code == 200
+    assert b"e-TVA Reconciliere" in r.data
+
 def test_audit_written(app):
     c = app.test_client()
     login(c)
