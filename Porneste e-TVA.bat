@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" pythonw -m etva.main
+start "e-TVA Reconciliere" /min python -m etva.main
