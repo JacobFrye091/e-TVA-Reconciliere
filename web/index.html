@@ -477,9 +477,16 @@ async function recupereaza() {
 
 /* ---------- Session ---------- */
 async function login() {
-  const r = await fetch('/api/login', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username: loginUser.value, password: loginPass.value})});
+  loginErr.textContent = '';
+  let r;
+  try {
+    r = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: loginUser.value, password: loginPass.value})});
+  } catch (e) {
+    loginErr.textContent = 'Serverul local nu raspunde. Inchide si redeschide aplicatia.';
+    return;
+  }
   if (!r.ok) { loginErr.textContent = (await r.json()).error; return; }
   permisiuni = (await r.json()).permissions;
   userCurent = loginUser.value;
