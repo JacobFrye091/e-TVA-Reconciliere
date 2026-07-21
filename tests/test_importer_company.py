@@ -31,7 +31,7 @@ def test_missing_column_rejected(tmp_path):
     assert "tva" in str(e.value)
 
 def test_bad_number_rejected_entirely(tmp_path):
-    bad = GOOD.copy()
+    bad = GOOD.astype(str)
     bad.loc[1, "baza"] = "abc"
     p = str(tmp_path / "j.csv")
     bad.to_csv(p, index=False)
