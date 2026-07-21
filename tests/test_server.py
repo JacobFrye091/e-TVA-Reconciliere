@@ -1,6 +1,6 @@
 import io, os, json, pytest, pandas as pd
 from etva import db, auth, permissions as pm, clients
-from etva.server import create_app
+from etva.server import create_app, create_setup_app
 
 @pytest.fixture
 def app(tmp_path):
@@ -94,3 +94,32 @@ def test_audit_written(app):
     r = c.get("/api/audit")
     assert r.status_code == 200
     assert r.get_json()[0]["action"] == "login"
+
+def test_setup_flow(tmp_path):
+    holder = {}
+    app2 = create_setup_app(str(tmp_path), lambda conn: holder.update(conn=conn))
+    app2.config["TESTING"] = True
+    c = app2.test_client()
+    assert c.get("/api/setup/status").get_json() == {"initialized": False}
+    r = c.post("/api/setup", json={"master_password": "Master123!",
+                                   "admin_username": "admin",
+                                   "admin_password": "Admin123!"})
+    phrase = r.get_json()["recovery_phrase"]
+    assert len(phrase.split()) == 24
+    assert c.get("/api/setup/status").get_json() == {"initialized": True}
+    r = c.post("/api/setup/unlock", json={"master_password": "gresit"})
+    assert r.status_code == 401
+    r = c.post("/api/setup/unlock", json={"master_password": "Master123!"})
+    assert r.status_code == 200 and "conn" in holder
+
+def test_setup_recover(tmp_path):
+    holder = {}
+    app2 = create_setup_app(str(tmp_path), lambda conn: holder.update(conn=conn))
+    app2.config["TESTING"] = True
+    c = app2.test_client()
+    phrase = c.post("/api/setup", json={
+        "master_password": "Master123!", "admin_username": "admin",
+        "admin_password": "x"}).get_json()["recovery_phrase"]
+    r = c.post("/api/setup/recover", json={
+        "recovery_phrase": phrase, "new_master_password": "Nou123!"})
+    assert r.status_code == 200 and "conn" in holder

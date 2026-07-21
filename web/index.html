@@ -36,7 +36,52 @@
 </header>
 <main>
 
-<div id="login" class="view activ">
+<div id="setup" class="view">
+  <div class="card" style="max-width:420px;margin:60px auto">
+    <h2>Configurare initiala</h2>
+    <p>Prima pornire: seteaza parola master (cripteaza baza de date) si contul de administrator.</p>
+    <input id="setupMaster" type="password" placeholder="Parola master (criptare)">
+    <input id="setupAdminUser" placeholder="Utilizator administrator">
+    <input id="setupAdminPass" type="password" placeholder="Parola administrator">
+    <button onclick="ruleazaSetup()">Initializeaza</button>
+    <p id="setupErr" class="eroare"></p>
+  </div>
+</div>
+
+<div id="fraza" class="view">
+  <div class="card" style="max-width:560px;margin:60px auto">
+    <h2>Fraza de recuperare</h2>
+    <p><strong>Aceasta fraza este afisata O SINGURA DATA.</strong>
+       Fara ea si fara parola master, datele sunt irecuperabile.
+       Tipareste-o sau salveaza-o intr-un loc sigur (ex: seif).</p>
+    <p id="frazaText" style="font-family:monospace;background:#e8ebf2;padding:12px;border-radius:4px"></p>
+    <label><input id="frazaConfirm" type="checkbox" style="width:auto">
+      Am salvat fraza de recuperare intr-un loc sigur</label>
+    <button onclick="continuaDupaFraza()">Continua</button>
+  </div>
+</div>
+
+<div id="unlock" class="view">
+  <div class="card" style="max-width:360px;margin:60px auto">
+    <h2>Deblocare aplicatie</h2>
+    <input id="unlockPass" type="password" placeholder="Parola master">
+    <button onclick="deblocheaza()">Deblocheaza</button>
+    <p id="unlockErr" class="eroare"></p>
+    <p><a href="#" onclick="arata('recuperare');return false">Am uitat parola master</a></p>
+  </div>
+</div>
+
+<div id="recuperare" class="view">
+  <div class="card" style="max-width:480px;margin:60px auto">
+    <h2>Recuperare cu fraza</h2>
+    <textarea id="recFraza" rows="3" placeholder="Fraza de recuperare (24 cuvinte)"></textarea>
+    <input id="recParolaNoua" type="password" placeholder="Parola master noua">
+    <button onclick="recupereaza()">Recupereaza</button>
+    <p id="recErr" class="eroare"></p>
+  </div>
+</div>
+
+<div id="login" class="view">
   <div class="card" style="max-width:360px;margin:60px auto">
     <h2>Autentificare</h2>
     <input id="loginUser" placeholder="Utilizator">
@@ -106,6 +151,51 @@
 </main>
 <script>
 let permisiuni = [], reconCurent = null;
+
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const st = await (await fetch('/api/setup/status')).json();
+    arata(st.initialized ? 'unlock' : 'setup');
+  } catch (e) {
+    // Setup routes absent (e.g. test/static context) — fall back to login.
+    arata('login');
+  }
+});
+
+async function ruleazaSetup() {
+  const r = await fetch('/api/setup', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({master_password: setupMaster.value,
+                          admin_username: setupAdminUser.value,
+                          admin_password: setupAdminPass.value})});
+  const body = await r.json();
+  if (!r.ok) { setupErr.textContent = body.error; return; }
+  frazaText.textContent = body.recovery_phrase;
+  arata('fraza');
+}
+
+function continuaDupaFraza() {
+  if (!frazaConfirm.checked) return;
+  frazaText.textContent = '';
+  arata('login');
+}
+
+async function deblocheaza() {
+  const r = await fetch('/api/setup/unlock', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({master_password: unlockPass.value})});
+  if (!r.ok) { unlockErr.textContent = (await r.json()).error; return; }
+  arata('login');
+}
+
+async function recupereaza() {
+  const r = await fetch('/api/setup/recover', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({recovery_phrase: recFraza.value,
+                          new_master_password: recParolaNoua.value})});
+  if (!r.ok) { recErr.textContent = (await r.json()).error; return; }
+  arata('login');
+}
 
 function arata(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('activ'));

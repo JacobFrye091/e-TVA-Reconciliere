@@ -238,3 +238,64 @@ def create_app(conn, upload_dir: str) -> Flask:
         return jsonify({"ok": True})
 
     return app
+
+
+def create_setup_app(app_dir: str, on_ready) -> Flask:
+    """Pre-unlock app: setup wizard, unlock, recovery."""
+    from etva import crypto, db as db_mod
+    app = Flask(__name__, static_folder=_WEB_DIR, static_url_path="/static")
+    app.secret_key = secrets.token_hex(32)
+    ks_path = os.path.join(app_dir, "keystore.json")
+    db_path = os.path.join(app_dir, "app.db")
+
+    @app.get("/")
+    def index():
+        return app.send_static_file("index.html")
+
+    def _open_and_ready(key):
+        conn = db_mod.open_db(db_path, key)
+        db_mod.init_schema(conn)
+        on_ready(conn)
+
+    @app.get("/api/setup/status")
+    def status():
+        return jsonify({"initialized": os.path.exists(ks_path)})
+
+    @app.post("/api/setup")
+    def setup():
+        data = request.get_json(force=True)
+        if os.path.exists(ks_path):
+            return jsonify({"error": "Aplicatia este deja initializata."}), 400
+        phrase = crypto.create_keystore(data["master_password"], ks_path)
+        key = crypto.unlock_keystore(data["master_password"], ks_path)
+        conn = db_mod.open_db(db_path, key)
+        db_mod.init_schema(conn)
+        uid = auth.create_user(conn, data["admin_username"],
+                               data["admin_password"])
+        pm.assign_role(conn, uid, "Admin")
+        audit.log(conn, uid, "setup.initializare")
+        on_ready(conn)
+        return jsonify({"recovery_phrase": phrase})
+
+    @app.post("/api/setup/unlock")
+    def unlock():
+        data = request.get_json(force=True)
+        try:
+            key = crypto.unlock_keystore(data["master_password"], ks_path)
+        except crypto.KeystoreError as e:
+            return jsonify({"error": str(e)}), 401
+        _open_and_ready(key)
+        return jsonify({"ok": True})
+
+    @app.post("/api/setup/recover")
+    def recover():
+        data = request.get_json(force=True)
+        try:
+            key = crypto.recover_keystore(data["recovery_phrase"], ks_path,
+                                          data["new_master_password"])
+        except crypto.KeystoreError as e:
+            return jsonify({"error": str(e)}), 401
+        _open_and_ready(key)
+        return jsonify({"ok": True})
+
+    return app
