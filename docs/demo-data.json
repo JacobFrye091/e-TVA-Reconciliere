@@ -1,0 +1,86 @@
+{
+  "firm_name": "Contabilitate Demo SRL",
+  "username": "demo",
+  "clients": [
+    {
+      "id": 1,
+      "cui": "RO18765432",
+      "name": "Nordic Trade SRL",
+      "period": "2026-06",
+      "result": {
+        "totals_company": {
+          "achizitii_interne": {"base": 3951.0, "vat": 750.7},
+          "livrari_interne": {"base": 2990.0, "vat": 568.1},
+          "livrari_ue": {"base": 560.0, "vat": 106.4}
+        },
+        "totals_anaf": {
+          "achizitii_interne": {"base": 705.5, "vat": 134.05},
+          "livrari_interne": {"base": 3040.0, "vat": 577.6},
+          "livrari_ue": {"base": 560.0, "vat": 106.4}
+        },
+        "differences": [
+          {"diff_type": "duplicat", "partner_cui": "RO999000", "invoice_no": "F1005", "category": "achizitii_interne",
+           "company": {"base": 551.0, "vat": 104.7}, "anaf": {"base": 275.5, "vat": 52.35},
+           "delta_base": 275.5, "delta_vat": 52.35},
+          {"diff_type": "suma_diferita", "partner_cui": "RO333444", "invoice_no": "F1002", "category": "livrari_interne",
+           "company": {"base": 850.0, "vat": 161.5}, "anaf": {"base": 900.0, "vat": 171.0},
+           "delta_base": -50.0, "delta_vat": -9.5},
+          {"diff_type": "lipsa_in_anaf", "partner_cui": "RO555666", "invoice_no": "F1003", "category": "achizitii_interne",
+           "company": {"base": 3400.0, "vat": 646.0}, "anaf": null,
+           "delta_base": 3400.0, "delta_vat": 646.0},
+          {"diff_type": "suma_diferita", "partner_cui": "RO999000", "invoice_no": "F1005", "category": "achizitii_interne",
+           "company": {"base": 551.0, "vat": 104.7}, "anaf": {"base": 275.5, "vat": 52.35},
+           "delta_base": 275.5, "delta_vat": 52.35},
+          {"diff_type": "lipsa_la_companie", "partner_cui": "RO456456", "invoice_no": "F2001", "category": "achizitii_interne",
+           "company": null, "anaf": {"base": 430.0, "vat": 81.7},
+           "delta_base": -430.0, "delta_vat": -81.7}
+        ],
+        "suggestions": [
+          {"category": "achizitii_interne", "company_base": 3951.0, "company_vat": 750.7,
+           "anaf_base": 705.5, "anaf_vat": 134.05, "suggested_base": 705.5, "suggested_vat": 134.05,
+           "status": "de_verificat"},
+          {"category": "livrari_interne", "company_base": 2990.0, "company_vat": 568.1,
+           "anaf_base": 3040.0, "anaf_vat": 577.6, "suggested_base": 3040.0, "suggested_vat": 577.6,
+           "status": "de_verificat"},
+          {"category": "livrari_ue", "company_base": 560.0, "company_vat": 106.4,
+           "anaf_base": 560.0, "anaf_vat": 106.4, "suggested_base": 560.0, "suggested_vat": 106.4,
+           "status": "ok"}
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "cui": "RO22456789",
+      "name": "Atlas Construct SRL",
+      "period": "2026-06",
+      "result": {
+        "totals_company": {
+          "achizitii_interne": {"base": 1650.0, "vat": 313.5},
+          "achizitii_ue": {"base": 720.0, "vat": 136.8},
+          "livrari_interne": {"base": 12280.0, "vat": 2333.2}
+        },
+        "totals_anaf": {
+          "achizitii_interne": {"base": 1650.0, "vat": 313.5},
+          "achizitii_ue": {"base": 720.0, "vat": 136.8},
+          "livrari_interne": {"base": 12130.0, "vat": 2304.7}
+        },
+        "differences": [
+          {"diff_type": "suma_diferita", "partner_cui": "RO205205", "invoice_no": "F2105", "category": "livrari_interne",
+           "company": {"base": 5100.0, "vat": 969.0}, "anaf": {"base": 4950.0, "vat": 940.5},
+           "delta_base": 150.0, "delta_vat": 28.5}
+        ],
+        "suggestions": [
+          {"category": "achizitii_interne", "company_base": 1650.0, "company_vat": 313.5,
+           "anaf_base": 1650.0, "anaf_vat": 313.5, "suggested_base": 1650.0, "suggested_vat": 313.5,
+           "status": "ok"},
+          {"category": "achizitii_ue", "company_base": 720.0, "company_vat": 136.8,
+           "anaf_base": 720.0, "anaf_vat": 136.8, "suggested_base": 720.0, "suggested_vat": 136.8,
+           "status": "ok"},
+          {"category": "livrari_interne", "company_base": 12280.0, "company_vat": 2333.2,
+           "anaf_base": 12130.0, "anaf_vat": 2304.7, "suggested_base": 12130.0, "suggested_vat": 2304.7,
+           "status": "de_verificat"}
+        ]
+      }
+    }
+  ]
+}

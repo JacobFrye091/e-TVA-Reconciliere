@@ -197,8 +197,8 @@ footer a:hover { color: #fff; }
       <a href="#functionalitati">Funcționalități</a>
       <a href="#cum">Cum funcționează</a>
       <a href="#securitate">Securitate</a>
-      <a href="autentificare">Autentificare</a>
-      <a class="btn btn-plin" href="inregistrare">Creează cont</a>
+      <a href="autentificare" data-auth="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont</a>
     </nav>
   </div>
 </header>
@@ -212,8 +212,8 @@ footer a:hover { color: #fff; }
         factură cu factură. Vezi exact ce lipsește, ce diferă și ce valori corectate
         să folosești în D300 — cu raport Excel gata de predat.</p>
       <div class="hero-cta">
-        <a class="btn btn-plin" href="inregistrare">Creează cont de firmă</a>
-        <a class="btn btn-gol" href="autentificare">Autentificare</a>
+        <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont de firmă</a>
+        <a class="btn btn-gol" href="autentificare" data-auth="autentificare">Autentificare</a>
       </div>
       <div class="hero-punkte">
         <span>Direct în browser, fără instalare</span>
@@ -355,8 +355,8 @@ footer a:hover { color: #fff; }
     <p>Creezi contul firmei în două minute, imporți primul jurnal direct din browser
       și vezi imediat unde stai. Gratuit în perioada de lansare.</p>
     <div class="hero-cta">
-      <a class="btn btn-plin" href="inregistrare">Creează cont de firmă</a>
-      <a class="btn btn-contur" href="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont de firmă</a>
+      <a class="btn btn-contur" href="autentificare" data-auth="autentificare">Autentificare</a>
     </div>
     <p class="cerinte">Fără instalare · funcționează din orice browser modern</p>
   </div>
@@ -377,6 +377,13 @@ if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
   document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
 } else {
   document.querySelectorAll('.reveal').forEach(el => el.classList.add('vazut'));
+}
+
+// Pe GitHub Pages nu exista backend: Autentificare/Creeaza cont duc spre o
+// demonstratie statica cu date exemplu in loc de 404. Cand pagina e servita
+// chiar de platforma (Flask), linkurile raman cele reale.
+if (location.hostname.endsWith('.github.io')) {
+  document.querySelectorAll('[data-auth]').forEach(a => { a.href = 'demo.html'; });
 }
 </script>
 </body>
