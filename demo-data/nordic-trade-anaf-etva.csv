@@ -1,0 +1,7 @@
+cui_partener,nr_factura,data,baza,tva,categorie
+RO111222,F1001,2026-06-03,1200.00,228.00,livrari_interne
+RO333444,F1002,2026-06-05,900.00,171.00,livrari_interne
+RO777888,F1004,2026-06-12,560.00,106.40,livrari_ue
+RO999000,F1005,2026-06-15,275.50,52.35,achizitii_interne
+RO121212,F1006,2026-06-20,940.00,178.60,livrari_interne
+RO456456,F2001,2026-06-22,430.00,81.70,achizitii_interne

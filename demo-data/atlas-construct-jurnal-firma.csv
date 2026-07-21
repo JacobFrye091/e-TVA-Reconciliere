@@ -1,0 +1,6 @@
+cui_partener,nr_factura,data,baza,tva,categorie
+RO201201,F2101,2026-06-02,4200.00,798.00,livrari_interne
+RO202202,F2102,2026-06-07,1650.00,313.50,achizitii_interne
+RO203203,F2103,2026-06-11,2980.00,566.20,livrari_interne
+RO204204,F2104,2026-06-18,720.00,136.80,achizitii_ue
+RO205205,F2105,2026-06-25,5100.00,969.00,livrari_interne
