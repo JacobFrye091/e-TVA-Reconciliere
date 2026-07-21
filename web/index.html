@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>e-TVA Reconciliere</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root {
   --ink: #121d33;
@@ -194,24 +194,13 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 </head>
 <body>
 
-<!-- ============ AUTH LAYER ============ -->
+<!-- ============ LOADING LAYER ============ -->
 <div id="strat-auth">
-
-<div id="login" class="view">
-  <div class="auth-layer"><div class="auth-card">
-    <div class="brand"><div class="brand-mark">TVA</div>
-      <div><div class="brand-name">e-TVA Reconciliere</div>
-      <div class="brand-sub">Reconciliere decont TVA cu evidenta ANAF</div></div></div>
-    <h2>Autentificare</h2>
-    <p class="auth-hint">Foloseste contul firmei tale, creat pe portalul e-TVA Reconciliere.</p>
-    <div class="field"><label for="loginUser">Utilizator</label><input id="loginUser"></div>
-    <div class="field"><label for="loginPass">Parola</label>
-      <input id="loginPass" type="password" onkeydown="if(event.key==='Enter')login()"></div>
-    <button class="btn-lat" onclick="login()">Intra in aplicatie</button>
-    <p id="loginErr" class="eroare"></p>
+<div id="incarcare" class="view activ">
+  <div class="auth-layer"><div class="auth-card" style="text-align:center">
+    <p style="color:var(--muted)">Se incarca aplicatia...</p>
   </div></div>
 </div>
-
 </div><!-- /strat-auth -->
 
 <!-- ============ APP SHELL ============ -->
@@ -235,6 +224,8 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <div><div class="user-nume" id="numeUser"></div>
       <div class="user-rol">Sesiune activa</div></div>
     </div>
+    <button class="nav-btn" onclick="window.location='/panou'">
+      <span class="ic">⌂</span> Contul firmei</button>
     <button class="nav-btn" onclick="logout()"><span class="ic">⏻</span> Iesire</button>
   </div>
 </aside>
@@ -362,34 +353,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
     const r = await fetch('/api/me');
     if (r.ok) { await intraInAplicatie(await r.json()); return; }
-  } catch (e) { /* gate not reachable yet */ }
-  arata('login');
+  } catch (e) { /* platforma indisponibila */ }
+  window.location = '/autentificare';
 });
 
 async function api(url, opts = {}) {
   const r = await fetch(url, opts);
-  if (r.status === 401) { arata('login'); throw new Error('neautentificat'); }
+  if (r.status === 401) {
+    window.location = '/autentificare';
+    throw new Error('neautentificat');
+  }
   return r;
 }
 
-/* ---------- Session (portal accounts) ---------- */
-async function login() {
-  loginErr.textContent = '';
-  let r;
-  try {
-    r = await fetch('/api/login', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username: loginUser.value, password: loginPass.value})});
-  } catch (e) {
-    loginErr.textContent = 'Serverul local nu raspunde. Inchide si redeschide aplicatia.';
-    return;
-  }
-  const body = await r.json();
-  if (!r.ok) { loginErr.textContent = body.error; return; }
-  loginPass.value = ''; loginErr.textContent = '';
-  await intraInAplicatie(body);
-}
-
+/* ---------- Session (platform accounts) ---------- */
 async function intraInAplicatie(ident) {
   permisiuni = ident.permissions;
   userCurent = ident.username;
@@ -409,9 +386,7 @@ async function intraInAplicatie(ident) {
 
 async function logout() {
   await fetch('/api/logout', {method: 'POST'});
-  permisiuni = []; reconCurent = null;
-  navRezultate.style.display = 'none';
-  arata('login');
+  window.location = '/';
 }
 
 /* ---------- Clients ---------- */

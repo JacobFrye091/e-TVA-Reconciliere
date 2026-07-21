@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>e-TVA Reconciliere — Decontul precompletat ANAF, verificat în minute</title>
-<meta name="description" content="Compară jurnalul firmei cu datele e-TVA de la ANAF, factură cu factură. Diferențele exacte, valorile corectate pentru D300 și raport Excel — totul local, criptat AES-256.">
+<meta name="description" content="Compară jurnalul firmei cu datele e-TVA de la ANAF, factură cu factură. Diferențele exacte, valorile corectate pentru D300 și raport Excel — direct în browser, baza de date a fiecărei firme criptată separat cu AES-256.">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -213,11 +213,11 @@ footer a:hover { color: #fff; }
         să folosești în D300 — cu raport Excel gata de predat.</p>
       <div class="hero-cta">
         <a class="btn btn-plin" href="inregistrare">Creează cont de firmă</a>
-        <a class="btn btn-gol" href="#descarca">Descarcă pentru Windows</a>
+        <a class="btn btn-gol" href="autentificare">Autentificare</a>
       </div>
       <div class="hero-punkte">
-        <span>Datele rămân pe calculatorul tău</span>
-        <span>Criptare AES-256</span>
+        <span>Direct în browser, fără instalare</span>
+        <span>Baza de date a fiecărei firme, criptată separat AES-256</span>
         <span>Gratuit în perioada de lansare</span>
       </div>
     </div>
@@ -326,39 +326,39 @@ footer a:hover { color: #fff; }
   <div class="inv">
     <div class="sec-cap reveal">
       <div class="tag">Securitate</div>
-      <h2>Datele fiscale nu pleacă nicăieri</h2>
-      <p>Aplicația rulează integral pe calculatorul tău. Nu există cloud, nu există
-        server extern, nu există transmisie de date — iar ce e pe disc e criptat.</p>
+      <h2>Fiecare firmă, izolată criptografic</h2>
+      <p>Datele fiecărei firme stau într-o bază de date proprie, criptată separat.
+        Cheia unei firme nu poate descifra niciodată datele alteia.</p>
     </div>
     <div class="sec-grila">
-      <div class="s-card reveal"><h3>Criptare AES-256 pe disc</h3>
-        <p>Întreaga bază de date este criptată cu SQLCipher. Un fișier furat sau copiat
-          este ilizibil fără cheia de criptare.</p></div>
-      <div class="s-card reveal"><h3>Chei derivate cu Argon2id</h3>
-        <p>Parola master trece prin Argon2id — standardul actual recomandat împotriva
+      <div class="s-card reveal"><h3>Criptare AES-256 per firmă</h3>
+        <p>Baza de date a fiecărei firme este criptată cu SQLCipher, cu o cheie proprie.
+          Un fișier furat sau copiat este ilizibil fără cheia acelei firme.</p></div>
+      <div class="s-card reveal"><h3>Parole protejate cu Argon2id</h3>
+        <p>Fiecare parolă trece prin Argon2id — standardul actual recomandat împotriva
           atacurilor prin forță brută, inclusiv cu hardware dedicat.</p></div>
-      <div class="s-card reveal"><h3>Frază de recuperare de 24 de cuvinte</h3>
-        <p>Singura cale de recuperare dacă parola master se pierde. Se afișează o singură
-          dată, la instalare — securitate reală, fără uși din spate.</p></div>
-      <div class="s-card reveal"><h3>Conturi separate, parole Argon2</h3>
-        <p>Fiecare angajat are contul lui, cu parolă criptografic protejată. Permisiunile
-          se verifică la fiecare acțiune, pe server, nu doar în interfață.</p></div>
+      <div class="s-card reveal"><h3>Chei împachetate, niciodată în clar</h3>
+        <p>Cheia de criptare a fiecărei firme este ea însăși criptată pe server și
+          nu ajunge niciodată necriptată pe disc sau în browser.</p></div>
+      <div class="s-card reveal"><h3>Conturi separate, permisiuni granulare</h3>
+        <p>Fiecare angajat are contul lui. Permisiunile se verifică la fiecare acțiune,
+          pe server, nu doar în interfață.</p></div>
     </div>
-    <p class="s-nota reveal">Nicio ușă din spate înseamnă exact asta: fără parola master și
-      fără fraza de recuperare, datele nu pot fi accesate de nimeni — nici de noi.</p>
+    <p class="s-nota reveal">Fiecare firmă vede și lucrează exclusiv cu datele proprii —
+      izolare completă între conturi, verificată la fiecare cerere.</p>
   </div>
 </section>
 
-<section id="descarca" class="desc">
+<section id="incepe" class="desc">
   <div class="inv reveal">
     <h2>Pregătește-te de e-TVA înainte de primul decont</h2>
-    <p>Instalezi în două minute, imporți primul jurnal și vezi imediat unde stai.
-      Gratuit în perioada de lansare.</p>
+    <p>Creezi contul firmei în două minute, imporți primul jurnal direct din browser
+      și vezi imediat unde stai. Gratuit în perioada de lansare.</p>
     <div class="hero-cta">
-      <a class="btn btn-plin" href="https://github.com/JacobFrye091/e-TVA-Reconciliere/releases" target="_blank" rel="noopener">Descarcă pentru Windows</a>
-      <a class="btn btn-contur" href="https://github.com/JacobFrye091/e-TVA-Reconciliere" target="_blank" rel="noopener">Instrucțiuni de instalare</a>
+      <a class="btn btn-plin" href="inregistrare">Creează cont de firmă</a>
+      <a class="btn btn-contur" href="autentificare">Autentificare</a>
     </div>
-    <p class="cerinte">Windows 10/11 · nu necesită conexiune la internet după instalare</p>
+    <p class="cerinte">Fără instalare · funcționează din orice browser modern</p>
   </div>
 </section>
 
