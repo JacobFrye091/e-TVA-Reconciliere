@@ -4,164 +4,441 @@
 <meta charset="utf-8">
 <title>e-TVA Reconciliere</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6fa; }
-  header { background: #1e3a5f; color: #fff; padding: 12px 20px;
-           display: flex; justify-content: space-between; align-items: center; }
-  main { padding: 20px; max-width: 1100px; margin: auto; }
-  .view { display: none; } .view.activ { display: block; }
-  table { border-collapse: collapse; width: 100%; background: #fff;
-          margin: 12px 0; }
-  th, td { border: 1px solid #d0d4dc; padding: 6px 10px; text-align: left; }
-  th { background: #e8ebf2; }
-  tr.rosu td { background: #ffc7ce; }
-  button { background: #1e3a5f; color: #fff; border: 0; padding: 8px 14px;
-           border-radius: 4px; cursor: pointer; }
-  input, select, textarea { padding: 6px; margin: 4px 0; width: 100%;
-                            box-sizing: border-box; }
-  .card { background: #fff; border: 1px solid #d0d4dc; border-radius: 6px;
-          padding: 16px; margin: 12px 0; }
-  .eroare { color: #b00020; white-space: pre-wrap; }
-  nav button { margin-right: 8px; background: #35507a; }
+:root {
+  --ink: #121d33;
+  --ink-2: #1c2a47;
+  --ink-3: #2a3b5e;
+  --bg: #f2f4f8;
+  --surface: #ffffff;
+  --border: #dde3ec;
+  --text: #1b2430;
+  --muted: #68738a;
+  --accent: #0d5c63;
+  --accent-hover: #0a4a50;
+  --accent-soft: #e3efee;
+  --danger: #b3261e;
+  --danger-bg: #fdf0ef;
+  --warn: #9a6700;
+  --warn-bg: #fff6e0;
+  --ok: #1a7f4b;
+  --ok-bg: #e9f5ee;
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(18, 29, 51, .06), 0 4px 16px rgba(18, 29, 51, .07);
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-num: "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--font); margin: 0; background: var(--bg);
+  color: var(--text); font-size: 14px; line-height: 1.45;
+}
+h1, h2, h3 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+
+/* ---------- Auth layer (setup / unlock / login) ---------- */
+.auth-layer {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, var(--ink) 0%, #0d1526 60%, #0a1120 100%);
+  padding: 24px;
+}
+.auth-card {
+  background: var(--surface); border-radius: 12px; box-shadow: var(--shadow);
+  width: 100%; max-width: 400px; padding: 36px 36px 28px;
+}
+.auth-card.wide { max-width: 560px; }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+.brand-mark {
+  width: 40px; height: 40px; border-radius: 9px; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px; letter-spacing: .02em; flex: none;
+}
+.brand-name { font-weight: 650; font-size: 16px; }
+.brand-sub { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.auth-card h2 { margin: 0 0 6px; font-size: 19px; font-weight: 650; }
+.auth-hint { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+input, select, textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px;
+  font: inherit; background: #fff; color: var(--text);
+}
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+}
+button {
+  font: inherit; font-weight: 600; border: 0; border-radius: 6px; cursor: pointer;
+  padding: 9px 16px; background: var(--accent); color: #fff;
+}
+button:hover { background: var(--accent-hover); }
+button.secundar { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+button.secundar:hover { background: var(--bg); }
+button.discret { background: none; color: var(--muted); padding: 6px 8px; font-weight: 500; }
+button.discret:hover { background: var(--bg); color: var(--text); }
+.btn-lat { width: 100%; margin-top: 6px; }
+.eroare { color: var(--danger); font-size: 13px; white-space: pre-wrap; margin: 10px 0 0; }
+.auth-link { display: block; margin-top: 14px; font-size: 13px; color: var(--muted); text-decoration: none; }
+.auth-link:hover { color: var(--accent); }
+.fraza-box {
+  font-family: var(--font-num); font-size: 13px; line-height: 1.8;
+  background: var(--accent-soft); border: 1px dashed var(--accent);
+  padding: 16px; border-radius: 8px; margin: 14px 0; word-spacing: 6px;
+}
+.avert {
+  background: var(--warn-bg); border-left: 3px solid var(--warn);
+  padding: 10px 12px; border-radius: 0 6px 6px 0; font-size: 13px; margin: 0 0 8px;
+}
+label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 12px 0; cursor: pointer; }
+label.check input { width: auto; margin-top: 2px; }
+
+/* ---------- App shell ---------- */
+.shell { display: none; min-height: 100vh; }
+.shell.activ { display: flex; }
+aside {
+  width: 228px; flex: none; background: var(--ink); color: #cbd4e4;
+  display: flex; flex-direction: column; padding: 18px 12px;
+}
+aside .brand { margin: 4px 6px 26px; }
+aside .brand-name { color: #fff; }
+aside .brand-sub { color: #7d8aa5; }
+.nav-grup { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: #6d7b99; margin: 14px 10px 6px; }
+.nav-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; color: #cbd4e4; font-weight: 500; padding: 9px 10px; border-radius: 6px;
+  margin-bottom: 2px;
+}
+.nav-btn:hover { background: var(--ink-2); color: #fff; }
+.nav-btn.activ { background: var(--ink-3); color: #fff; font-weight: 600; }
+.nav-btn .ic { width: 18px; text-align: center; flex: none; opacity: .85; }
+aside .jos { margin-top: auto; border-top: 1px solid var(--ink-3); padding-top: 10px; }
+.user-eticheta { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;
+}
+.user-nume { font-size: 13px; color: #fff; font-weight: 600; }
+.user-rol { font-size: 11px; color: #7d8aa5; }
+
+.continut { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bara-sus {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+}
+.bara-sus h1 { margin: 0; font-size: 17px; font-weight: 650; }
+.zona { padding: 24px 28px 40px; max-width: 1180px; width: 100%; margin: 0 auto; }
+
+.view { display: none; }
+.view.activ { display: block; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px 22px; margin-bottom: 18px; box-shadow: 0 1px 2px rgba(18,29,51,.04);
+}
+.card h3 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+.card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+.grila-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 800px) { .grila-2 { grid-template-columns: 1fr; } aside { display: none; } }
+.actiuni { margin-top: 14px; display: flex; gap: 10px; align-items: center; }
+
+/* ---------- Tables ---------- */
+table { border-collapse: collapse; width: 100%; background: var(--surface); }
+.card table { margin: 0 -22px; width: calc(100% + 44px); }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { padding-left: 22px; }
+th:last-child, td:last-child { padding-right: 22px; }
+thead th {
+  font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); background: #f8fafc; border-bottom: 1px solid var(--border);
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: #f8fafc; }
+td.num, th.num { text-align: right; font-family: var(--font-num); font-size: 13px;
+  font-variant-numeric: tabular-nums; }
+td.cod { font-family: var(--font-num); font-size: 13px; }
+tr.sever td { background: var(--danger-bg); box-shadow: inset 3px 0 0 var(--danger); }
+tr.sever:hover td { background: #fbe6e4; }
+td.delta-neg { color: var(--danger); font-weight: 600; }
+td.delta-poz { color: var(--warn); font-weight: 600; }
+.gol { color: var(--muted); text-align: center; padding: 28px 22px !important; }
+
+/* ---------- Chips & ledger strip ---------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+}
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); }
+.chip.atentie { color: var(--warn); background: var(--warn-bg); }
+.chip.problema { color: var(--danger); background: var(--danger-bg); }
+.chip.neutru { color: var(--muted); background: var(--bg); }
+
+.registru {
+  display: flex; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 18px; overflow: hidden;
+}
+.registru > div { flex: 1; padding: 16px 22px; border-right: 1px solid var(--border); }
+.registru > div:last-child { border-right: 0; }
+.registru .et { font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.registru .val { font-family: var(--font-num); font-size: 20px; font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.registru .val.rau { color: var(--danger); }
+.registru .val.bun { color: var(--ok); }
+.registru .sub-val { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .view.activ { animation: apar .18s ease-out; }
+  @keyframes apar { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+}
 </style>
 </head>
 <body>
-<header>
-  <strong>e-TVA Reconciliere</strong>
-  <nav id="meniu" style="display:none">
-    <button onclick="arata('dashboard')">Clienti</button>
-    <button id="btnAdmin" onclick="arata('admin')" style="display:none">Administrare</button>
-    <button id="btnAudit" onclick="arata('audit'); incarcaAudit()" style="display:none">Audit</button>
-    <button onclick="logout()">Iesire</button>
-  </nav>
-</header>
-<main>
+
+<!-- ============ AUTH LAYER ============ -->
+<div id="strat-auth">
 
 <div id="setup" class="view">
-  <div class="card" style="max-width:420px;margin:60px auto">
+  <div class="auth-layer"><div class="auth-card wide">
+    <div class="brand"><div class="brand-mark">TVA</div>
+      <div><div class="brand-name">e-TVA Reconciliere</div>
+      <div class="brand-sub">Reconciliere decont TVA cu evidenta ANAF</div></div></div>
     <h2>Configurare initiala</h2>
-    <p>Prima pornire: seteaza parola master (cripteaza baza de date) si contul de administrator.</p>
-    <input id="setupMaster" type="password" placeholder="Parola master (criptare)">
-    <input id="setupAdminUser" placeholder="Utilizator administrator">
-    <input id="setupAdminPass" type="password" placeholder="Parola administrator">
-    <button onclick="ruleazaSetup()">Initializeaza</button>
+    <p class="auth-hint">Prima pornire: seteaza parola master care cripteaza baza de date si creeaza contul de administrator.</p>
+    <div class="field"><label for="setupMaster">Parola master (criptare)</label>
+      <input id="setupMaster" type="password" autocomplete="new-password"></div>
+    <div class="grila-2">
+      <div class="field"><label for="setupAdminUser">Utilizator administrator</label>
+        <input id="setupAdminUser"></div>
+      <div class="field"><label for="setupAdminPass">Parola administrator</label>
+        <input id="setupAdminPass" type="password" autocomplete="new-password"></div>
+    </div>
+    <button class="btn-lat" onclick="ruleazaSetup()">Initializeaza aplicatia</button>
     <p id="setupErr" class="eroare"></p>
-  </div>
+  </div></div>
 </div>
 
 <div id="fraza" class="view">
-  <div class="card" style="max-width:560px;margin:60px auto">
+  <div class="auth-layer"><div class="auth-card wide">
     <h2>Fraza de recuperare</h2>
-    <p><strong>Aceasta fraza este afisata O SINGURA DATA.</strong>
-       Fara ea si fara parola master, datele sunt irecuperabile.
-       Tipareste-o sau salveaza-o intr-un loc sigur (ex: seif).</p>
-    <p id="frazaText" style="font-family:monospace;background:#e8ebf2;padding:12px;border-radius:4px"></p>
-    <label><input id="frazaConfirm" type="checkbox" style="width:auto">
+    <p class="avert"><strong>Se afiseaza o singura data.</strong> Fara aceasta fraza si fara parola master,
+      datele criptate sunt irecuperabile. Tipareste-o sau pastreaz-o intr-un loc sigur (ex: seif).</p>
+    <p id="frazaText" class="fraza-box"></p>
+    <label class="check"><input id="frazaConfirm" type="checkbox">
       Am salvat fraza de recuperare intr-un loc sigur</label>
-    <button onclick="continuaDupaFraza()">Continua</button>
-  </div>
+    <button class="btn-lat" onclick="continuaDupaFraza()">Continua catre autentificare</button>
+  </div></div>
 </div>
 
 <div id="unlock" class="view">
-  <div class="card" style="max-width:360px;margin:60px auto">
+  <div class="auth-layer"><div class="auth-card">
+    <div class="brand"><div class="brand-mark">TVA</div>
+      <div><div class="brand-name">e-TVA Reconciliere</div>
+      <div class="brand-sub">Baza de date este criptata</div></div></div>
     <h2>Deblocare aplicatie</h2>
-    <input id="unlockPass" type="password" placeholder="Parola master">
-    <button onclick="deblocheaza()">Deblocheaza</button>
+    <div class="field"><label for="unlockPass">Parola master</label>
+      <input id="unlockPass" type="password" onkeydown="if(event.key==='Enter')deblocheaza()"></div>
+    <button class="btn-lat" onclick="deblocheaza()">Deblocheaza</button>
     <p id="unlockErr" class="eroare"></p>
-    <p><a href="#" onclick="arata('recuperare');return false">Am uitat parola master</a></p>
-  </div>
+    <a class="auth-link" href="#" onclick="arata('recuperare');return false">Am uitat parola master</a>
+  </div></div>
 </div>
 
 <div id="recuperare" class="view">
-  <div class="card" style="max-width:480px;margin:60px auto">
+  <div class="auth-layer"><div class="auth-card wide">
     <h2>Recuperare cu fraza</h2>
-    <textarea id="recFraza" rows="3" placeholder="Fraza de recuperare (24 cuvinte)"></textarea>
-    <input id="recParolaNoua" type="password" placeholder="Parola master noua">
-    <button onclick="recupereaza()">Recupereaza</button>
+    <p class="auth-hint">Introdu fraza de recuperare (24 de cuvinte) si seteaza o parola master noua.</p>
+    <div class="field"><label for="recFraza">Fraza de recuperare</label>
+      <textarea id="recFraza" rows="3"></textarea></div>
+    <div class="field"><label for="recParolaNoua">Parola master noua</label>
+      <input id="recParolaNoua" type="password" autocomplete="new-password"></div>
+    <button class="btn-lat" onclick="recupereaza()">Recupereaza accesul</button>
     <p id="recErr" class="eroare"></p>
-  </div>
+    <a class="auth-link" href="#" onclick="arata('unlock');return false">Inapoi la deblocare</a>
+  </div></div>
 </div>
 
 <div id="login" class="view">
-  <div class="card" style="max-width:360px;margin:60px auto">
+  <div class="auth-layer"><div class="auth-card">
+    <div class="brand"><div class="brand-mark">TVA</div>
+      <div><div class="brand-name">e-TVA Reconciliere</div>
+      <div class="brand-sub">Reconciliere decont TVA cu evidenta ANAF</div></div></div>
     <h2>Autentificare</h2>
-    <input id="loginUser" placeholder="Utilizator">
-    <input id="loginPass" type="password" placeholder="Parola">
-    <button onclick="login()">Intra</button>
+    <div class="field"><label for="loginUser">Utilizator</label><input id="loginUser"></div>
+    <div class="field"><label for="loginPass">Parola</label>
+      <input id="loginPass" type="password" onkeydown="if(event.key==='Enter')login()"></div>
+    <button class="btn-lat" onclick="login()">Intra in aplicatie</button>
     <p id="loginErr" class="eroare"></p>
-  </div>
+  </div></div>
 </div>
 
-<div id="dashboard" class="view">
-  <h2>Clienti</h2>
-  <div id="listaClienti"></div>
-  <div class="card" id="cardClientNou" style="display:none">
-    <h3>Client nou</h3>
-    <input id="cuiNou" placeholder="CUI">
-    <input id="numeNou" placeholder="Denumire">
-    <button onclick="adaugaClient()">Adauga</button>
+</div><!-- /strat-auth -->
+
+<!-- ============ APP SHELL ============ -->
+<div id="shell" class="shell">
+<aside>
+  <div class="brand"><div class="brand-mark">TVA</div>
+    <div><div class="brand-name">e-TVA</div><div class="brand-sub">Reconciliere</div></div></div>
+  <div class="nav-grup">Lucru</div>
+  <button class="nav-btn" data-view="dashboard" onclick="navigheaza('dashboard')">
+    <span class="ic">▦</span> Clienti si reconciliere</button>
+  <button class="nav-btn" data-view="rezultate" id="navRezultate" onclick="navigheaza('rezultate')" style="display:none">
+    <span class="ic">Δ</span> Rezultate</button>
+  <div class="nav-grup" id="grupAdmin" style="display:none">Administrare</div>
+  <button class="nav-btn" data-view="admin" id="btnAdmin" onclick="navigheaza('admin')" style="display:none">
+    <span class="ic">⚙</span> Utilizatori si roluri</button>
+  <button class="nav-btn" data-view="audit" id="btnAudit" onclick="navigheaza('audit'); incarcaAudit()" style="display:none">
+    <span class="ic">☰</span> Jurnal de audit</button>
+  <div class="jos">
+    <div class="user-eticheta">
+      <div class="avatar" id="avatarUser">?</div>
+      <div><div class="user-nume" id="numeUser"></div>
+      <div class="user-rol">Sesiune activa</div></div>
+    </div>
+    <button class="nav-btn" onclick="logout()"><span class="ic">⏻</span> Iesire</button>
   </div>
-  <div class="card">
-    <h3>Reconciliere noua</h3>
-    <select id="selClient"></select>
-    <input id="perioada" placeholder="Perioada (ex: 2026-01)">
-    <label>Jurnal firma (xlsx/csv)</label>
-    <input id="fisierFirma" type="file">
-    <label>Fisier ANAF e-TVA (xlsx/csv)</label>
-    <input id="fisierAnaf" type="file">
-    <label>Mapare coloane ANAF (JSON, optional)</label>
-    <textarea id="mapareAnaf" rows="3"
-      placeholder='{"cui_partener":"CIF","nr_factura":"Numar",...}'></textarea>
-    <button onclick="ruleazaReconciliere()">Ruleaza reconcilierea</button>
-    <p id="reconErr" class="eroare"></p>
+</aside>
+
+<div class="continut">
+  <div class="bara-sus"><h1 id="titluPagina">Clienti si reconciliere</h1></div>
+  <div class="zona">
+
+  <div id="dashboard" class="view">
+    <div class="card">
+      <h3>Clienti</h3>
+      <p class="sub">Firmele pentru care se ruleaza reconcilierea.</p>
+      <div id="listaClienti"></div>
+      <div id="cardClientNou" style="display:none">
+        <div class="actiuni" style="margin-top:16px">
+          <input id="cuiNou" placeholder="CUI (ex: RO12345678)" style="max-width:220px">
+          <input id="numeNou" placeholder="Denumire firma" style="max-width:320px">
+          <button class="secundar" onclick="adaugaClient()">Adauga client</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Reconciliere noua</h3>
+      <p class="sub">Compara jurnalul firmei cu datele e-TVA primite de la ANAF pentru o perioada.</p>
+      <div class="grila-2">
+        <div class="field"><label for="selClient">Client</label><select id="selClient"></select></div>
+        <div class="field"><label for="perioada">Perioada</label>
+          <input id="perioada" placeholder="ex: 2026-01"></div>
+        <div class="field"><label for="fisierFirma">Jurnal firma (xlsx / csv)</label>
+          <input id="fisierFirma" type="file" accept=".xlsx,.csv"></div>
+        <div class="field"><label for="fisierAnaf">Fisier ANAF e-TVA (xlsx / csv)</label>
+          <input id="fisierAnaf" type="file" accept=".xlsx,.csv"></div>
+      </div>
+      <div class="field"><label for="mapareAnaf">Mapare coloane ANAF (JSON, optional — pentru fisiere cu alte denumiri de coloane)</label>
+        <textarea id="mapareAnaf" rows="2"
+          placeholder='{"cui_partener":"CIF","nr_factura":"Numar","data":"Data doc","baza":"Baza","tva":"TVA","categorie":"Tip"}'></textarea></div>
+      <div class="actiuni">
+        <button id="btnRuleaza" onclick="ruleazaReconciliere()">Ruleaza reconcilierea</button>
+      </div>
+      <p id="reconErr" class="eroare"></p>
+    </div>
+  </div>
+
+  <div id="rezultate" class="view">
+    <div class="registru" id="registruTotal"></div>
+    <div class="card">
+      <h3>Sumar pe categorii</h3>
+      <p class="sub">Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde exista diferente — de verificat inainte de depunere.</p>
+      <table id="tabelSumar"></table>
+    </div>
+    <div class="card">
+      <h3>Diferente pe facturi</h3>
+      <p class="sub">Facturile care nu corespund intre jurnalul firmei si evidenta ANAF.</p>
+      <table id="tabelDiferente"></table>
+      <div class="actiuni">
+        <button id="btnExport" onclick="exporta()">Export raport Excel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="admin" class="view">
+    <div class="card">
+      <h3>Utilizator nou</h3>
+      <p class="sub">Creeaza un cont pentru un angajat si atribuie-i un rol.</p>
+      <div class="actiuni">
+        <input id="adminUser" placeholder="Utilizator" style="max-width:200px">
+        <input id="adminPass" type="password" placeholder="Parola" style="max-width:200px">
+        <select id="adminRol" style="max-width:160px"></select>
+        <button class="secundar" onclick="adaugaUser()">Creeaza cont</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Utilizatori</h3>
+      <p class="sub">Conturile dezactivate raman in jurnalul de audit.</p>
+      <div id="listaUseri"></div>
+    </div>
+    <div class="card">
+      <h3>Alocare client la utilizator</h3>
+      <p class="sub">Contabilii vad doar clientii care le sunt alocati.</p>
+      <div class="actiuni">
+        <select id="alocUser" style="max-width:220px"></select>
+        <select id="alocClient" style="max-width:280px"></select>
+        <button class="secundar" onclick="aloca()">Aloca clientul</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="audit" class="view">
+    <div class="card">
+      <h3>Jurnal de audit</h3>
+      <p class="sub">Istoric permanent al actiunilor — nu poate fi modificat sau sters.</p>
+      <table id="tabelAudit"></table>
+    </div>
+  </div>
+
   </div>
 </div>
+</div><!-- /shell -->
 
-<div id="rezultate" class="view">
-  <h2>Rezultate reconciliere</h2>
-  <button id="btnExport" onclick="exporta()">Export raport Excel</button>
-  <h3>Sumar pe categorii</h3>
-  <table id="tabelSumar"></table>
-  <h3>Diferente pe facturi</h3>
-  <table id="tabelDiferente"></table>
-</div>
-
-<div id="admin" class="view">
-  <h2>Administrare</h2>
-  <div class="card">
-    <h3>Utilizator nou</h3>
-    <input id="adminUser" placeholder="Utilizator">
-    <input id="adminPass" type="password" placeholder="Parola">
-    <select id="adminRol"></select>
-    <button onclick="adaugaUser()">Creeaza</button>
-  </div>
-  <div class="card"><h3>Utilizatori</h3><div id="listaUseri"></div></div>
-  <div class="card">
-    <h3>Alocare client la utilizator</h3>
-    <select id="alocUser"></select>
-    <select id="alocClient"></select>
-    <button onclick="aloca()">Aloca</button>
-  </div>
-</div>
-
-<div id="audit" class="view">
-  <h2>Jurnal de audit</h2>
-  <table id="tabelAudit"></table>
-</div>
-
-</main>
 <script>
-let permisiuni = [], reconCurent = null;
+let permisiuni = [], reconCurent = null, userCurent = '';
+
+const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
+                  admin: 'Utilizatori si roluri', audit: 'Jurnal de audit' };
+const TIP_DIFERENTA = { suma_diferita: 'Suma diferita', lipsa_in_anaf: 'Lipsa in ANAF',
+                        lipsa_la_companie: 'Lipsa la companie', duplicat: 'Duplicat' };
+const fmt = new Intl.NumberFormat('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = v => fmt.format(v);
+const numDelta = v => (v > 0 ? '+' : '') + fmt.format(v);
+const catNume = c => (c || '').replaceAll('_', ' ').replace(/^./, x => x.toUpperCase());
+
+function arata(id) {
+  document.querySelectorAll('#strat-auth .view').forEach(v => v.classList.remove('activ'));
+  const el = document.getElementById(id);
+  if (el && el.closest('#strat-auth')) {
+    document.getElementById('shell').classList.remove('activ');
+    document.getElementById('strat-auth').style.display = '';
+    el.classList.add('activ');
+  }
+}
+
+function navigheaza(id) {
+  document.getElementById('strat-auth').style.display = 'none';
+  document.getElementById('shell').classList.add('activ');
+  document.querySelectorAll('.zona .view').forEach(v => v.classList.remove('activ'));
+  document.getElementById(id).classList.add('activ');
+  document.querySelectorAll('.nav-btn[data-view]').forEach(b =>
+    b.classList.toggle('activ', b.dataset.view === id));
+  document.getElementById('titluPagina').textContent = TITLURI[id] || '';
+}
 
 window.addEventListener('DOMContentLoaded', async () => {
   try {
     const st = await (await fetch('/api/setup/status')).json();
     arata(st.initialized ? 'unlock' : 'setup');
-  } catch (e) {
-    // Setup routes absent (e.g. test/static context) — fall back to login.
-    arata('login');
-  }
+  } catch (e) { arata('login'); }
 });
 
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (r.status === 401) { arata('login'); throw new Error('neautentificat'); }
+  return r;
+}
+
+/* ---------- Setup / unlock / recovery ---------- */
 async function ruleazaSetup() {
   const r = await fetch('/api/setup', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -185,6 +462,7 @@ async function deblocheaza() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({master_password: unlockPass.value})});
   if (!r.ok) { unlockErr.textContent = (await r.json()).error; return; }
+  unlockPass.value = '';
   arata('login');
 }
 
@@ -197,44 +475,42 @@ async function recupereaza() {
   arata('login');
 }
 
-function arata(id) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('activ'));
-  document.getElementById(id).classList.add('activ');
-}
-
-async function api(url, opts = {}) {
-  const r = await fetch(url, opts);
-  if (r.status === 401) { arata('login'); throw new Error('neautentificat'); }
-  return r;
-}
-
+/* ---------- Session ---------- */
 async function login() {
   const r = await fetch('/api/login', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({username: loginUser.value, password: loginPass.value})});
   if (!r.ok) { loginErr.textContent = (await r.json()).error; return; }
   permisiuni = (await r.json()).permissions;
-  meniu.style.display = '';
-  btnAdmin.style.display = permisiuni.includes('useri.gestionare') ? '' : 'none';
+  userCurent = loginUser.value;
+  loginPass.value = ''; loginErr.textContent = '';
+  numeUser.textContent = userCurent;
+  avatarUser.textContent = userCurent.slice(0, 2).toUpperCase();
+  const esteAdmin = permisiuni.includes('useri.gestionare');
+  btnAdmin.style.display = esteAdmin ? '' : 'none';
+  grupAdmin.style.display = esteAdmin ? '' : 'none';
   btnAudit.style.display = permisiuni.includes('audit.vizualizare') ? '' : 'none';
   cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
   btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
   await incarcaClienti();
-  if (permisiuni.includes('useri.gestionare')) await incarcaAdmin();
-  arata('dashboard');
+  if (esteAdmin) await incarcaAdmin();
+  navigheaza('dashboard');
 }
 
 async function logout() {
   await fetch('/api/logout', {method: 'POST'});
-  meniu.style.display = 'none';
+  permisiuni = []; reconCurent = null;
+  navRezultate.style.display = 'none';
   arata('login');
 }
 
+/* ---------- Clients ---------- */
 async function incarcaClienti() {
   const cl = await (await api('/api/clients')).json();
-  listaClienti.innerHTML = '<table><tr><th>CUI</th><th>Denumire</th></tr>' +
-    cl.map(c => `<tr><td>${c.cui}</td><td>${c.name}</td></tr>`).join('') +
-    '</table>';
+  listaClienti.innerHTML = '<table><thead><tr><th>CUI</th><th>Denumire</th></tr></thead><tbody>' +
+    (cl.map(c => `<tr><td class="cod">${c.cui}</td><td>${c.name}</td></tr>`).join('') ||
+     '<tr><td colspan="2" class="gol">Niciun client inca. Adauga primul client mai jos.</td></tr>') +
+    '</tbody></table>';
   selClient.innerHTML = alocClient.innerHTML =
     cl.map(c => `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
 }
@@ -243,61 +519,96 @@ async function adaugaClient() {
   const r = await api('/api/clients', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({cui: cuiNou.value, name: numeNou.value})});
-  if (r.ok) await incarcaClienti();
+  if (r.ok) { cuiNou.value = ''; numeNou.value = ''; await incarcaClienti(); }
 }
 
+/* ---------- Reconciliation ---------- */
 async function ruleazaReconciliere() {
   reconErr.textContent = '';
-  const fd = new FormData();
-  fd.append('client_id', selClient.value);
-  fd.append('period', perioada.value);
-  fd.append('company_file', fisierFirma.files[0]);
-  fd.append('anaf_file', fisierAnaf.files[0]);
-  if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
-  const r = await api('/api/reconciliations', {method: 'POST', body: fd});
-  const body = await r.json();
-  if (!r.ok) {
-    reconErr.textContent = (body.errors || [body.error]).join('\n');
-    return;
+  btnRuleaza.disabled = true; btnRuleaza.textContent = 'Se proceseaza...';
+  try {
+    const fd = new FormData();
+    fd.append('client_id', selClient.value);
+    fd.append('period', perioada.value);
+    fd.append('company_file', fisierFirma.files[0]);
+    fd.append('anaf_file', fisierAnaf.files[0]);
+    if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
+    const r = await api('/api/reconciliations', {method: 'POST', body: fd});
+    const body = await r.json();
+    if (!r.ok) {
+      reconErr.textContent = (body.errors || [body.error]).join('\n');
+      return;
+    }
+    reconCurent = body.id;
+    navRezultate.style.display = '';
+    afiseazaRezultate(body);
+    navigheaza('rezultate');
+  } finally {
+    btnRuleaza.disabled = false; btnRuleaza.textContent = 'Ruleaza reconcilierea';
   }
-  reconCurent = body.id;
-  afiseazaRezultate(body);
-  arata('rezultate');
 }
 
 function afiseazaRezultate(b) {
+  const tot = side => Object.values(side).reduce(
+    (s, v) => ({base: s.base + v.base, vat: s.vat + v.vat}), {base: 0, vat: 0});
+  const f = tot(b.totals_company), a = tot(b.totals_anaf);
+  const dVat = f.vat - a.vat;
+  const nProbleme = b.differences.length;
+  registruTotal.innerHTML =
+    `<div><div class="et">TVA firma</div><div class="val">${num(f.vat)}</div>
+       <div class="sub-val">baza ${num(f.base)}</div></div>` +
+    `<div><div class="et">TVA ANAF</div><div class="val">${num(a.vat)}</div>
+       <div class="sub-val">baza ${num(a.base)}</div></div>` +
+    `<div><div class="et">Delta TVA</div>
+       <div class="val ${Math.abs(dVat) > 0.005 ? 'rau' : 'bun'}">${numDelta(dVat)}</div>
+       <div class="sub-val">firma minus ANAF</div></div>` +
+    `<div><div class="et">Diferente gasite</div>
+       <div class="val ${nProbleme ? 'rau' : 'bun'}">${nProbleme}</div>
+       <div class="sub-val">${nProbleme ? 'necesita verificare' : 'totul corespunde'}</div></div>`;
+
   tabelSumar.innerHTML =
-    '<tr><th>Categorie</th><th>Baza firma</th><th>TVA firma</th>' +
-    '<th>Baza ANAF</th><th>TVA ANAF</th><th>Baza sugerata</th>' +
-    '<th>TVA sugerata</th><th>Status</th></tr>' +
+    '<thead><tr><th>Categorie</th><th class="num">Baza firma</th><th class="num">TVA firma</th>' +
+    '<th class="num">Baza ANAF</th><th class="num">TVA ANAF</th><th class="num">Baza sugerata</th>' +
+    '<th class="num">TVA sugerata</th><th>Status</th></tr></thead><tbody>' +
     b.suggestions.map(s =>
-      `<tr class="${s.status === 'de_verificat' ? 'rosu' : ''}">` +
-      `<td>${s.category}</td><td>${s.company_base}</td><td>${s.company_vat}</td>` +
-      `<td>${s.anaf_base}</td><td>${s.anaf_vat}</td><td>${s.suggested_base}</td>` +
-      `<td>${s.suggested_vat}</td><td>${s.status}</td></tr>`).join('');
+      `<tr>` +
+      `<td>${catNume(s.category)}</td><td class="num">${num(s.company_base)}</td>` +
+      `<td class="num">${num(s.company_vat)}</td><td class="num">${num(s.anaf_base)}</td>` +
+      `<td class="num">${num(s.anaf_vat)}</td><td class="num">${num(s.suggested_base)}</td>` +
+      `<td class="num">${num(s.suggested_vat)}</td>` +
+      `<td>${s.status === 'de_verificat'
+             ? '<span class="chip atentie">De verificat</span>'
+             : '<span class="chip ok">OK</span>'}</td></tr>`).join('') + '</tbody>';
+
   tabelDiferente.innerHTML =
-    '<tr><th>Tip</th><th>CUI</th><th>Factura</th><th>Categorie</th>' +
-    '<th>Delta baza</th><th>Delta TVA</th></tr>' +
+    '<thead><tr><th>Tip</th><th>CUI partener</th><th>Factura</th><th>Categorie</th>' +
+    '<th class="num">Delta baza</th><th class="num">Delta TVA</th></tr></thead><tbody>' +
     (b.differences.map(d =>
-      `<tr class="rosu"><td>${d.diff_type}</td><td>${d.partner_cui}</td>` +
-      `<td>${d.invoice_no}</td><td>${d.category}</td>` +
-      `<td>${d.delta_base}</td><td>${d.delta_vat}</td></tr>`).join('') ||
-    '<tr><td colspan="6">Nicio diferenta — totul corespunde.</td></tr>');
+      `<tr class="sever"><td><span class="chip problema">${TIP_DIFERENTA[d.diff_type] || d.diff_type}</span></td>` +
+      `<td class="cod">${d.partner_cui}</td><td class="cod">${d.invoice_no}</td>` +
+      `<td>${catNume(d.category)}</td>` +
+      `<td class="num ${d.delta_base < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_base)}</td>` +
+      `<td class="num ${d.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_vat)}</td></tr>`).join('') ||
+    '<tr><td colspan="6" class="gol">Nicio diferenta — jurnalul firmei corespunde cu evidenta ANAF.</td></tr>') +
+    '</tbody>';
 }
 
 function exporta() {
   window.location = `/api/reconciliations/${reconCurent}/export`;
 }
 
+/* ---------- Admin ---------- */
 async function incarcaAdmin() {
   const useri = await (await api('/api/admin/users')).json();
   listaUseri.innerHTML =
-    '<table><tr><th>Utilizator</th><th>Roluri</th><th>Activ</th><th></th></tr>' +
-    useri.map(u => `<tr><td>${u.username}</td><td>${u.roles || ''}</td>` +
-      `<td>${u.active ? 'Da' : 'Nu'}</td>` +
-      `<td><button onclick="dezactiveaza(${u.id})">Dezactiveaza</button></td></tr>`
-    ).join('') + '</table>';
-  alocUser.innerHTML = useri.map(u =>
+    '<table><thead><tr><th>Utilizator</th><th>Roluri</th><th>Status</th><th></th></tr></thead><tbody>' +
+    useri.map(u => `<tr><td>${u.username}</td><td>${u.roles || '—'}</td>` +
+      `<td>${u.active ? '<span class="chip ok">Activ</span>'
+                      : '<span class="chip neutru">Dezactivat</span>'}</td>` +
+      `<td style="text-align:right">${u.active
+          ? `<button class="discret" onclick="dezactiveaza(${u.id})">Dezactiveaza</button>` : ''}</td></tr>`
+    ).join('') + '</tbody></table>';
+  alocUser.innerHTML = useri.filter(u => u.active).map(u =>
     `<option value="${u.id}">${u.username}</option>`).join('');
   adminRol.innerHTML = ['Admin', 'Manager', 'Contabil', 'Junior'].map(r =>
     `<option>${r}</option>`).join('');
@@ -308,6 +619,7 @@ async function adaugaUser() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({username: adminUser.value, password: adminPass.value,
                           role: adminRol.value})});
+  adminUser.value = ''; adminPass.value = '';
   await incarcaAdmin();
 }
 
@@ -323,13 +635,15 @@ async function aloca() {
                           client_id: +alocClient.value})});
 }
 
+/* ---------- Audit ---------- */
 async function incarcaAudit() {
   const rows = await (await api('/api/audit')).json();
   tabelAudit.innerHTML =
-    '<tr><th>Data</th><th>User</th><th>Actiune</th><th>Entitate</th></tr>' +
-    rows.map(r => `<tr><td>${r.ts}</td><td>${r.user_id}</td>` +
-      `<td>${r.action}</td><td>${r.entity || ''} ${r.entity_id || ''}</td></tr>`
-    ).join('');
+    '<thead><tr><th>Data si ora (UTC)</th><th>User</th><th>Actiune</th><th>Entitate</th></tr></thead><tbody>' +
+    (rows.map(r => `<tr><td class="cod">${(r.ts || '').replace('T', ' ').slice(0, 19)}</td>` +
+      `<td>${r.user_id ?? '—'}</td><td>${r.action}</td>` +
+      `<td>${[r.entity, r.entity_id].filter(Boolean).join(' #') || '—'}</td></tr>`).join('') ||
+    '<tr><td colspan="4" class="gol">Nicio inregistrare inca.</td></tr>') + '</tbody>';
 }
 </script>
 </body>
