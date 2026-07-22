@@ -16,8 +16,10 @@ def _git(repo, *args):
 
 @pytest.fixture
 def envs(tmp_path, monkeypatch):
-    productie = tmp_path / "e-TVA-Reconciliere"
-    productie.mkdir()
+    """DEV/TESTARE/PROD nested inside one container, matching the real layout."""
+    container = tmp_path / "e-TVA-Reconciliere"
+    productie = container / "PROD"
+    productie.mkdir(parents=True)
     _git(productie, "init", "-q", "-b", "main")
     _git(productie, "config", "user.email", "t@example.com")
     _git(productie, "config", "user.name", "Test")
@@ -27,8 +29,8 @@ def envs(tmp_path, monkeypatch):
     _git(productie, "branch", "dev", "main")
     _git(productie, "branch", "testare", "main")
 
-    dev = tmp_path / "e-TVA-Reconciliere-dev"
-    testare = tmp_path / "e-TVA-Reconciliere-testare"
+    dev = container / "DEV"
+    testare = container / "TESTARE"
     _git(productie, "worktree", "add", "-q", str(dev), "dev")
     _git(productie, "worktree", "add", "-q", str(testare), "testare")
 

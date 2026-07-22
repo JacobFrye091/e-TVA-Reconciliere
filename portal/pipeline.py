@@ -27,17 +27,16 @@ class PipelineError(Exception):
 
 
 def _repo_paths() -> dict:
-    """Absolute paths of the three worktrees, derived from this file's location."""
-    here = pathlib.Path(__file__).resolve().parents[1]
-    name = here.name
-    for suffix in ("-dev", "-testare"):
-        if name.endswith(suffix):
-            name = name[: -len(suffix)]
-            break
-    parent = here.parent
-    return {"dev": parent / f"{name}-dev",
-            "testare": parent / f"{name}-testare",
-            "productie": parent / name}
+    """Absolute paths of the three worktrees, derived from this file's location.
+
+    Layout: DEV, TESTARE and PROD all live nested inside one container
+    folder (e.g. e-TVA-Reconciliere/DEV, /TESTARE, /PROD) — one repository,
+    three worktrees, no separate clones or external hosting involved.
+    """
+    container = pathlib.Path(__file__).resolve().parents[2]
+    return {"dev": container / "DEV",
+            "testare": container / "TESTARE",
+            "productie": container / "PROD"}
 
 
 def _git(repo_path, *args) -> str:
