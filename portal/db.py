@@ -18,9 +18,17 @@ ROLE_PERMISSIONS = {
     "junior": DEFAULT_ROLES["Junior"],
 }
 
+# A firm is either its own taxpayer (self-reconciling PFA/SRL - gets an
+# auto-created client matching its own CUI, no separate client list to
+# manage) or an accounting firm juggling several clients' reconciliations.
+FIRM_TIP_DIRECT = "direct"
+FIRM_TIP_CONTABILITATE = "contabilitate"
+FIRM_TIPURI = (FIRM_TIP_DIRECT, FIRM_TIP_CONTABILITATE)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
+  tip TEXT NOT NULL DEFAULT 'contabilitate',
   active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
@@ -77,10 +85,28 @@ def _migrate_legacy_users(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_firm_tip(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate the firms.tip column - add it,
+    defaulting existing rows to 'contabilitate' (their prior behavior:
+    a manually-managed client list, unchanged)."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "tip" in cols:
+        return
+    conn.execute(
+        f"ALTER TABLE firms ADD COLUMN tip TEXT NOT NULL "
+        f"DEFAULT '{FIRM_TIP_CONTABILITATE}'")
+    conn.commit()
+
+
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     _migrate_legacy_users(conn)
+    _migrate_add_firm_tip(conn)
     conn.executescript(_SCHEMA)
     conn.commit()
     return conn

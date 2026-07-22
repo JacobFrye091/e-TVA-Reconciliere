@@ -7,6 +7,19 @@
     <p class="sub">Gratuit in perioada de lansare. Din acest cont iti vei
       administra echipa si vei folosi aplicatia desktop.</p>
     <form method="post">
+      <label>Ce fel de firma este?</label>
+      <div class="tip-firma">
+        <label class="optiune-tip">
+          <input type="radio" name="tip" value="direct" required>
+          <span><b>Firma/PFA care isi face singura calculele</b><br>
+            <span class="nota" style="margin:0">Reconciliezi TVA-ul propriu, fara clienti separati.</span></span>
+        </label>
+        <label class="optiune-tip">
+          <input type="radio" name="tip" value="contabilitate" required>
+          <span><b>Firma de contabilitate</b><br>
+            <span class="nota" style="margin:0">Gestionezi reconcilierea pentru mai multi clienti.</span></span>
+        </label>
+      </div>
       <label for="name">Denumirea firmei</label>
       <input id="name" name="name" required autofocus>
       <label for="cui">CUI</label>

@@ -71,7 +71,7 @@ def create_app(data_dir: str) -> Flask:
     def list_user_firms(user_id: int):
         """Active firms this user belongs to, each with their role there."""
         return conn.execute(
-            "SELECT f.id, f.name, f.cui, uf.role FROM user_firms uf "
+            "SELECT f.id, f.name, f.cui, f.tip, uf.role FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
             "WHERE uf.user_id=? AND uf.active=1 AND f.active=1 "
             "ORDER BY f.name", (user_id,)).fetchall()
@@ -85,7 +85,7 @@ def create_app(data_dir: str) -> Flask:
         if active_firm_id is None:
             return None
         row = conn.execute(
-            "SELECT uf.role, f.id, f.name FROM user_firms uf "
+            "SELECT uf.role, f.id, f.name, f.tip FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
             "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1",
             (user["id"], active_firm_id)).fetchone()
@@ -93,6 +93,7 @@ def create_app(data_dir: str) -> Flask:
             return None
         return {"username": user["username"], "role": row["role"],
                 "firm_id": row["id"], "firm_name": row["name"],
+                "firm_tip": row["tip"],
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
     def require(perm=None):
@@ -136,6 +137,26 @@ def create_app(data_dir: str) -> Flask:
                     "Verifica-l si incearca din nou.")
         return None
 
+    def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str) -> int:
+        """Create a firm, link it to user_id with the given role, and for a
+        self-reconciling ('direct') firm, auto-create the one client it
+        will ever need — its own CUI — so there's no separate client-
+        management step for that case."""
+        if tip not in pdb.FIRM_TIPURI:
+            tip = pdb.FIRM_TIP_CONTABILITATE
+        cur = conn.execute("INSERT INTO firms(name, cui, tip) VALUES(?,?,?)",
+                           (name, cui, tip))
+        firm_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO user_firms(user_id, firm_id, role, active) "
+            "VALUES(?,?,?,1)", (user_id, firm_id, role))
+        conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
+                     (firm_id, psec.wrap_key(secret, os.urandom(32))))
+        conn.commit()
+        if tip == pdb.FIRM_TIP_DIRECT:
+            clients.create_client(firm_conn(firm_id), cui, name)
+        return firm_id
+
     @app.route("/inregistrare", methods=["GET", "POST"])
     def register():
         if request.method == "GET":
@@ -143,7 +164,8 @@ def create_app(data_dir: str) -> Flask:
         f = request.form
         name, cui = f.get("name", "").strip(), f.get("cui", "").strip()
         username, password = f.get("username", "").strip(), f.get("password", "")
-        if not all([name, cui, username, password]):
+        tip = f.get("tip", "").strip()
+        if not all([name, cui, username, password]) or tip not in pdb.FIRM_TIPURI:
             return render_template("inregistrare.html",
                                    eroare="Toate campurile sunt obligatorii.")
         if len(password) < 10:
@@ -159,18 +181,11 @@ def create_app(data_dir: str) -> Flask:
         eroare = _verify_cui_or_error(cui)
         if eroare:
             return render_template("inregistrare.html", eroare=eroare)
-        cur = conn.execute("INSERT INTO firms(name, cui) VALUES(?,?)", (name, cui))
-        firm_id = cur.lastrowid
         cur = conn.execute(
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
             (username, psec.hash_password(password)))
         user_id = cur.lastrowid
-        conn.execute(
-            "INSERT INTO user_firms(user_id, firm_id, role, active) "
-            "VALUES(?,?,?,1)", (user_id, firm_id, "admin"))
-        conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
-                     (firm_id, psec.wrap_key(secret, os.urandom(32))))
-        conn.commit()
+        firm_id = _create_firm(name, cui, tip, user_id, "admin")
         session["user_id"] = user_id
         session["active_firm_id"] = firm_id
         return redirect(url_for("aplicatie"))
@@ -253,23 +268,17 @@ def create_app(data_dir: str) -> Flask:
             return redirect(url_for("login"))
         name = request.form.get("name", "").strip()
         cui = request.form.get("cui", "").strip()
-        if not name or not cui:
+        tip = request.form.get("tip", "").strip()
+        if not name or not cui or tip not in pdb.FIRM_TIPURI:
             return redirect(url_for(
-                "panou", eroare="Denumirea si CUI-ul sunt obligatorii."))
+                "panou", eroare="Denumirea, CUI-ul si tipul firmei sunt obligatorii."))
         if conn.execute("SELECT 1 FROM firms WHERE cui=?", (cui,)).fetchone():
             return redirect(url_for(
                 "panou", eroare="Exista deja o firma cu acest CUI."))
         eroare = _verify_cui_or_error(cui)
         if eroare:
             return redirect(url_for("panou", eroare=eroare))
-        cur = conn.execute("INSERT INTO firms(name, cui) VALUES(?,?)", (name, cui))
-        firm_id = cur.lastrowid
-        conn.execute(
-            "INSERT INTO user_firms(user_id, firm_id, role, active) "
-            "VALUES(?,?,?,1)", (user["id"], firm_id, "admin"))
-        conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
-                     (firm_id, psec.wrap_key(secret, os.urandom(32))))
-        conn.commit()
+        firm_id = _create_firm(name, cui, tip, user["id"], "admin")
         session["active_firm_id"] = firm_id
         return redirect(url_for("panou"))
 
@@ -401,6 +410,7 @@ def create_app(data_dir: str) -> Flask:
     def me(ident):
         return jsonify({"username": ident["username"], "role": ident["role"],
                         "firm_name": ident["firm_name"],
+                        "firm_tip": ident["firm_tip"],
                         "permissions": sorted(ident["permissions"])})
 
     @app.post("/api/logout")

@@ -8,11 +8,12 @@
       multe firme (SRL/PFA) legate de acelasi cont — alege cu care lucrezi.</p>
     {% if firms %}
     <table>
-      <tr><th>Firma</th><th>CUI</th><th>Rolul tau</th><th></th></tr>
+      <tr><th>Firma</th><th>CUI</th><th>Tip</th><th>Rolul tau</th><th></th></tr>
       {% for f in firms %}
       <tr{% if active and f['id'] == active['id'] %} style="background:var(--ok-bg)"{% endif %}>
         <td>{{ f['name'] }}</td>
         <td>{{ f['cui'] }}</td>
+        <td>{{ 'Firma/PFA directa' if f['tip'] == 'direct' else 'Contabilitate' }}</td>
         <td>{{ f['role'] }}</td>
         <td style="text-align:right">
           {% if active and f['id'] == active['id'] %}
@@ -43,6 +44,11 @@
       <div class="rand">
         <div><label for="fn">Denumirea firmei</label><input id="fn" name="name" required></div>
         <div><label for="fc">CUI</label><input id="fc" name="cui" required placeholder="ex: RO12345678"></div>
+        <div><label for="ft">Tip</label>
+          <select id="ft" name="tip">
+            <option value="direct">Firma/PFA care isi face singura calculele</option>
+            <option value="contabilitate">Firma de contabilitate (mai multi clienti)</option>
+          </select></div>
         <button type="submit">Adauga</button>
       </div>
     </form>

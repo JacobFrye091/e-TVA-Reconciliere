@@ -210,7 +210,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
     <div><div class="brand-name">e-TVA</div><div class="brand-sub">Reconciliere</div></div></div>
   <div class="nav-grup">Lucru</div>
   <button class="nav-btn" data-view="dashboard" onclick="navigheaza('dashboard')">
-    <span class="ic">▦</span> Clienti si reconciliere</button>
+    <span class="ic">▦</span> <span id="etichetaDashboard">Clienti si reconciliere</span></button>
   <button class="nav-btn" data-view="rezultate" id="navRezultate" onclick="navigheaza('rezultate')" style="display:none">
     <span class="ic">Δ</span> Rezultate</button>
   <div class="nav-grup" id="grupAdmin" style="display:none">Administrare</div>
@@ -235,7 +235,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
   <div class="zona">
 
   <div id="dashboard" class="view">
-    <div class="card">
+    <div class="card" id="cardClienti">
       <h3>Clienti</h3>
       <p class="sub">Firmele pentru care se ruleaza reconcilierea.</p>
       <div id="listaClienti"></div>
@@ -252,7 +252,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <h3>Reconciliere noua</h3>
       <p class="sub">Compara jurnalul firmei cu datele e-TVA primite de la ANAF pentru o perioada.</p>
       <div class="grila-2">
-        <div class="field"><label for="selClient">Client</label><select id="selClient"></select></div>
+        <div class="field" id="campClient"><label for="selClient">Client</label><select id="selClient"></select></div>
         <div class="field"><label for="perioada">Perioada</label>
           <input id="perioada" placeholder="ex: 2026-01"></div>
         <div class="field"><label for="fisierFirma">Jurnal firma (jurnal vanzari si/sau cumparari — xls / xlsx / csv)</label>
@@ -328,7 +328,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 </div><!-- /shell -->
 
 <script>
-let permisiuni = [], reconCurent = null, userCurent = '';
+let permisiuni = [], reconCurent = null, userCurent = '', firmaDirecta = false;
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
                   admin: 'Alocari clienti', audit: 'Jurnal de audit' };
@@ -380,6 +380,7 @@ async function api(url, opts = {}) {
 async function intraInAplicatie(ident) {
   permisiuni = ident.permissions;
   userCurent = ident.username;
+  firmaDirecta = ident.firm_tip === 'direct';
   numeUser.textContent = userCurent;
   document.querySelector('.user-rol').textContent =
     ident.firm_name || 'Sesiune activa';
@@ -390,6 +391,13 @@ async function intraInAplicatie(ident) {
   btnAudit.style.display = permisiuni.includes('audit.vizualizare') ? '' : 'none';
   cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
   btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
+  // O firma/PFA directa are un singur client (pe ea insasi, creat automat) -
+  // nu are sens sa gestioneze o lista de clienti separata.
+  cardClienti.style.display = firmaDirecta ? 'none' : '';
+  campClient.style.display = firmaDirecta ? 'none' : '';
+  const etichetaDash = firmaDirecta ? 'Reconciliere' : 'Clienti si reconciliere';
+  etichetaDashboard.textContent = etichetaDash;
+  TITLURI.dashboard = etichetaDash;
   await incarcaClienti();
   navigheaza('dashboard');
 }

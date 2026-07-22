@@ -21,9 +21,9 @@ def _mock_anaf_cui(monkeypatch):
     monkeypatch.setattr(anaf_cui, "verify_cui", _fake)
 
 
-def inregistreaza(c, username="firma1", cui="RO111"):
+def inregistreaza(c, username="firma1", cui="RO111", tip="contabilitate"):
     return c.post("/inregistrare", data={
-        "name": "Firma Unu SRL", "cui": cui,
+        "name": "Firma Unu SRL", "cui": cui, "tip": tip,
         "username": username, "password": "ParolaLunga123!"},
         follow_redirects=False)
 
@@ -60,6 +60,64 @@ def test_api_me_returns_identity(app):
     body = r.get_json()
     assert body["role"] == "admin" and body["firm_name"] == "Firma Unu SRL"
     assert "rapoarte.export" in body["permissions"]
+
+
+def test_migrate_adds_firm_tip_column_defaulting_to_contabilitate(tmp_path):
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE firms(id INTEGER PRIMARY KEY, name TEXT, "
+                "cui TEXT UNIQUE, active INTEGER DEFAULT 1)")
+    conn.execute("INSERT INTO firms(name, cui) VALUES('Firma Veche SRL', 'RO777')")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    row = reopened.execute("SELECT * FROM firms WHERE cui='RO777'").fetchone()
+    assert row["tip"] == "contabilitate"
+
+
+def test_api_me_returns_firm_tip(app):
+    c = app.test_client()
+    inregistreaza(c, tip="contabilitate")
+    assert c.get("/api/me").get_json()["firm_tip"] == "contabilitate"
+
+
+def test_register_rejects_missing_tip(app):
+    c = app.test_client()
+    r = c.post("/inregistrare", data={
+        "name": "Firma X SRL", "cui": "RO555",
+        "username": "userx", "password": "ParolaLunga123!"})
+    assert r.status_code == 200
+    assert "obligatorii".encode() in r.data
+    assert not app.portal_conn.execute(
+        "SELECT 1 FROM firms WHERE cui='RO555'").fetchone()
+
+
+def test_direct_firm_gets_a_matching_client_auto_created(app):
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    vis = c.get("/api/clients").get_json()
+    assert len(vis) == 1
+    assert vis[0]["cui"] == "RO111" and vis[0]["name"] == "Firma Unu SRL"
+
+
+def test_contabilitate_firm_starts_with_no_clients(app):
+    c = app.test_client()
+    inregistreaza(c, tip="contabilitate")
+    assert c.get("/api/clients").get_json() == []
+
+
+def test_add_firm_direct_also_auto_creates_client(app):
+    c = app.test_client()
+    inregistreaza(c, tip="contabilitate")
+    c.post("/panou/firme",
+          data={"name": "PFA Ionescu", "cui": "RO222", "tip": "direct"})
+    vis = c.get("/api/clients").get_json()
+    assert len(vis) == 1
+    assert vis[0]["cui"] == "RO222" and vis[0]["name"] == "PFA Ionescu"
 
 
 def test_firm_key_persists_across_app_restart(tmp_path):
@@ -148,8 +206,9 @@ def test_register_surfaces_anaf_unreachable(app, monkeypatch):
 def test_user_can_add_second_firm_and_switch(app):
     c = app.test_client()
     inregistreaza(c)
-    r = c.post("/panou/firme", data={"name": "Firma Doi PFA", "cui": "RO222"},
-               follow_redirects=True)
+    r = c.post("/panou/firme",
+              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct"},
+              follow_redirects=True)
     assert b"Firma Doi PFA" in r.data
     # a doua firma devine activa automat
     me = c.get("/api/me").get_json()
@@ -166,8 +225,9 @@ def test_add_firm_rejects_unknown_cui(app, monkeypatch):
     c = app.test_client()
     inregistreaza(c)
     monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: None)
-    r = c.post("/panou/firme", data={"name": "Firma Fantoma", "cui": "RO333"},
-               follow_redirects=True)
+    r = c.post("/panou/firme",
+              data={"name": "Firma Fantoma", "cui": "RO333", "tip": "contabilitate"},
+              follow_redirects=True)
     assert "nu a fost gasit la ANAF".encode() in r.data
     assert not app.portal_conn.execute(
         "SELECT 1 FROM firms WHERE cui='RO333'").fetchone()
@@ -176,8 +236,9 @@ def test_add_firm_rejects_unknown_cui(app, monkeypatch):
 def test_add_firm_rejects_duplicate_cui(app):
     c = app.test_client()
     inregistreaza(c)
-    r = c.post("/panou/firme", data={"name": "Alta Denumire", "cui": "RO111"},
-               follow_redirects=True)
+    r = c.post("/panou/firme",
+              data={"name": "Alta Denumire", "cui": "RO111", "tip": "contabilitate"},
+              follow_redirects=True)
     assert "Exista deja o firma".encode() in r.data
 
 
