@@ -205,3 +205,101 @@ def test_deactivated_firm_blocks_product(app):
     conn.execute("UPDATE firms SET active=0 WHERE id=?", (firm_id,))
     conn.commit()
     assert c.get("/api/me").status_code == 401
+
+
+# ---------- D300-line reconciliation (real SAGA journal + ANAF PDF) ----------
+
+import io as _io
+from etva.importer.anaf_p300 import AnafP300
+
+
+def _saga_vanzari_bytes():
+    rows = [
+        ["Exemplu Test SRL  c.f. RO111  r.c. J40/1/2026"] + [None] * 10,
+        [None] * 11, [None] * 11, [None] * 11,
+        [None, None, "JURNAL PENTRU VANZARI"] + [None] * 8,
+        [None, None, None, None, "2026-06-01", "--", "2026-06-30"] + [None] * 4,
+        [None] * 11,
+        ["Nr. crt.", "Document", None, "Client/beneficiar", None, None, None,
+         "Total document (inclusiv TVA)", "Baza  impozitare", "Valoare T.V.A.",
+         "Referinta cod *)"],
+        [None, "Data", "Numar", None, "Denumire", "Cod fiscal", None, None,
+         None, None, None],
+        [1, "2026-06-01", "F1", "Client X", None, "RO999", None, 1210, 1000,
+         210, "2-3"],
+        [None, "Intocmit", None, "Verificat", None, None, "Total", 1210, 1000,
+         210, None],
+        [None] * 11,
+        ["Referinta cod *)", None, None, None, None, None, None,
+         "Total document (inclusiv TVA)", None, "Baza  impozitare",
+         "Valoare T.V.A."],
+        [None, None, None, None, "Referinta"] + [None] * 6,
+        [None] * 11,
+        ["2-3", "Bunuri/servicii taxabile cu cota 21%", None, None, None,
+         None, None, 1210, 1000, 210, None],
+        [None] * 11,
+        ["Pagina 1/1  SAGA C"] + [None] * 10,
+    ]
+    import pandas as pd
+    buf = _io.BytesIO()
+    pd.DataFrame(rows).to_excel(buf, header=False, index=False, engine="openpyxl")
+    buf.seek(0)
+    return buf
+
+
+def test_d300_line_reconciliation_via_pdf_and_saga(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={"9": {"base": 1000.0, "vat": 210.0}}))
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["mode"] == "d300_lines"
+    assert body["differences"] == []
+    assert body["totals_company"]["9"] == {"base": 1000.0, "vat": 210.0}
+
+    rid = body["id"]
+    r2 = c.get(f"/api/reconciliations/{rid}")
+    assert r2.get_json()["mode"] == "d300_lines"
+
+    r3 = c.get(f"/api/reconciliations/{rid}/export")
+    assert r3.status_code == 200 and r3.data[:2] == b"PK"
+
+
+def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={}))
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="vanzari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"99": {"label": "Cod ambiguu neclasificat",
+                                          "base": 42.0, "vat": 0.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    body = r.get_json()
+    assert body["unmapped"] == [{"cod": "99", "label": "Cod ambiguu neclasificat",
+                                 "base": 42.0, "vat": 0.0}]

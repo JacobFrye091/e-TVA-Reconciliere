@@ -255,14 +255,17 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         <div class="field"><label for="selClient">Client</label><select id="selClient"></select></div>
         <div class="field"><label for="perioada">Perioada</label>
           <input id="perioada" placeholder="ex: 2026-01"></div>
-        <div class="field"><label for="fisierFirma">Jurnal firma (xlsx / csv)</label>
-          <input id="fisierFirma" type="file" accept=".xlsx,.csv"></div>
-        <div class="field"><label for="fisierAnaf">Fisier ANAF e-TVA (xlsx / csv)</label>
-          <input id="fisierAnaf" type="file" accept=".xlsx,.csv"></div>
+        <div class="field"><label for="fisierFirma">Jurnal firma (jurnal vanzari si/sau cumparari — xls / xlsx / csv)</label>
+          <input id="fisierFirma" type="file" accept=".xlsx,.xls,.csv" multiple></div>
+        <div class="field"><label for="fisierAnaf">Decont precompletat RO e-TVA (PDF de la ANAF) sau fisier ANAF (xlsx / csv)</label>
+          <input id="fisierAnaf" type="file" accept=".pdf,.xlsx,.csv"></div>
       </div>
-      <div class="field"><label for="mapareAnaf">Mapare coloane ANAF (JSON, optional — pentru fisiere cu alte denumiri de coloane)</label>
+      <div class="field"><label for="mapareAnaf">Mapare coloane ANAF (JSON, optional — doar pentru fisiere ANAF xlsx/csv cu alte denumiri de coloane)</label>
         <textarea id="mapareAnaf" rows="2"
           placeholder='{"cui_partener":"CIF","nr_factura":"Numar","data":"Data doc","baza":"Baza","tva":"TVA","categorie":"Tip"}'></textarea></div>
+      <div class="field"><label for="codMapare">Corectie mapare coduri TVA firma (JSON, optional — pentru coduri pe care aplicatia nu le poate clasifica automat)</label>
+        <textarea id="codMapare" rows="2"
+          placeholder='{"10":"3", "14":"29.1"}'></textarea></div>
       <div class="actiuni">
         <button id="btnRuleaza" onclick="ruleazaReconciliere()">Ruleaza reconcilierea</button>
       </div>
@@ -272,14 +275,21 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
   <div id="rezultate" class="view">
     <div class="registru" id="registruTotal"></div>
+    <div class="card" id="cardNeclasificate" style="display:none">
+      <h3>Coduri TVA neclasificate</h3>
+      <p class="sub">Aceste coduri din jurnalul firmei nu au putut fi asociate automat unei linii
+        din D300 (situatii legal ambigue — nu se ghiceste). Verifica-le manual si, daca e nevoie,
+        rerulează cu o corectie in campul „Corectie mapare coduri TVA firma".</p>
+      <table id="tabelNeclasificate"></table>
+    </div>
     <div class="card">
-      <h3>Sumar pe categorii</h3>
-      <p class="sub">Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde exista diferente — de verificat inainte de depunere.</p>
+      <h3 id="titluSumar">Sumar pe categorii</h3>
+      <p class="sub" id="subSumar">Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde exista diferente — de verificat inainte de depunere.</p>
       <table id="tabelSumar"></table>
     </div>
     <div class="card">
-      <h3>Diferente pe facturi</h3>
-      <p class="sub">Facturile care nu corespund intre jurnalul firmei si evidenta ANAF.</p>
+      <h3 id="titluDiferente">Diferente pe facturi</h3>
+      <p class="sub" id="subDiferente">Facturile care nu corespund intre jurnalul firmei si evidenta ANAF.</p>
       <table id="tabelDiferente"></table>
       <div class="actiuni">
         <button id="btnExport" onclick="exporta()">Export raport Excel</button>
@@ -417,9 +427,10 @@ async function ruleazaReconciliere() {
     const fd = new FormData();
     fd.append('client_id', selClient.value);
     fd.append('period', perioada.value);
-    fd.append('company_file', fisierFirma.files[0]);
+    for (const f of fisierFirma.files) fd.append('company_file', f);
     fd.append('anaf_file', fisierAnaf.files[0]);
     if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
+    if (codMapare.value.trim()) fd.append('cod_mapping', codMapare.value);
     const r = await api('/api/reconciliations', {method: 'POST', body: fd});
     const body = await r.json();
     if (!r.ok) {
@@ -436,6 +447,8 @@ async function ruleazaReconciliere() {
 }
 
 function afiseazaRezultate(b) {
+  const peLinii = b.mode === 'd300_lines';
+
   const tot = side => Object.values(side).reduce(
     (s, v) => ({base: s.base + v.base, vat: s.vat + v.vat}), {base: 0, vat: 0});
   const f = tot(b.totals_company), a = tot(b.totals_anaf);
@@ -453,6 +466,56 @@ function afiseazaRezultate(b) {
        <div class="val ${nProbleme ? 'rau' : 'bun'}">${nProbleme}</div>
        <div class="sub-val">${nProbleme ? 'necesita verificare' : 'totul corespunde'}</div></div>`;
 
+  if (b.unmapped && b.unmapped.length) {
+    cardNeclasificate.style.display = '';
+    tabelNeclasificate.innerHTML =
+      '<thead><tr><th>Cod</th><th>Denumire (din jurnal)</th><th class="num">Baza</th>' +
+      '<th class="num">TVA</th></tr></thead><tbody>' +
+      b.unmapped.map(u =>
+        `<tr><td class="cod">${u.cod}</td><td>${u.label}</td>` +
+        `<td class="num">${num(u.base)}</td><td class="num">${num(u.vat)}</td></tr>`).join('') +
+      '</tbody>';
+  } else {
+    cardNeclasificate.style.display = 'none';
+  }
+
+  if (peLinii) {
+    titluSumar.textContent = 'Sumar pe linii D300';
+    subSumar.textContent = 'Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde ' +
+      'exista diferente — de verificat inainte de depunere.';
+    tabelSumar.innerHTML =
+      '<thead><tr><th>Linie</th><th>Denumire</th><th class="num">Baza firma</th>' +
+      '<th class="num">TVA firma</th><th class="num">Baza ANAF</th><th class="num">TVA ANAF</th>' +
+      '<th class="num">Baza sugerata</th><th class="num">TVA sugerata</th><th>Status</th></tr></thead><tbody>' +
+      b.suggestions.map(s =>
+        `<tr>` +
+        `<td class="cod">${s.line_no}</td><td>${s.label}</td><td class="num">${num(s.company_base)}</td>` +
+        `<td class="num">${num(s.company_vat)}</td><td class="num">${num(s.anaf_base)}</td>` +
+        `<td class="num">${num(s.anaf_vat)}</td><td class="num">${num(s.suggested_base)}</td>` +
+        `<td class="num">${num(s.suggested_vat)}</td>` +
+        `<td>${s.status === 'de_verificat'
+               ? '<span class="chip atentie">De verificat</span>'
+               : '<span class="chip ok">OK</span>'}</td></tr>`).join('') + '</tbody>';
+
+    titluDiferente.textContent = 'Diferente pe linii D300';
+    subDiferente.textContent = 'Liniile din decont unde totalul firmei nu corespunde cu ce a ' +
+      'precompletat ANAF.';
+    tabelDiferente.innerHTML =
+      '<thead><tr><th>Tip</th><th>Linie</th><th>Denumire</th>' +
+      '<th class="num">Delta baza</th><th class="num">Delta TVA</th></tr></thead><tbody>' +
+      (b.differences.map(d =>
+        `<tr class="sever"><td><span class="chip problema">${TIP_DIFERENTA[d.diff_type] || d.diff_type}</span></td>` +
+        `<td class="cod">${d.line_no}</td><td>${d.label}</td>` +
+        `<td class="num ${d.delta_base < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_base)}</td>` +
+        `<td class="num ${d.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_vat)}</td></tr>`).join('') ||
+      '<tr><td colspan="5" class="gol">Nicio diferenta — jurnalul firmei corespunde cu decontul ANAF.</td></tr>') +
+      '</tbody>';
+    return;
+  }
+
+  titluSumar.textContent = 'Sumar pe categorii';
+  subSumar.textContent = 'Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde ' +
+    'exista diferente — de verificat inainte de depunere.';
   tabelSumar.innerHTML =
     '<thead><tr><th>Categorie</th><th class="num">Baza firma</th><th class="num">TVA firma</th>' +
     '<th class="num">Baza ANAF</th><th class="num">TVA ANAF</th><th class="num">Baza sugerata</th>' +
@@ -467,6 +530,8 @@ function afiseazaRezultate(b) {
              ? '<span class="chip atentie">De verificat</span>'
              : '<span class="chip ok">OK</span>'}</td></tr>`).join('') + '</tbody>';
 
+  titluDiferente.textContent = 'Diferente pe facturi';
+  subDiferente.textContent = 'Facturile care nu corespund intre jurnalul firmei si evidenta ANAF.';
   tabelDiferente.innerHTML =
     '<thead><tr><th>Tip</th><th>CUI partener</th><th>Factura</th><th>Categorie</th>' +
     '<th class="num">Delta baza</th><th class="num">Delta TVA</th></tr></thead><tbody>' +

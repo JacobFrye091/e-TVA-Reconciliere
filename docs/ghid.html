@@ -222,7 +222,7 @@ footer a:hover { color: #fff; }
       <li><a href="#clienti">Clienți și alocarea lor</a></li>
       <li><a href="#format">Formatul fișierelor de încărcat</a></li>
       <li><a href="#pasi">Cum rulezi o reconciliere, pas cu pas</a></li>
-      <li><a href="#diferente">Cele patru tipuri de diferențe</a></li>
+      <li><a href="#diferente">Cele trei tipuri de diferențe</a></li>
       <li><a href="#sugestii">Valorile sugerate pentru D300</a></li>
       <li><a href="#export">Raportul Excel de predat</a></li>
       <li><a href="#audit">Jurnalul de audit</a></li>
@@ -318,24 +318,27 @@ footer a:hover { color: #fff; }
     <div class="sec-cap reveal">
       <div class="tag">05</div>
       <h2>Formatul fișierelor de încărcat</h2>
-      <p>Pentru fiecare reconciliere ai nevoie de <b>două fișiere</b>, în același format — jurnalul
-        propriu al firmei și datele primite de la ANAF. Ambele acceptă <code>.xlsx</code> sau <code>.csv</code>.</p>
+      <p>Pentru fiecare reconciliere ai nevoie de jurnalul propriu al firmei și de decontul
+        precompletat primit de la ANAF — aplicația recunoaște automat formatul fiecăruia.</p>
     </div>
-    <div class="tabel-scroll reveal"><table class="date">
-      <thead><tr><th>Coloană</th><th>Conținut</th><th>Exemplu</th></tr></thead>
-      <tbody>
-        <tr><td class="cod">cui_partener</td><td>CUI-ul partenerului de pe factură</td><td class="cod">RO18765432</td></tr>
-        <tr><td class="cod">nr_factura</td><td>Numărul facturii</td><td class="cod">F1002</td></tr>
-        <tr><td class="cod">data</td><td>Data documentului</td><td class="cod">2026-06-05</td></tr>
-        <tr><td class="cod">baza</td><td>Baza de TVA</td><td class="num">850.00</td></tr>
-        <tr><td class="cod">tva</td><td>Valoarea TVA</td><td class="num">161.50</td></tr>
-        <tr><td class="cod">categorie</td><td>Categoria D300 (text liber)</td><td class="cod">livrari_interne</td></tr>
-      </tbody>
-    </table></div>
-    <p class="nota"><b>De reținut:</b> formatul oficial de export e-TVA de la ANAF nu e încă stabilit
-      definitiv. Dacă fișierul tău ANAF are alte denumiri de coloane (ex. „CIF" în loc de
-      „cui_partener"), faci o mapare o singură dată, direct din interfață — nu trebuie să rescrii
-      manual fișierul.</p>
+    <div class="corp reveal">
+      <h3>Jurnalul firmei</h3>
+      <p>Exportul standard <b>„Jurnal pentru vânzări"</b> și <b>„Jurnal pentru cumpărări"</b> din
+        programul de contabilitate (format SAGA, recunoscut automat — <code>.xls</code> sau
+        <code>.xlsx</code>). Poți încărca ambele jurnale deodată: aplicația citește direct
+        coloana „Referință cod" — codul TVA propriu pe care software-ul de contabilitate îl
+        atribuie deja fiecărei facturi — și o potrivește cu linia corespunzătoare din formularul 300.</p>
+      <h3>Decontul de la ANAF</h3>
+      <p><b>„Decontul precompletat RO e-TVA"</b>, descărcat ca <b>PDF</b> direct din SPV — exact
+        documentul pe care ți-l trimite ANAF, fără nicio prelucrare manuală în prealabil.</p>
+    </div>
+    <p class="nota"><b>De reținut:</b> decontul ANAF nu conține facturi individuale — doar totaluri
+      pe fiecare linie din formularul 300 (de exemplu linia 9 pentru livrări cu cota 21%). De
+      aceea comparația se face linie cu linie din decont, nu factură cu factură — vezi mai jos.
+      Câteva coduri TVA proprii firmei (ex. operațiuni cu „taxare inversă" fără alt detaliu) pot fi
+      legal ambigue între mai multe linii din formular; pentru acestea aplicația nu ghicește —
+      le arată separat, ca „necesită verificare manuală", cu posibilitatea de a le corecta printr-o
+      mapare simplă.</p>
   </div>
 </section>
 
@@ -348,14 +351,15 @@ footer a:hover { color: #fff; }
     <div class="pasi reveal">
       <div class="pas"><h3>Alegi clientul</h3><p>Din lista clienților alocați ție.</p></div>
       <div class="pas"><h3>Completezi perioada</h3><p>De exemplu: 2026-06.</p></div>
-      <div class="pas"><h3>Încarci jurnalul firmei</h3><p>Exportul din programul de contabilitate.</p></div>
-      <div class="pas"><h3>Încarci fișierul ANAF</h3><p>Datele e-TVA descărcate din SPV.</p></div>
+      <div class="pas"><h3>Încarci jurnalul firmei</h3><p>Vânzări, cumpărări, sau ambele deodată.</p></div>
+      <div class="pas"><h3>Încarci decontul ANAF</h3><p>PDF-ul „Decont precompletat RO e-TVA" descărcat din SPV.</p></div>
       <div class="pas"><h3>Apeși „Rulează reconcilierea"</h3><p>Calculul se face pe loc, în câteva secunde.</p></div>
-      <div class="pas"><h3>Vezi rezultatul imediat</h3><p>Totaluri, diferențe factură cu factură, valori sugerate D300.</p></div>
+      <div class="pas"><h3>Vezi rezultatul imediat</h3><p>Totaluri și diferențe pe linii din D300, valori sugerate pentru decont.</p></div>
     </div>
-    <p class="corp" style="margin-top:22px; color:var(--muted)">Potrivirea se face automat pe perechea
-      <b style="color:var(--text)">CUI partener + număr factură</b>, cu o toleranță mică de rotunjire
-      (implicit 1 leu), ca să nu apară diferențe false din cauza zecimalelor.</p>
+    <p class="corp" style="margin-top:22px; color:var(--muted)">Potrivirea se face pe
+      <b style="color:var(--text)">linia din formularul 300</b> (ex. linia 24), cu o toleranță
+      mică de rotunjire (implicit 1 leu), ca să nu apară diferențe false din cauza rotunjirii la
+      leu întreg din decontul ANAF.</p>
   </div>
 </section>
 
@@ -363,25 +367,26 @@ footer a:hover { color: #fff; }
   <div class="inv">
     <div class="sec-cap reveal">
       <div class="tag">07</div>
-      <h2>Cele patru tipuri de diferențe</h2>
-      <p>Fiecare factură care nu se potrivește perfect e încadrată automat într-una din aceste patru
-        categorii — asta înlocuiește verificarea manuală rând cu rând.</p>
+      <h2>Cele trei tipuri de diferențe</h2>
+      <p>Fiecare linie din formularul 300 unde totalul firmei nu se potrivește cu ce a precompletat
+        ANAF e încadrată automat într-una din aceste categorii — asta înlocuiește verificarea
+        manuală linie cu linie.</p>
     </div>
     <div class="tabel-scroll reveal"><table class="date">
       <thead><tr><th>Tip</th><th>Ce înseamnă</th><th>Cum apare</th></tr></thead>
       <tbody>
         <tr><td><span class="chip rosu">Sumă diferită</span></td>
-          <td>Aceeași factură există pe ambele părți, dar baza sau TVA-ul nu coincid.</td>
+          <td>Aceeași linie din D300 apare la ambele părți, dar baza sau TVA-ul nu coincid.</td>
           <td>Peste toleranța de 1 leu, la bază sau la TVA.</td></tr>
         <tr><td><span class="chip rosu">Lipsă în ANAF</span></td>
-          <td>Factura e în jurnalul firmei, dar ANAF nu o are.</td>
+          <td>Firma a raportat o sumă pe acea linie, dar ANAF nu are nimic precompletat acolo —
+            de regulă pentru că sursa de date a ANAF (e-Factura, casele de marcat) nu acoperă acel
+            tip de operațiune.</td>
           <td>Prezentă la firmă, absentă la ANAF.</td></tr>
         <tr><td><span class="chip rosu">Lipsă la companie</span></td>
-          <td>ANAF are o factură pe care firma nu a înregistrat-o.</td>
+          <td>ANAF a precompletat o sumă pe acea linie, dar firma nu a raportat nimic acolo —
+            posibilă operațiune omisă din jurnal.</td>
           <td>Prezentă la ANAF, absentă la firmă.</td></tr>
-        <tr><td><span class="chip rosu">Duplicat</span></td>
-          <td>Același număr de factură apare de mai multe ori pe aceeași parte.</td>
-          <td>CUI + număr factură repetat pe o singură parte.</td></tr>
       </tbody>
     </table></div>
   </div>
@@ -392,18 +397,18 @@ footer a:hover { color: #fff; }
     <div class="sec-cap reveal">
       <div class="tag">08</div>
       <h2>Valorile sugerate pentru D300</h2>
-      <p>Pentru fiecare categorie din decont, primești o valoare de plecare pentru eventualul decont
+      <p>Pentru fiecare linie din decont primești o valoare de plecare pentru eventualul decont
         rectificativ — aplicația nu completează nimic automat, doar orientează verificarea.</p>
     </div>
     <div class="corp reveal">
       <ul>
-        <li>Dacă o categorie nu are nicio diferență, rămâne valoarea firmei — <span class="chip verde">OK</span>.</li>
-        <li>Dacă o categorie are cel puțin o diferență, se sugerează valoarea ANAF ca punct de
-          plecare, marcată <span class="chip galben">De verificat</span> — fiscul are deja acea
-          sumă pre-completată și diferența trebuie clarificată oricum.</li>
+        <li>Dacă o linie nu are nicio diferență, rămâne valoarea firmei — <span class="chip verde">OK</span>.</li>
+        <li>Dacă o linie are o diferență, se sugerează valoarea ANAF ca punct de plecare, marcată
+          <span class="chip galben">De verificat</span> — fiscul are deja acea sumă precompletată
+          și diferența trebuie clarificată oricum.</li>
       </ul>
       <p class="nota"><b>Important:</b> sugestia e strict informativă. Decizia finală privind ce
-        depui în decont rămâne mereu a ta, după verificarea facturilor semnalate.</p>
+        depui în decont rămâne mereu a ta, după verificarea liniilor semnalate.</p>
     </div>
   </div>
 </section>
@@ -418,8 +423,8 @@ footer a:hover { color: #fff; }
     </div>
     <div class="corp reveal">
       <ul>
-        <li>Sumar pe categorii, cu valorile sugerate pentru D300.</li>
-        <li>Lista completă a diferențelor, factură cu factură.</li>
+        <li>Sumar pe linii din D300, cu valorile sugerate pentru decont.</li>
+        <li>Lista completă a diferențelor, linie cu linie.</li>
         <li>Rândurile cu probleme sunt evidențiate color, ca să sară imediat în ochi la o verificare rapidă.</li>
       </ul>
     </div>
@@ -486,9 +491,8 @@ footer a:hover { color: #fff; }
     </div>
     <div class="corp reveal">
       <ul>
-        <li>Nu se conectează automat la ANAF — descarci manual fișierul e-TVA din SPV și îl încarci
-          în aplicație. Formatul de import e construit special să fie flexibil (mapare de coloane),
-          tocmai pentru că ANAF nu a publicat încă un API oficial pentru asta.</li>
+        <li>Nu se conectează automat la ANAF — descarci manual decontul PDF din SPV și îl încarci
+          în aplicație. Nu există încă un API oficial ANAF pentru asta.</li>
         <li>Nu depune declarația — arată doar diferențele și o valoare sugerată; depunerea rămâne un
           pas separat, prin canalele obișnuite.</li>
         <li>Nu are încă un abonament plătit — perioada actuală e gratuită, ca parte din lansare.</li>

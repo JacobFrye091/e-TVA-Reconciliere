@@ -43,3 +43,45 @@ def write_report(result, suggestions, path, client_name, period) -> None:
                    a["base"] if a else "", a["vat"] if a else "",
                    d["delta_base"], d["delta_vat"]])
     wb.save(path)
+
+
+_SUMAR_HEADER_LINII = ["Linie D300", "Denumire", "Baza firma", "TVA firma",
+                       "Baza ANAF", "TVA ANAF", "Baza sugerata",
+                       "TVA sugerata", "Status"]
+_DIFF_HEADER_LINII = ["Tip diferenta", "Linie D300", "Denumire",
+                      "Baza firma", "TVA firma", "Baza ANAF", "TVA ANAF",
+                      "Delta baza", "Delta TVA"]
+
+
+def write_report_lines(result, suggestions, path, client_name, period) -> None:
+    """Same report layout as write_report, but for D300-line-level results
+    (real ANAF e-TVA precompleted document — no invoice detail)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sumar"
+    ws["A1"] = f"Client: {client_name}"
+    ws["A2"] = f"Perioada: {period}"
+    ws["A1"].font = ws["A2"].font = _BOLD
+    ws.append([])
+    ws.append(_SUMAR_HEADER_LINII)
+    for cell in ws[4]:
+        cell.font = _BOLD
+    for s in suggestions:
+        ws.append([s["line_no"], s["label"], s["company_base"], s["company_vat"],
+                   s["anaf_base"], s["anaf_vat"], s["suggested_base"],
+                   s["suggested_vat"], s["status"]])
+        if s["status"] == "de_verificat":
+            for cell in ws[ws.max_row]:
+                cell.fill = _RED
+
+    wd = wb.create_sheet("Diferente")
+    wd.append(_DIFF_HEADER_LINII)
+    for cell in wd[1]:
+        cell.font = _BOLD
+    for d in result.differences:
+        c, a = d["company"], d["anaf"]
+        wd.append([d["diff_type"], d["line_no"], d["label"],
+                   c["base"] if c else "", c["vat"] if c else "",
+                   a["base"] if a else "", a["vat"] if a else "",
+                   d["delta_base"], d["delta_vat"]])
+    wb.save(path)

@@ -18,8 +18,11 @@ from etva import audit, clients
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
-from etva.engine import reconcile
-from etva.advisor import suggest_d300
+from etva.importer.saga import parse_saga_journal, NotSagaFormat
+from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
+from etva.d300 import classify_legend, expand_derived_lines
+from etva.engine import reconcile, reconcile_d300
+from etva.advisor import suggest_d300, suggest_d300_lines
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LANDING = _ROOT / "docs" / "index.html"
@@ -315,11 +318,44 @@ def create_app(data_dir: str) -> Flask:
             "VALUES(?,?,?)",
             [(rid, d["diff_type"], json.dumps(d)) for d in result.differences])
         fc.commit()
-        return {"id": rid,
+        return {"id": rid, "mode": "invoices",
                 "totals_company": result.totals_company,
                 "totals_anaf": result.totals_anaf,
                 "differences": result.differences,
                 "suggestions": suggest_d300(result)}
+
+    def _persist_lines(fc, username, client_id, period, company_lines, anaf_lines):
+        cur = fc.execute(
+            "INSERT INTO reconciliations(client_id, period, created_at, "
+            "created_by) VALUES(?,?,?,?)",
+            (client_id, period,
+             datetime.now(timezone.utc).isoformat(), username))
+        rid = cur.lastrowid
+        for table, lines in (("invoices_company", company_lines),
+                            ("invoices_anaf", anaf_lines)):
+            fc.executemany(
+                f"INSERT INTO {table}(reconciliation_id, category, base, vat) "
+                "VALUES(?,?,?,?)",
+                [(rid, line_no, v["base"], v["vat"]) for line_no, v in lines.items()])
+        fc.commit()
+        return rid
+
+    def _result_payload_lines(fc, rid, company_lines, anaf_lines, unmapped=None):
+        result = reconcile_d300(company_lines, anaf_lines)
+        fc.execute("DELETE FROM differences WHERE reconciliation_id=?", (rid,))
+        fc.executemany(
+            "INSERT INTO differences(reconciliation_id, diff_type, details) "
+            "VALUES(?,?,?)",
+            [(rid, d["diff_type"], json.dumps(d)) for d in result.differences])
+        fc.commit()
+        payload = {"id": rid, "mode": "d300_lines",
+                   "totals_company": result.totals_company,
+                   "totals_anaf": result.totals_anaf,
+                   "differences": result.differences,
+                   "suggestions": suggest_d300_lines(result)}
+        if unmapped:
+            payload["unmapped"] = unmapped
+        return payload
 
     @app.post("/api/reconciliations")
     @require("reconciliere.creare")
@@ -327,15 +363,52 @@ def create_app(data_dir: str) -> Flask:
         fc = firm_conn(ident["firm_id"])
         client_id = int(request.form["client_id"])
         period = request.form["period"]
+        anaf_file = request.files["anaf_file"]
+        company_files = request.files.getlist("company_file")
+        if not company_files:
+            return jsonify({"errors": ["Lipseste jurnalul firmei."]}), 400
+
+        if anaf_file.filename.lower().endswith(".pdf"):
+            try:
+                anaf_doc = parse_p300_pdf(_save_upload(anaf_file))
+            except NotAnafP300 as e:
+                return jsonify({"errors": [str(e)]}), 400
+
+            cod_mapping = None
+            if request.form.get("cod_mapping"):
+                cod_mapping = json.loads(request.form["cod_mapping"])
+
+            company_lines: dict = {}
+            unmapped = []
+            try:
+                for f in company_files:
+                    journal = parse_saga_journal(_save_upload(f))
+                    mapped, unmapped_here = classify_legend(
+                        journal.direction, journal.legend, cod_mapping)
+                    unmapped.extend(unmapped_here)
+                    for line_no, v in mapped.items():
+                        acc = company_lines.setdefault(
+                            line_no, {"base": 0.0, "vat": 0.0})
+                        acc["base"] += v["base"]
+                        acc["vat"] += v["vat"]
+            except NotSagaFormat as e:
+                return jsonify({"errors": [str(e)]}), 400
+            company_lines = expand_derived_lines(company_lines)
+
+            rid = _persist_lines(fc, ident["username"], client_id, period,
+                                 company_lines, anaf_doc.lines)
+            audit.log(fc, ident["username"], "reconciliere.creare",
+                      "reconciliation", str(rid))
+            return jsonify(_result_payload_lines(
+                fc, rid, company_lines, anaf_doc.lines, unmapped))
+
         mapping = None
         if request.form.get("anaf_mapping"):
             mapping = json.loads(request.form["anaf_mapping"])
         try:
-            comp_rows = parse_company_journal(
-                _save_upload(request.files["company_file"]))
+            comp_rows = parse_company_journal(_save_upload(company_files[0]))
             anaf_rows = FileAnafDataSource(
-                _save_upload(request.files["anaf_file"]),
-                mapping).get_etva_data("", period)
+                _save_upload(anaf_file), mapping).get_etva_data("", period)
         except ImportError_ as e:
             return jsonify({"errors": e.errors}), 400
         rid = _persist(fc, ident["username"], client_id, period,
@@ -347,13 +420,32 @@ def create_app(data_dir: str) -> Flask:
     def _load_rows(fc, rid, table):
         rows = fc.execute(
             f"SELECT partner_cui, invoice_no, date, base, vat, category "
-            f"FROM {table} WHERE reconciliation_id=?", (rid,))
+            f"FROM {table} WHERE reconciliation_id=? AND partner_cui IS NOT NULL",
+            (rid,))
         return [dict(r) for r in rows]
+
+    def _load_lines(fc, rid, table):
+        rows = fc.execute(
+            f"SELECT category, base, vat FROM {table} "
+            f"WHERE reconciliation_id=? AND partner_cui IS NULL", (rid,))
+        return {r["category"]: {"base": r["base"], "vat": r["vat"]} for r in rows}
+
+    def _reconciliation_mode(fc, rid):
+        row = fc.execute(
+            "SELECT partner_cui FROM invoices_anaf WHERE reconciliation_id=? "
+            "LIMIT 1", (rid,)).fetchone()
+        if row is None:
+            return "invoices"
+        return "invoices" if row["partner_cui"] is not None else "d300_lines"
 
     @app.get("/api/reconciliations/<int:rid>")
     @require()
     def get_reconciliation(ident, rid):
         fc = firm_conn(ident["firm_id"])
+        if _reconciliation_mode(fc, rid) == "d300_lines":
+            comp = _load_lines(fc, rid, "invoices_company")
+            anaf = _load_lines(fc, rid, "invoices_anaf")
+            return jsonify(_result_payload_lines(fc, rid, comp, anaf))
         comp = _load_rows(fc, rid, "invoices_company")
         anaf = _load_rows(fc, rid, "invoices_anaf")
         return jsonify(_result_payload(fc, rid, comp, anaf))
@@ -368,12 +460,19 @@ def create_app(data_dir: str) -> Flask:
             (rid,)).fetchone()
         if row is None:
             return jsonify({"error": "Reconciliere inexistenta"}), 404
-        comp = _load_rows(fc, rid, "invoices_company")
-        anaf = _load_rows(fc, rid, "invoices_anaf")
-        result = reconcile(comp, anaf)
         path = os.path.join(upload_dir, f"raport_{ident['firm_id']}_{rid}.xlsx")
-        export_mod.write_report(result, suggest_d300(result), path,
-                                row["name"], row["period"])
+        if _reconciliation_mode(fc, rid) == "d300_lines":
+            comp = _load_lines(fc, rid, "invoices_company")
+            anaf = _load_lines(fc, rid, "invoices_anaf")
+            result = reconcile_d300(comp, anaf)
+            export_mod.write_report_lines(result, suggest_d300_lines(result),
+                                          path, row["name"], row["period"])
+        else:
+            comp = _load_rows(fc, rid, "invoices_company")
+            anaf = _load_rows(fc, rid, "invoices_anaf")
+            result = reconcile(comp, anaf)
+            export_mod.write_report(result, suggest_d300(result), path,
+                                    row["name"], row["period"])
         audit.log(fc, ident["username"], "raport.export",
                   "reconciliation", str(rid))
         return send_file(path, as_attachment=True,

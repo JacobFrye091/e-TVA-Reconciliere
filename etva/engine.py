@@ -1,6 +1,10 @@
-"""Reconciliation engine: invoice-level matching + category totals."""
+"""Reconciliation engine: invoice-level matching + category totals, and
+D300-line-level matching against ANAF's real precompleted e-TVA totals
+(which carry no invoice detail at all — see etva/importer/anaf_p300.py)."""
 from dataclasses import dataclass, field
 from collections import defaultdict
+
+from etva.d300 import D300_LINES
 
 
 @dataclass
@@ -63,4 +67,35 @@ def reconcile(company_rows, anaf_rows, tolerance: float = 1.0) -> ReconcileResul
     for key, a in anaf.items():
         if key not in comp:
             diff("lipsa_la_companie", key, None, a)
+    return result
+
+
+def reconcile_d300(company_lines: dict, anaf_lines: dict,
+                   tolerance: float = 1.0) -> ReconcileResult:
+    """Compare company totals per D300 line against ANAF's precompleted
+    lines. `company_lines`/`anaf_lines` are {line_no: {"base", "vat"}}."""
+    totals_company = {k: {"base": round(v["base"], 2), "vat": round(v["vat"], 2)}
+                      for k, v in company_lines.items()}
+    totals_anaf = {k: {"base": round(v["base"], 2), "vat": round(v["vat"], 2)}
+                   for k, v in anaf_lines.items()}
+    result = ReconcileResult(totals_company=totals_company, totals_anaf=totals_anaf)
+
+    def diff(dtype, line_no, c, a):
+        result.differences.append({
+            "diff_type": dtype, "line_no": line_no,
+            "label": D300_LINES.get(line_no, ""),
+            "company": c, "anaf": a,
+            "delta_base": round((c["base"] if c else 0) - (a["base"] if a else 0), 2),
+            "delta_vat": round((c["vat"] if c else 0) - (a["vat"] if a else 0), 2),
+        })
+
+    for line_no, c in totals_company.items():
+        a = totals_anaf.get(line_no)
+        if a is None:
+            diff("lipsa_in_anaf", line_no, c, None)
+        elif abs(c["base"] - a["base"]) > tolerance or abs(c["vat"] - a["vat"]) > tolerance:
+            diff("suma_diferita", line_no, c, a)
+    for line_no, a in totals_anaf.items():
+        if line_no not in totals_company:
+            diff("lipsa_la_companie", line_no, None, a)
     return result

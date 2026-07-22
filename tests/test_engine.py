@@ -1,4 +1,4 @@
-from etva.engine import reconcile
+from etva.engine import reconcile, reconcile_d300
 
 def row(cui="RO1", no="F1", base=100.0, vat=19.0, cat="livrari_interne"):
     return {"partner_cui": cui, "invoice_no": no, "date": "2026-01-10",
@@ -40,3 +40,39 @@ def test_totals_by_category():
                    row(no="F2", cat="achizitii_interne", base=200.0, vat=38.0)],
                   [])
     assert r.totals_company["achizitii_interne"]["base"] == 200.0
+
+
+# ---------- D300 line-level reconciliation (real ANAF e-TVA format) ----------
+
+def test_d300_lines_match_no_diffs():
+    r = reconcile_d300({"9": {"base": 100.0, "vat": 21.0}},
+                       {"9": {"base": 100.0, "vat": 21.0}})
+    assert r.differences == []
+
+
+def test_d300_line_missing_in_anaf():
+    r = reconcile_d300({"22.1": {"base": 120.0, "vat": 25.2}}, {})
+    d = r.differences[0]
+    assert d["diff_type"] == "lipsa_in_anaf"
+    assert d["line_no"] == "22.1"
+    assert d["anaf"] is None
+
+
+def test_d300_line_missing_at_company():
+    r = reconcile_d300({}, {"29": {"base": 1193.0, "vat": 0.0}})
+    d = r.differences[0]
+    assert d["diff_type"] == "lipsa_la_companie"
+    assert d["company"] is None
+
+
+def test_d300_line_amount_differs_beyond_tolerance():
+    r = reconcile_d300({"24": {"base": 14323.46, "vat": 3007.94}},
+                       {"24": {"base": 14000.0, "vat": 3007.94}})
+    assert r.differences[0]["diff_type"] == "suma_diferita"
+
+
+def test_d300_no_duplicate_concept_at_line_level():
+    # Lines are unique by construction — reconcile_d300 never emits "duplicat".
+    r = reconcile_d300({"9": {"base": 1.0, "vat": 0.0}},
+                       {"9": {"base": 1.0, "vat": 0.0}})
+    assert all(d["diff_type"] != "duplicat" for d in r.differences)
