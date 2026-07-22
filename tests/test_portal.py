@@ -181,6 +181,66 @@ def test_add_firm_rejects_duplicate_cui(app):
     assert "Exista deja o firma".encode() in r.data
 
 
+# ---------- dev/testare/productie pipeline (master dashboard) ----------
+
+from portal import pipeline as pl
+
+
+def _seed_master(app, username="sef", password="ParolaMaster123!"):
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        (username, psec.hash_password(password)))
+    conn.commit()
+
+
+def test_pipeline_dashboard_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/pipeline")
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_pipeline_dashboard_and_promote(app, monkeypatch):
+    _seed_master(app)
+    monkeypatch.setattr(pl, "branch_info", lambda env: {
+        "env": env, "branch": pl.ENVIRONMENTS[env]["branch"], "exists": True,
+        "path": "x", "commit": "abcd123", "subject": "test", "date": "2026-07-22"})
+    monkeypatch.setattr(pl, "ahead_count", lambda s, t: 1)
+    monkeypatch.setattr(pl, "can_promote", lambda s, t: True)
+    monkeypatch.setattr(pl, "promote", lambda s, t: "deadbeef")
+
+    c = app.test_client()
+    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/pipeline")
+    assert r.status_code == 200 and b"Promoveaza" in r.data
+
+    r2 = c.post("/master/pipeline/promoveaza",
+               data={"source": "dev", "target": "testare"}, follow_redirects=True)
+    assert "deadbeef".encode() in r2.data
+    hist = pl.history(app.portal_conn)
+    assert hist[0]["commit_hash"] == "deadbeef" and hist[0]["promoted_by"] == "sef"
+
+
+def test_pipeline_promote_surfaces_error(app, monkeypatch):
+    _seed_master(app)
+    def _boom(source, target):
+        raise pl.PipelineError("nu se poate promova acum")
+    monkeypatch.setattr(pl, "promote", _boom)
+    c = app.test_client()
+    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/pipeline/promoveaza",
+              data={"source": "dev", "target": "testare"}, follow_redirects=True)
+    assert "nu se poate promova acum".encode() in r.data
+    assert pl.history(app.portal_conn) == []
+
+
+def test_pipeline_promote_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/pipeline/promoveaza",
+              data={"source": "dev", "target": "testare"})
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
 # ---------- product API (in-browser app) ----------
 
 import io

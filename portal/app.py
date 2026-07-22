@@ -13,6 +13,7 @@ from flask import (Flask, request, session, redirect, url_for, jsonify,
 
 from portal import db as pdb
 from portal import security as psec
+from portal import pipeline
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
@@ -343,6 +344,48 @@ def create_app(data_dir: str) -> Flask:
         conn.execute("UPDATE firms SET active = 1 - active WHERE id=?", (firm_id,))
         conn.commit()
         return redirect(url_for("master"))
+
+    # ---------- master: dev/testare/productie pipeline ----------
+    @app.get("/master/pipeline")
+    def pipeline_dashboard():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        envs = {env: pipeline.branch_info(env) for env in pipeline.ENVIRONMENTS}
+        promotions = []
+        for source, target in pipeline.PROMOTIONS:
+            info = {"source": source, "target": target}
+            try:
+                info["ahead"] = pipeline.ahead_count(source, target)
+                info["can_promote"] = (info["ahead"] > 0
+                                       and pipeline.can_promote(source, target))
+                info["blocked"] = None
+            except pipeline.PipelineError as e:
+                info["ahead"] = None
+                info["can_promote"] = False
+                info["blocked"] = str(e)
+            promotions.append(info)
+        return render_template(
+            "pipeline.html", user=user, envs=envs, labels=pipeline.ENVIRONMENTS,
+            promotions=promotions, istoric=pipeline.history(conn),
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/master/pipeline/promoveaza")
+    def promote_environment():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        source = request.form.get("source", "")
+        target = request.form.get("target", "")
+        try:
+            commit = pipeline.promote(source, target)
+        except pipeline.PipelineError as e:
+            return redirect(url_for("pipeline_dashboard", eroare=str(e)))
+        pipeline.log_promotion(conn, source, target, commit, user["username"])
+        return redirect(url_for(
+            "pipeline_dashboard",
+            mesaj=f"{source} -> {target} promovat la commit-ul {commit}. "
+                 f"Reporneste manual serverul din '{target}'."))
 
     # ---------- product API (session-based) ----------
     @app.get("/api/me")

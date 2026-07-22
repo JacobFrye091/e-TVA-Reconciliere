@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block titlu %}Pipeline versiuni — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card">
+    <h2>Pipeline de versiuni</h2>
+    <p class="sub">Trei medii locale, pe acest calculator: dezvoltare,
+      testare, productie — fiecare intr-un folder si pe un port separat.
+      O promovare muta doar codul (fast-forward pe branch) si scrie un
+      jurnal; serverul mediului tinta trebuie repornit manual dupa aceea.</p>
+    {% if mesaj %}<p style="color:var(--ok); font-weight:600">{{ mesaj }}</p>{% endif %}
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+    <table>
+      <tr><th>Mediu</th><th>Branch</th><th>Commit</th><th>Ultimul mesaj</th><th>Data</th></tr>
+      {% for env, info in envs.items() %}
+      <tr>
+        <td>{{ labels[env]['label'] }}</td>
+        <td>{{ info['branch'] }}</td>
+        {% if info['exists'] %}
+        <td><code>{{ info['commit'] }}</code></td>
+        <td>{{ info['subject'] }}</td>
+        <td>{{ info['date'] }}</td>
+        {% else %}
+        <td colspan="3" style="color:var(--danger)">Folderul nu exista: {{ info['path'] }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Promovari disponibile</h2>
+    {% for p in promotions %}
+    <div style="padding:14px 0; border-bottom:1px solid var(--border)">
+      <p><b>{{ labels[p['source']]['label'] }} &rarr; {{ labels[p['target']]['label'] }}</b>
+        {% if p['ahead'] is not none %}
+        — {{ p['ahead'] }} commit(uri) noi in {{ labels[p['source']]['label'] }}
+          fata de {{ labels[p['target']]['label'] }}
+        {% endif %}
+      </p>
+      {% if p['blocked'] %}
+      <p class="eroare">{{ p['blocked'] }}</p>
+      {% elif p['can_promote'] %}
+      <form method="post" action="/master/pipeline/promoveaza"
+            onsubmit="return confirm('Promovezi {{ labels[p['source']]['label'] }} -> {{ labels[p['target']]['label'] }}? Vei reporni manual serverul din {{ labels[p['target']]['label'] }} dupa aceea.');">
+        <input type="hidden" name="source" value="{{ p['source'] }}">
+        <input type="hidden" name="target" value="{{ p['target'] }}">
+        <button type="submit">Promoveaza</button>
+      </form>
+      {% else %}
+      <p class="nota">Nimic nou de promovat momentan.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <h2>Istoric promovari</h2>
+    <table>
+      <tr><th>Cand</th><th>Cine</th><th>Din</th><th>In</th><th>Commit</th></tr>
+      {% for h in istoric %}
+      <tr>
+        <td>{{ h['promoted_at'] }}</td>
+        <td>{{ h['promoted_by'] }}</td>
+        <td>{{ labels[h['source_env']]['label'] }}</td>
+        <td>{{ labels[h['target_env']]['label'] }}</td>
+        <td><code>{{ h['commit_hash'] }}</code></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:var(--muted)">Nicio promovare inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

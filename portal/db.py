@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS user_firms(
   PRIMARY KEY (user_id, firm_id));
 CREATE TABLE IF NOT EXISTS firm_keys(
   firm_id INTEGER PRIMARY KEY, wrapped_key BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS pipeline_log(
+  id INTEGER PRIMARY KEY, source_env TEXT NOT NULL, target_env TEXT NOT NULL,
+  commit_hash TEXT NOT NULL, promoted_by TEXT NOT NULL, promoted_at TEXT NOT NULL);
 """
 
 
