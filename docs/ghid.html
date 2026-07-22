@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghid complet — e-TVA Reconciliere</title>
+<meta name="description" content="Cum funcționează e-TVA Reconciliere, pas cu pas: conturi, roluri, formatul fișierelor, tipurile de diferențe și securitatea datelor.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0e1626;
+  --ink-2: #16233c;
+  --ink-3: #223252;
+  --paper: #f7f9fb;
+  --surface: #ffffff;
+  --border: #e1e7ef;
+  --text: #1b2430;
+  --muted: #64718a;
+  --muted-inv: #93a1bd;
+  --accent: #0d5c63;
+  --accent-2: #12777f;
+  --accent-soft: #e0efee;
+  --danger: #c23a32;
+  --danger-bg: #fdeeed;
+  --warn: #9a6700;
+  --warn-bg: #fff4dd;
+  --ok: #1a7f4b;
+  --ok-bg: #e7f5ec;
+  --disp: "Archivo", system-ui, sans-serif;
+  --body: "Inter", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: var(--body); color: var(--text); background: var(--paper);
+  font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { font-family: var(--disp); line-height: 1.15; letter-spacing: -.01em; }
+a { color: inherit; }
+code { font-family: var(--mono); font-size: .92em; background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; }
+.inv { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* ---------- Topbar (identical to homepage) ---------- */
+.topbar { position: sticky; top: 0; z-index: 50; background: rgba(14, 22, 38, .92);
+  backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.07); }
+.topbar .inv { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+.brand-mark { width: 34px; height: 34px; border-radius: 8px; background: var(--accent);
+  color: #fff; display: grid; place-items: center; font-family: var(--disp);
+  font-weight: 800; font-size: 12px; }
+.brand-name { color: #fff; font-family: var(--disp); font-weight: 700; font-size: 16px; }
+.brand img { width: 36px; height: 36px; display: block; }
+.nav { display: flex; align-items: center; gap: 26px; }
+.nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+.nav a:hover { color: #fff; }
+.nav a.activ { color: #fff; }
+.btn { display: inline-block; font-family: var(--disp); font-weight: 700; font-size: 15px;
+  text-decoration: none; border-radius: 8px; padding: 11px 22px; transition: transform .12s, background .15s; }
+.btn:hover { transform: translateY(-1px); }
+.btn-plin { background: var(--accent); color: #fff; }
+.btn-plin:hover { background: var(--accent-2); }
+.btn-gol { border: 1px solid rgba(255,255,255,.25); color: #fff; }
+.btn-gol:hover { border-color: rgba(255,255,255,.55); }
+.btn-contur { border: 1.5px solid var(--border); color: var(--text); background: var(--surface); }
+.btn-contur:hover { border-color: var(--accent); color: var(--accent); }
+.nav .btn { padding: 8px 16px; font-size: 14px; }
+@media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
+
+/* ---------- Page header (quieter than the homepage hero) ---------- */
+.page-header { background: linear-gradient(165deg, var(--ink) 0%, #0b1322 55%, #091020 100%);
+  color: #fff; padding: 56px 0 52px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  letter-spacing: .04em; color: #8fd4cf; background: rgba(13, 92, 99, .3);
+  border: 1px solid rgba(18, 119, 127, .5); border-radius: 999px; padding: 6px 14px; margin-bottom: 20px; }
+.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #35b8ab; }
+.page-header h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 800; margin-bottom: 14px; max-width: 20em; }
+.page-header p.sub { font-size: 17px; color: var(--muted-inv); max-width: 42em; margin-bottom: 22px; }
+.hero-punkte { display: flex; gap: 22px; flex-wrap: wrap; color: var(--muted-inv); font-size: 13.5px; }
+.hero-punkte span::before { content: "✓ "; color: #35b8ab; font-weight: 700; }
+
+/* ---------- Table of contents ---------- */
+.cuprins-zona { padding: 40px 0 8px; }
+.cuprins { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 26px 30px; }
+.cuprins .tag { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 14px; }
+.cuprins ol { columns: 2; column-gap: 36px; padding-left: 1.25em; font-size: 14.5px; }
+.cuprins li { margin-bottom: 8px; break-inside: avoid; }
+.cuprins a { text-decoration: none; color: var(--text); }
+.cuprins a:hover { color: var(--accent); text-decoration: underline; }
+@media (max-width: 620px) { .cuprins ol { columns: 1; } }
+
+/* ---------- Sections ---------- */
+section { padding: 64px 0; }
+section.alt { background: var(--surface); border-block: 1px solid var(--border); }
+.sec-cap { max-width: 680px; margin-bottom: 34px; }
+.sec-cap .tag { font-size: 12px; font-weight: 700; letter-spacing: .1em; font-family: var(--mono);
+  color: var(--accent); margin-bottom: 10px; }
+.sec-cap h2 { font-size: clamp(22px, 2.8vw, 30px); font-weight: 800; margin-bottom: 12px; }
+.sec-cap p { color: var(--muted); font-size: 16px; max-width: 42em; }
+.corp { max-width: 720px; }
+.corp p { color: var(--text); margin-bottom: 14px; }
+.corp ul { padding-left: 1.3em; margin-bottom: 14px; }
+.corp li { color: var(--text); margin-bottom: 8px; }
+.corp li b { font-weight: 650; }
+
+/* Callout */
+.nota { background: var(--accent-soft); border-left: 3px solid var(--accent);
+  padding: 14px 18px; border-radius: 0 8px 8px 0; font-size: 14.5px; color: var(--text);
+  max-width: 42em; margin-top: 8px; }
+.nota b { color: var(--accent); }
+
+/* Steps (identical to homepage .pasi/.pas) */
+.pasi { counter-reset: pas; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+@media (max-width: 820px) { .pasi { grid-template-columns: 1fr; } }
+.pas { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 24px 22px; position: relative; }
+section.alt .pas { background: var(--paper); }
+.pas::before { counter-increment: pas; content: counter(pas, decimal-leading-zero);
+  font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent);
+  background: var(--accent-soft); border-radius: 6px; padding: 4px 9px;
+  display: inline-block; margin-bottom: 14px; }
+.pas h3 { font-size: 16px; margin-bottom: 6px; }
+.pas p { color: var(--muted); font-size: 14px; }
+
+/* Roles grid */
+.roluri-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; max-width: 780px; }
+@media (max-width: 620px) { .roluri-grid { grid-template-columns: 1fr; } }
+.rol-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
+.rol-card h3 { font-size: 16px; margin-bottom: 6px; }
+.rol-card p { color: var(--muted); font-size: 14px; }
+
+/* Tables */
+.tabel-scroll { overflow-x: auto; max-width: 900px; border: 1px solid var(--border); border-radius: 12px; }
+table.date { border-collapse: collapse; width: 100%; min-width: 560px; background: var(--surface); }
+table.date th, table.date td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+table.date thead th { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); background: #fbfcfe; }
+table.date tbody tr:last-child td { border-bottom: 0; }
+table.date td.cod { font-family: var(--mono); font-size: 13px; }
+table.date td.num { text-align: right; font-family: var(--mono); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600;
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.chip::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.chip.rosu { color: var(--danger); background: #fbdedb; }
+.chip.galben { color: var(--warn); background: var(--warn-bg); }
+.chip.verde { color: var(--ok); background: var(--ok-bg); }
+
+/* Security band (identical to homepage) */
+.securitate { background: var(--ink); color: #fff; }
+.securitate .sec-cap .tag { color: #6ecfc4; }
+.securitate .sec-cap p { color: var(--muted-inv); }
+.securitate .corp p, .securitate .corp li { color: var(--muted-inv); }
+.sec-grila { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 10px; }
+@media (max-width: 720px) { .sec-grila { grid-template-columns: 1fr; } }
+.s-card { background: var(--ink-2); border: 1px solid var(--ink-3); border-radius: 12px; padding: 22px; }
+.s-card h3 { font-size: 15.5px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+.s-card h3::before { content: "⬢"; color: #35b8ab; font-size: 13px; }
+.s-card p { color: var(--muted-inv); font-size: 14px; }
+
+/* Start CTA */
+.desc { text-align: center; }
+.desc h2 { font-size: clamp(24px, 3vw, 32px); font-weight: 800; margin-bottom: 14px; }
+.desc p { color: var(--muted); max-width: 38em; margin: 0 auto 26px; }
+.hero-cta { display: flex; gap: 14px; flex-wrap: wrap; }
+.desc .hero-cta { justify-content: center; }
+
+footer { background: var(--ink); color: var(--muted-inv); padding: 36px 0; font-size: 13.5px; }
+footer .inv { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+footer a { color: var(--muted-inv); }
+footer a:hover { color: #fff; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity .5s ease, transform .5s ease; }
+  .reveal.vazut { opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="inv">
+    <a class="brand" href="index.html">
+      <img src="favicon.svg" alt="Logo e-TVA Reconciliere">
+      <span class="brand-name">e-TVA Reconciliere</span>
+    </a>
+    <nav class="nav">
+      <a href="index.html#functionalitati">Funcționalități</a>
+      <a href="index.html#cum">Cum funcționează</a>
+      <a href="index.html#securitate">Securitate</a>
+      <a href="ghid.html" class="activ">Ghid complet</a>
+      <a href="autentificare" data-auth="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-header">
+  <div class="inv">
+    <span class="eyebrow">Ghid complet</span>
+    <h1>Cum funcționează e-TVA Reconciliere, pas cu pas</h1>
+    <p class="sub">De la crearea contului firmei tale până la raportul Excel gata de predat —
+      exact ce faci la fiecare pas, ce vezi ca rezultat și ce rămâne întotdeauna decizia ta.</p>
+    <div class="hero-punkte">
+      <span>Direct în browser, fără instalare</span>
+      <span>Baza de date a fiecărei firme, criptată separat AES-256</span>
+      <span>Gratuit în perioada de lansare</span>
+    </div>
+  </div>
+</section>
+
+<div class="cuprins-zona"><div class="inv">
+  <div class="cuprins reveal">
+    <div class="tag">Cuprins</div>
+    <ol>
+      <li><a href="#context">De ce există e-TVA Reconciliere</a></li>
+      <li><a href="#cont">Crearea contului firmei tale</a></li>
+      <li><a href="#roluri">Roluri și ce poate face fiecare</a></li>
+      <li><a href="#clienti">Clienți și alocarea lor</a></li>
+      <li><a href="#format">Formatul fișierelor de încărcat</a></li>
+      <li><a href="#pasi">Cum rulezi o reconciliere, pas cu pas</a></li>
+      <li><a href="#diferente">Cele patru tipuri de diferențe</a></li>
+      <li><a href="#sugestii">Valorile sugerate pentru D300</a></li>
+      <li><a href="#export">Raportul Excel de predat</a></li>
+      <li><a href="#audit">Jurnalul de audit</a></li>
+      <li><a href="#securitate">Securitatea datelor</a></li>
+      <li><a href="#incepe">Cum începi</a></li>
+      <li><a href="#limitari">Ce nu face încă</a></li>
+    </ol>
+  </div>
+</div></div>
+
+<section id="context">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">01</div>
+      <h2>De ce există e-TVA Reconciliere</h2>
+    </div>
+    <div class="corp reveal">
+      <p>ANAF trece la decontul de TVA precompletat: fiscul întocmește propria variantă a decontului
+        pe baza datelor pe care le are deja — e-Factura, SAF-T, casele de marcat. Firma ta trebuie
+        să compari propria evidență cu ce arată ANAF și să justifici orice diferență.</p>
+      <p>Verificarea manuală, factură cu factură, a sute de rânduri din jurnalul de vânzări și
+        cumpărări durează ore sau zile în fiecare lună. e-TVA Reconciliere face potrivirea automat
+        și îți arată exact ce nu corespunde — nu doar un total diferit, ci factura exactă, suma
+        exactă, partenerul exact.</p>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="cont">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">02</div>
+      <h2>Crearea contului firmei tale</h2>
+      <p>Contul firmei tale e complet separat de al oricărei alte firme înregistrate pe platformă.</p>
+    </div>
+    <div class="pasi reveal">
+      <div class="pas"><h3>Creezi contul firmei</h3>
+        <p>Completezi denumirea firmei, CUI-ul, un nume de utilizator și o parolă (minim 10 caractere).</p></div>
+      <div class="pas"><h3>Ești activ imediat</h3>
+        <p>Fără aprobare manuală — primul cont creat devine automat administratorul firmei.</p></div>
+      <div class="pas"><h3>Îți aduci echipa</h3>
+        <p>Din contul de administrator adaugi restul colegilor, fiecare cu propriul utilizator și propria parolă.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="roluri">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">03</div>
+      <h2>Roluri și ce poate face fiecare</h2>
+      <p>Nu toți colegii tăi au nevoie de acces la tot. Rolul stabilește exact ce vede și ce poate
+        face fiecare — util mai ales dacă lucrezi cu mai mulți clienți și mai mulți angajați.</p>
+    </div>
+    <div class="roluri-grid reveal">
+      <div class="rol-card"><h3>Admin</h3>
+        <p>Vede toți clienții firmei, rulează reconcilieri, exportă rapoarte, adaugă și dezactivează
+          utilizatori, vede jurnalul de audit. Un singur admin per firmă — cel care a creat contul.</p></div>
+      <div class="rol-card"><h3>Manager</h3>
+        <p>Vede toți clienții firmei, rulează reconcilieri și exportă rapoarte. Nu gestionează
+          utilizatori.</p></div>
+      <div class="rol-card"><h3>Contabil</h3>
+        <p>Vede și lucrează doar cu clienții care i-au fost alocați explicit. Poate exporta rapoarte
+          pentru acei clienți.</p></div>
+      <div class="rol-card"><h3>Junior</h3>
+        <p>La fel ca și contabilul — doar clienții alocați — dar fără posibilitatea de a exporta
+          raportul Excel final.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="clienti">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">04</div>
+      <h2>Clienți și alocarea lor</h2>
+    </div>
+    <div class="corp reveal">
+      <p>„Client" înseamnă compania pentru care rulezi reconcilierea — poate fi chiar firma ta, sau,
+        mai frecvent, unul dintre clienții tăi de contabilitate.</p>
+      <ul>
+        <li>Tu sau un manager adăugați un client cu doar două informații: <b>CUI</b> și <b>denumire</b>.</li>
+        <li>Un contabil sau junior nu vede niciun client până nu i-l aloci explicit — așa împarți
+          portofoliul de clienți între colegi, fără ca unul să vadă dosarele altuia.</li>
+        <li>Poți aloca același client mai multor colegi deodată, dacă lucrează împreună pe el.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="format">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">05</div>
+      <h2>Formatul fișierelor de încărcat</h2>
+      <p>Pentru fiecare reconciliere ai nevoie de <b>două fișiere</b>, în același format — jurnalul
+        propriu al firmei și datele primite de la ANAF. Ambele acceptă <code>.xlsx</code> sau <code>.csv</code>.</p>
+    </div>
+    <div class="tabel-scroll reveal"><table class="date">
+      <thead><tr><th>Coloană</th><th>Conținut</th><th>Exemplu</th></tr></thead>
+      <tbody>
+        <tr><td class="cod">cui_partener</td><td>CUI-ul partenerului de pe factură</td><td class="cod">RO18765432</td></tr>
+        <tr><td class="cod">nr_factura</td><td>Numărul facturii</td><td class="cod">F1002</td></tr>
+        <tr><td class="cod">data</td><td>Data documentului</td><td class="cod">2026-06-05</td></tr>
+        <tr><td class="cod">baza</td><td>Baza de TVA</td><td class="num">850.00</td></tr>
+        <tr><td class="cod">tva</td><td>Valoarea TVA</td><td class="num">161.50</td></tr>
+        <tr><td class="cod">categorie</td><td>Categoria D300 (text liber)</td><td class="cod">livrari_interne</td></tr>
+      </tbody>
+    </table></div>
+    <p class="nota"><b>De reținut:</b> formatul oficial de export e-TVA de la ANAF nu e încă stabilit
+      definitiv. Dacă fișierul tău ANAF are alte denumiri de coloane (ex. „CIF" în loc de
+      „cui_partener"), faci o mapare o singură dată, direct din interfață — nu trebuie să rescrii
+      manual fișierul.</p>
+  </div>
+</section>
+
+<section class="alt" id="pasi">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">06</div>
+      <h2>Cum rulezi o reconciliere, pas cu pas</h2>
+    </div>
+    <div class="pasi reveal">
+      <div class="pas"><h3>Alegi clientul</h3><p>Din lista clienților alocați ție.</p></div>
+      <div class="pas"><h3>Completezi perioada</h3><p>De exemplu: 2026-06.</p></div>
+      <div class="pas"><h3>Încarci jurnalul firmei</h3><p>Exportul din programul de contabilitate.</p></div>
+      <div class="pas"><h3>Încarci fișierul ANAF</h3><p>Datele e-TVA descărcate din SPV.</p></div>
+      <div class="pas"><h3>Apeși „Rulează reconcilierea"</h3><p>Calculul se face pe loc, în câteva secunde.</p></div>
+      <div class="pas"><h3>Vezi rezultatul imediat</h3><p>Totaluri, diferențe factură cu factură, valori sugerate D300.</p></div>
+    </div>
+    <p class="corp" style="margin-top:22px; color:var(--muted)">Potrivirea se face automat pe perechea
+      <b style="color:var(--text)">CUI partener + număr factură</b>, cu o toleranță mică de rotunjire
+      (implicit 1 leu), ca să nu apară diferențe false din cauza zecimalelor.</p>
+  </div>
+</section>
+
+<section id="diferente">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">07</div>
+      <h2>Cele patru tipuri de diferențe</h2>
+      <p>Fiecare factură care nu se potrivește perfect e încadrată automat într-una din aceste patru
+        categorii — asta înlocuiește verificarea manuală rând cu rând.</p>
+    </div>
+    <div class="tabel-scroll reveal"><table class="date">
+      <thead><tr><th>Tip</th><th>Ce înseamnă</th><th>Cum apare</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chip rosu">Sumă diferită</span></td>
+          <td>Aceeași factură există pe ambele părți, dar baza sau TVA-ul nu coincid.</td>
+          <td>Peste toleranța de 1 leu, la bază sau la TVA.</td></tr>
+        <tr><td><span class="chip rosu">Lipsă în ANAF</span></td>
+          <td>Factura e în jurnalul firmei, dar ANAF nu o are.</td>
+          <td>Prezentă la firmă, absentă la ANAF.</td></tr>
+        <tr><td><span class="chip rosu">Lipsă la companie</span></td>
+          <td>ANAF are o factură pe care firma nu a înregistrat-o.</td>
+          <td>Prezentă la ANAF, absentă la firmă.</td></tr>
+        <tr><td><span class="chip rosu">Duplicat</span></td>
+          <td>Același număr de factură apare de mai multe ori pe aceeași parte.</td>
+          <td>CUI + număr factură repetat pe o singură parte.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="alt" id="sugestii">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">08</div>
+      <h2>Valorile sugerate pentru D300</h2>
+      <p>Pentru fiecare categorie din decont, primești o valoare de plecare pentru eventualul decont
+        rectificativ — aplicația nu completează nimic automat, doar orientează verificarea.</p>
+    </div>
+    <div class="corp reveal">
+      <ul>
+        <li>Dacă o categorie nu are nicio diferență, rămâne valoarea firmei — <span class="chip verde">OK</span>.</li>
+        <li>Dacă o categorie are cel puțin o diferență, se sugerează valoarea ANAF ca punct de
+          plecare, marcată <span class="chip galben">De verificat</span> — fiscul are deja acea
+          sumă pre-completată și diferența trebuie clarificată oricum.</li>
+      </ul>
+      <p class="nota"><b>Important:</b> sugestia e strict informativă. Decizia finală privind ce
+        depui în decont rămâne mereu a ta, după verificarea facturilor semnalate.</p>
+    </div>
+  </div>
+</section>
+
+<section id="export">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">09</div>
+      <h2>Raportul Excel de predat</h2>
+      <p>Orice reconciliere rulată poate fi exportată într-un fișier <code>.xlsx</code> gata de
+        atașat la dosarul lunii.</p>
+    </div>
+    <div class="corp reveal">
+      <ul>
+        <li>Sumar pe categorii, cu valorile sugerate pentru D300.</li>
+        <li>Lista completă a diferențelor, factură cu factură.</li>
+        <li>Rândurile cu probleme sunt evidențiate color, ca să sară imediat în ochi la o verificare rapidă.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="audit">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">10</div>
+      <h2>Jurnalul de audit</h2>
+    </div>
+    <div class="corp reveal">
+      <p>Fiecare acțiune importantă rămâne înregistrată permanent: cine s-a autentificat, cine a
+        adăugat un client, cine a rulat o reconciliere, cine a exportat un raport.</p>
+      <p>Istoricul nu poate fi modificat sau șters — nici măcar de administratorul firmei. E util
+        atât pentru control intern, cât și ca dovadă că verificările au fost efectiv făcute.</p>
+    </div>
+  </div>
+</section>
+
+<section id="securitate" class="securitate">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">11</div>
+      <h2>Securitatea datelor</h2>
+      <p>Lucrezi cu date fiscale reale despre facturi și parteneri comerciali — securitatea nu e o
+        opțiune secundară aici.</p>
+    </div>
+    <div class="corp reveal">
+      <ul>
+        <li><b>O bază de date criptată per firmă.</b> Firma ta are propriul spațiu de date, criptat
+          cu o cheie proprie (AES-256, prin SQLCipher) — nu poți ajunge, nici măcar din greșeală,
+          la datele altei firme, și nicio altă firmă nu poate ajunge la ale tale.</li>
+        <li><b>Parolele nu sunt niciodată stocate în clar.</b> Sunt protejate cu Argon2id,
+          algoritmul recomandat actual împotriva atacurilor prin forță brută.</li>
+        <li><b>Cheile de criptare sunt ele însele criptate</b> pe server și nu ajung niciodată
+          necriptate pe disc.</li>
+        <li><b>Permisiunile se verifică la fiecare cerere</b>, pe server — nu doar ascunzând un
+          buton în interfață.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="desc" id="incepe">
+  <div class="inv reveal">
+    <h2>Cum începi</h2>
+    <p>Aplicația rulează integral în browser — nimic de instalat pe calculatoarele echipei tale.
+      Poți vedea întâi o demonstrație cu date exemplu, fără cont, apoi creezi contul real în două
+      minute, gratuit în perioada de lansare — fără card, fără abonament.</p>
+    <div class="hero-cta">
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont de firmă</a>
+      <a class="btn btn-contur" href="autentificare" data-auth="autentificare">Autentificare</a>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="limitari">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">13</div>
+      <h2>Ce nu face încă</h2>
+    </div>
+    <div class="corp reveal">
+      <ul>
+        <li>Nu se conectează automat la ANAF — descarci manual fișierul e-TVA din SPV și îl încarci
+          în aplicație. Formatul de import e construit special să fie flexibil (mapare de coloane),
+          tocmai pentru că ANAF nu a publicat încă un API oficial pentru asta.</li>
+        <li>Nu depune declarația — arată doar diferențele și o valoare sugerată; depunerea rămâne un
+          pas separat, prin canalele obișnuite.</li>
+        <li>Nu are încă un abonament plătit — perioada actuală e gratuită, ca parte din lansare.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="inv">
+    <div>© 2026 e-TVA Reconciliere · Instrument independent, neafiliat ANAF.</div>
+    <div><a href="index.html">Înapoi la pagina principală</a></div>
+  </div>
+</footer>
+
+<script>
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('vazut'); obs.unobserve(e.target); } });
+  }, { threshold: .12 });
+  document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+} else {
+  document.querySelectorAll('.reveal').forEach(el => el.classList.add('vazut'));
+}
+
+// Pe GitHub Pages nu exista backend: Autentificare/Creeaza cont duc spre o
+// demonstratie statica cu date exemplu in loc de 404. Cand pagina e servita
+// chiar de platforma (Flask), linkurile raman cele reale.
+if (location.hostname.endsWith('.github.io')) {
+  document.querySelectorAll('[data-auth]').forEach(a => { a.href = 'demo.html'; });
+}
+</script>
+</body>
+</html>

@@ -24,6 +24,7 @@ from etva.advisor import suggest_d300
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LANDING = _ROOT / "docs" / "index.html"
 _FAVICON = _ROOT / "docs" / "favicon.svg"
+_GHID = _ROOT / "docs" / "ghid.html"
 _SPA = _ROOT / "web" / "index.html"
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
@@ -95,6 +96,10 @@ def create_app(data_dir: str) -> Flask:
     @app.get("/favicon.svg")
     def favicon():
         return send_file(_FAVICON, mimetype="image/svg+xml")
+
+    @app.get("/ghid.html")
+    def ghid():
+        return send_file(_GHID)
 
     @app.route("/inregistrare", methods=["GET", "POST"])
     def register():
