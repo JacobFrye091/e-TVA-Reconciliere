@@ -207,7 +207,8 @@ def test_pipeline_dashboard_and_promote(app, monkeypatch):
         "path": "x", "commit": "abcd123", "subject": "test", "date": "2026-07-22"})
     monkeypatch.setattr(pl, "ahead_count", lambda s, t: 1)
     monkeypatch.setattr(pl, "can_promote", lambda s, t: True)
-    monkeypatch.setattr(pl, "promote", lambda s, t: "deadbeef")
+    monkeypatch.setattr(pl, "promote", lambda s, t: {
+        "commit": "deadbeef", "pushed": True, "push_error": None})
 
     c = app.test_client()
     c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
@@ -217,8 +218,24 @@ def test_pipeline_dashboard_and_promote(app, monkeypatch):
     r2 = c.post("/master/pipeline/promoveaza",
                data={"source": "dev", "target": "testare"}, follow_redirects=True)
     assert "deadbeef".encode() in r2.data
+    assert "GitHub".encode() in r2.data
     hist = pl.history(app.portal_conn)
     assert hist[0]["commit_hash"] == "deadbeef" and hist[0]["promoted_by"] == "sef"
+
+
+def test_pipeline_promote_reports_when_push_fails(app, monkeypatch):
+    _seed_master(app)
+    monkeypatch.setattr(pl, "promote", lambda s, t: {
+        "commit": "deadbeef", "pushed": False, "push_error": "no network"})
+    c = app.test_client()
+    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/pipeline/promoveaza",
+              data={"source": "dev", "target": "testare"}, follow_redirects=True)
+    assert "no network".encode() in r.data
+    assert "promovat local".encode() in r.data
+    # local promotion still happened, so it must still be logged
+    hist = pl.history(app.portal_conn)
+    assert hist[0]["commit_hash"] == "deadbeef"
 
 
 def test_pipeline_promote_surfaces_error(app, monkeypatch):

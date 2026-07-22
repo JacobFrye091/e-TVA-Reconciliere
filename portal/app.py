@@ -379,14 +379,21 @@ def create_app(data_dir: str) -> Flask:
         source = request.form.get("source", "")
         target = request.form.get("target", "")
         try:
-            commit = pipeline.promote(source, target)
+            result = pipeline.promote(source, target)
         except pipeline.PipelineError as e:
             return redirect(url_for("pipeline_dashboard", eroare=str(e)))
+        commit = result["commit"]
         pipeline.log_promotion(conn, source, target, commit, user["username"])
-        return redirect(url_for(
-            "pipeline_dashboard",
-            mesaj=f"{source} -> {target} promovat la commit-ul {commit}. "
-                 f"Reporneste manual serverul din '{target}'."))
+        if result["pushed"]:
+            mesaj = (f"{source} -> {target} promovat la commit-ul {commit} "
+                    f"si trimis pe GitHub. Reporneste manual serverul din '{target}'.")
+            return redirect(url_for("pipeline_dashboard", mesaj=mesaj))
+        eroare = (f"{source} -> {target} promovat local la commit-ul {commit}, "
+                 f"dar push-ul pe GitHub a esuat: {result['push_error']}. "
+                 f"Codul e promovat corect local - ruleaza manual "
+                 f"'git push origin {pipeline.ENVIRONMENTS[target]['branch']}' "
+                 f"din folderul {target}.")
+        return redirect(url_for("pipeline_dashboard", eroare=eroare))
 
     # ---------- product API (session-based) ----------
     @app.get("/api/me")

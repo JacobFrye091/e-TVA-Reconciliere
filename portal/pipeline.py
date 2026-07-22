@@ -84,13 +84,17 @@ def can_promote(source_env: str, target_env: str) -> bool:
     return result.returncode == 0
 
 
-def promote(source_env: str, target_env: str) -> str:
-    """Fast-forward target's branch (and working tree) to source's commit.
+def promote(source_env: str, target_env: str) -> dict:
+    """Fast-forward target's branch (and working tree) to source's commit,
+    then push that branch to GitHub so the remote reflects it too.
 
-    Returns the new short commit hash. Raises PipelineError if the
-    promotion path isn't allowed, the target worktree has uncommitted
-    changes, or target has commits of its own that source doesn't
-    (not a fast-forward — needs a manual merge first).
+    Returns {"commit": short hash, "pushed": bool, "push_error": str|None}.
+    Raises PipelineError if the promotion path isn't allowed, the target
+    worktree has uncommitted changes, or target has commits of its own
+    that source doesn't (not a fast-forward — needs a manual merge
+    first). A failed push does NOT raise — the local promotion already
+    happened and is real; push_error just means GitHub hasn't caught up
+    yet and needs a manual `git push` later.
     """
     if (source_env, target_env) not in PROMOTIONS:
         raise PipelineError(f"Promovarea {source_env} -> {target_env} nu e permisa.")
@@ -108,11 +112,19 @@ def promote(source_env: str, target_env: str) -> str:
             f"care nu sunt in '{ENVIRONMENTS[source_env]['branch']}' - "
             "promovarea directa nu e sigura (rezolva manual cu git merge/rebase).")
     src_branch = ENVIRONMENTS[source_env]["branch"]
+    tgt_branch = ENVIRONMENTS[target_env]["branch"]
     result = subprocess.run(["git", "-C", str(tgt_repo), "merge", "--ff-only", src_branch],
                             capture_output=True, text=True)
     if result.returncode != 0:
         raise PipelineError((result.stderr or result.stdout).strip())
-    return _git(tgt_repo, "rev-parse", "--short", "HEAD")
+    commit = _git(tgt_repo, "rev-parse", "--short", "HEAD")
+
+    push = subprocess.run(["git", "-C", str(tgt_repo), "push", "origin", tgt_branch],
+                          capture_output=True, text=True)
+    if push.returncode == 0:
+        return {"commit": commit, "pushed": True, "push_error": None}
+    return {"commit": commit, "pushed": False,
+           "push_error": (push.stderr or push.stdout).strip()}
 
 
 def log_promotion(conn, source_env: str, target_env: str, commit_hash: str,

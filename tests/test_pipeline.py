@@ -63,11 +63,46 @@ def test_promote_dev_to_testare_fast_forwards(envs):
     _git(envs["dev"], "commit", "-aq", "-m", "c2 on dev")
 
     assert pipeline.ahead_count("dev", "testare") == 1
-    commit = pipeline.promote("dev", "testare")
+    result = pipeline.promote("dev", "testare")
 
     assert (envs["testare"] / "f.txt").read_text() == "v2"
     assert pipeline.ahead_count("dev", "testare") == 0
-    assert commit == _git(envs["testare"], "rev-parse", "--short", "HEAD")
+    assert result["commit"] == _git(envs["testare"], "rev-parse", "--short", "HEAD")
+
+
+def test_promote_reports_push_failure_without_losing_local_promotion(envs):
+    """No 'origin' remote in the test repo - push must fail gracefully,
+    but the local fast-forward must still have happened (and be reported)."""
+    (envs["dev"] / "f.txt").write_text("v2")
+    _git(envs["dev"], "commit", "-aq", "-m", "c2 on dev")
+
+    result = pipeline.promote("dev", "testare")
+
+    assert result["pushed"] is False
+    assert result["push_error"]
+    assert (envs["testare"] / "f.txt").read_text() == "v2"  # still promoted locally
+
+
+def test_promote_pushes_to_a_real_remote(tmp_path, envs):
+    """With a real 'origin' configured, promote() must push the target branch."""
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(bare))
+    # remotes live in the shared .git config, so adding one from any
+    # worktree makes it visible to all worktrees of the same repo.
+    _git(envs["dev"], "remote", "add", "origin", str(bare))
+    for env in ("dev", "testare"):
+        _git(envs[env], "push", "-q", "origin", env)
+
+    (envs["dev"] / "f.txt").write_text("v2")
+    _git(envs["dev"], "commit", "-aq", "-m", "c2 on dev")
+    _git(envs["dev"], "push", "-q", "origin", "dev")
+
+    result = pipeline.promote("dev", "testare")
+
+    assert result["pushed"] is True
+    assert result["push_error"] is None
+    remote_head = _git(bare, "rev-parse", "--short", "refs/heads/testare")
+    assert remote_head == result["commit"]
 
 
 def test_promote_rejects_disallowed_path(envs):
