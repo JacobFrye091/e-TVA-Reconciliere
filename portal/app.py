@@ -15,6 +15,7 @@ from portal import db as pdb
 from portal import security as psec
 from etva import db as fdb
 from etva import audit, clients
+from etva import anaf_cui
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
@@ -65,18 +66,32 @@ def create_app(data_dir: str) -> Flask:
         return conn.execute("SELECT * FROM users WHERE id=? AND active=1",
                             (uid,)).fetchone()
 
+    def list_user_firms(user_id: int):
+        """Active firms this user belongs to, each with their role there."""
+        return conn.execute(
+            "SELECT f.id, f.name, f.cui, uf.role FROM user_firms uf "
+            "JOIN firms f ON f.id = uf.firm_id "
+            "WHERE uf.user_id=? AND uf.active=1 AND f.active=1 "
+            "ORDER BY f.name", (user_id,)).fetchall()
+
     def current_identity():
-        """Firm identity for the product API; None for anonymous/master."""
+        """Active-firm identity for the product API; None for anonymous/master."""
         user = current_user()
-        if user is None or user["role"] == "master":
+        if user is None or user["is_master"]:
             return None
-        firm = conn.execute("SELECT * FROM firms WHERE id=? AND active=1",
-                            (user["firm_id"],)).fetchone()
-        if firm is None:
+        active_firm_id = session.get("active_firm_id")
+        if active_firm_id is None:
             return None
-        return {"username": user["username"], "role": user["role"],
-                "firm_id": firm["id"], "firm_name": firm["name"],
-                "permissions": pdb.ROLE_PERMISSIONS[user["role"]]}
+        row = conn.execute(
+            "SELECT uf.role, f.id, f.name FROM user_firms uf "
+            "JOIN firms f ON f.id = uf.firm_id "
+            "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1",
+            (user["id"], active_firm_id)).fetchone()
+        if row is None:
+            return None
+        return {"username": user["username"], "role": row["role"],
+                "firm_id": row["id"], "firm_name": row["name"],
+                "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
     def require(perm=None):
         def deco(fn):
@@ -104,6 +119,21 @@ def create_app(data_dir: str) -> Flask:
     def ghid():
         return send_file(_GHID)
 
+    def _verify_cui_or_error(cui: str) -> str | None:
+        """Return an error message if the CUI isn't a real, ANAF-registered
+        CUI, or None if it checks out."""
+        try:
+            info = anaf_cui.verify_cui(cui)
+        except ValueError:
+            return "CUI-ul introdus nu este valid."
+        except anaf_cui.AnafCuiError:
+            return ("Nu am putut verifica CUI-ul la ANAF chiar acum. "
+                    "Incearca din nou peste cateva momente.")
+        if info is None:
+            return ("CUI-ul introdus nu a fost gasit la ANAF. "
+                    "Verifica-l si incearca din nou.")
+        return None
+
     @app.route("/inregistrare", methods=["GET", "POST"])
     def register():
         if request.method == "GET":
@@ -124,16 +154,23 @@ def create_app(data_dir: str) -> Flask:
                         (username,)).fetchone():
             return render_template("inregistrare.html",
                                    eroare="Numele de utilizator este deja folosit.")
+        eroare = _verify_cui_or_error(cui)
+        if eroare:
+            return render_template("inregistrare.html", eroare=eroare)
         cur = conn.execute("INSERT INTO firms(name, cui) VALUES(?,?)", (name, cui))
         firm_id = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO users(username, pw_hash) VALUES(?,?)",
+            (username, psec.hash_password(password)))
+        user_id = cur.lastrowid
         conn.execute(
-            "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(?,?,?,?)",
-            (firm_id, username, psec.hash_password(password), "admin"))
+            "INSERT INTO user_firms(user_id, firm_id, role, active) "
+            "VALUES(?,?,?,1)", (user_id, firm_id, "admin"))
         conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
                      (firm_id, psec.wrap_key(secret, os.urandom(32))))
         conn.commit()
-        session["user_id"] = conn.execute(
-            "SELECT id FROM users WHERE username=?", (username,)).fetchone()["id"]
+        session["user_id"] = user_id
+        session["active_firm_id"] = firm_id
         return redirect(url_for("aplicatie"))
 
     @app.route("/autentificare", methods=["GET", "POST"])
@@ -148,14 +185,21 @@ def create_app(data_dir: str) -> Flask:
             return render_template("autentificare.html",
                                    eroare="Utilizator sau parola incorecta.")
         session["user_id"] = row["id"]
-        if row["role"] == "master":
+        if row["is_master"]:
             return redirect(url_for("master"))
+        firms = list_user_firms(row["id"])
+        if not firms:
+            session["active_firm_id"] = None
+            return redirect(url_for("panou"))
+        session["active_firm_id"] = firms[0]["id"]
         ident = current_identity()
         if ident is None:
             session.clear()
             return render_template("autentificare.html",
                                    eroare="Contul firmei este dezactivat.")
         audit.log(firm_conn(ident["firm_id"]), ident["username"], "login")
+        if len(firms) > 1:
+            return redirect(url_for("panou"))
         return redirect(url_for("aplicatie"))
 
     @app.get("/iesire")
@@ -171,24 +215,78 @@ def create_app(data_dir: str) -> Flask:
         return send_file(_SPA)
 
     # ---------- firm account pages ----------
+    def _role_in_firm(user_id: int, firm_id: int) -> str | None:
+        row = conn.execute(
+            "SELECT role FROM user_firms WHERE user_id=? AND firm_id=? "
+            "AND active=1", (user_id, firm_id)).fetchone()
+        return row["role"] if row else None
+
     @app.get("/panou")
     def panou():
         user = current_user()
-        if user is None or user["role"] == "master":
+        if user is None or user["is_master"]:
             return redirect(url_for("login"))
-        firm = conn.execute("SELECT * FROM firms WHERE id=?",
-                            (user["firm_id"],)).fetchone()
-        members = conn.execute(
-            "SELECT username, role, active FROM users WHERE firm_id=? "
-            "ORDER BY role, username", (user["firm_id"],)).fetchall()
-        return render_template("panou.html", user=user, firm=firm,
-                               members=members, subroles=FIRM_SUBROLES,
+        firms = list_user_firms(user["id"])
+        active_firm_id = session.get("active_firm_id")
+        active = next((f for f in firms if f["id"] == active_firm_id), None)
+        if active is None and firms:
+            active = firms[0]
+            session["active_firm_id"] = active["id"]
+        members = []
+        if active is not None:
+            members = conn.execute(
+                "SELECT u.username, uf.role, uf.active FROM user_firms uf "
+                "JOIN users u ON u.id = uf.user_id "
+                "WHERE uf.firm_id=? ORDER BY uf.role, u.username",
+                (active["id"],)).fetchall()
+        return render_template("panou.html", user=user, firms=firms,
+                               active=active, members=members,
+                               subroles=FIRM_SUBROLES,
                                eroare=request.args.get("eroare"))
+
+    @app.post("/panou/firme")
+    def add_firm():
+        user = current_user()
+        if user is None or user["is_master"]:
+            return redirect(url_for("login"))
+        name = request.form.get("name", "").strip()
+        cui = request.form.get("cui", "").strip()
+        if not name or not cui:
+            return redirect(url_for(
+                "panou", eroare="Denumirea si CUI-ul sunt obligatorii."))
+        if conn.execute("SELECT 1 FROM firms WHERE cui=?", (cui,)).fetchone():
+            return redirect(url_for(
+                "panou", eroare="Exista deja o firma cu acest CUI."))
+        eroare = _verify_cui_or_error(cui)
+        if eroare:
+            return redirect(url_for("panou", eroare=eroare))
+        cur = conn.execute("INSERT INTO firms(name, cui) VALUES(?,?)", (name, cui))
+        firm_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO user_firms(user_id, firm_id, role, active) "
+            "VALUES(?,?,?,1)", (user["id"], firm_id, "admin"))
+        conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
+                     (firm_id, psec.wrap_key(secret, os.urandom(32))))
+        conn.commit()
+        session["active_firm_id"] = firm_id
+        return redirect(url_for("panou"))
+
+    @app.post("/panou/comutare-firma")
+    def switch_firm():
+        user = current_user()
+        if user is None or user["is_master"]:
+            return redirect(url_for("login"))
+        firm_id = request.form.get("firm_id", type=int)
+        if firm_id is not None and _role_in_firm(user["id"], firm_id):
+            session["active_firm_id"] = firm_id
+        return redirect(url_for("panou"))
 
     @app.post("/panou/utilizatori")
     def add_member():
         user = current_user()
-        if user is None or user["role"] != "admin":
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"] or active_firm_id is None
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
             return redirect(url_for("login"))
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -200,38 +298,47 @@ def create_app(data_dir: str) -> Flask:
                         (username,)).fetchone():
             return redirect(url_for(
                 "panou", eroare="Numele de utilizator este deja folosit."))
+        cur = conn.execute(
+            "INSERT INTO users(username, pw_hash) VALUES(?,?)",
+            (username, psec.hash_password(password)))
         conn.execute(
-            "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(?,?,?,?)",
-            (user["firm_id"], username, psec.hash_password(password), role))
+            "INSERT INTO user_firms(user_id, firm_id, role, active) "
+            "VALUES(?,?,?,1)", (cur.lastrowid, active_firm_id, role))
         conn.commit()
         return redirect(url_for("panou"))
 
     @app.post("/panou/utilizatori/<username>/dezactivare")
     def deactivate_member(username):
         user = current_user()
-        if user is None or user["role"] != "admin":
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"] or active_firm_id is None
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
             return redirect(url_for("login"))
-        conn.execute(
-            "UPDATE users SET active=0 WHERE username=? AND firm_id=? AND role!='admin'",
-            (username, user["firm_id"]))
-        conn.commit()
+        target = conn.execute("SELECT id FROM users WHERE username=?",
+                              (username,)).fetchone()
+        if target:
+            conn.execute(
+                "UPDATE user_firms SET active=0 WHERE user_id=? AND firm_id=? "
+                "AND role!='admin'", (target["id"], active_firm_id))
+            conn.commit()
         return redirect(url_for("panou"))
 
     # ---------- master ----------
     @app.get("/master")
     def master():
         user = current_user()
-        if user is None or user["role"] != "master":
+        if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         firms = conn.execute(
-            "SELECT f.*, (SELECT COUNT(*) FROM users u WHERE u.firm_id=f.id) "
-            "AS n_users FROM firms f ORDER BY f.name").fetchall()
+            "SELECT f.*, (SELECT COUNT(*) FROM user_firms uf "
+            "WHERE uf.firm_id=f.id AND uf.active=1) AS n_users "
+            "FROM firms f ORDER BY f.name").fetchall()
         return render_template("master.html", user=user, firms=firms)
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):
         user = current_user()
-        if user is None or user["role"] != "master":
+        if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         conn.execute("UPDATE firms SET active = 1 - active WHERE id=?", (firm_id,))
         conn.commit()

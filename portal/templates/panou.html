@@ -1,18 +1,57 @@
 {% extends "base.html" %}
-{% block titlu %}Panoul firmei — e-TVA Reconciliere{% endblock %}
+{% block titlu %}Panoul meu — e-TVA Reconciliere{% endblock %}
 {% block continut %}
 <main>
   <div class="card">
-    <h2>{{ firm['name'] }}</h2>
-    <p class="sub">CUI {{ firm['cui'] }} · Contul tau: {{ user['username'] }}
-      ({{ user['role'] }})</p>
-    <a class="btn" href="/app">Deschide aplicatia de reconciliere</a>
-    <p class="nota">Fiecare membru al echipei se autentifica cu contul lui si
-      lucreaza direct in browser.</p>
+    <h2>Firmele mele</h2>
+    <p class="sub">Contul tau: {{ user['username'] }}. Poti avea una sau mai
+      multe firme (SRL/PFA) legate de acelasi cont — alege cu care lucrezi.</p>
+    {% if firms %}
+    <table>
+      <tr><th>Firma</th><th>CUI</th><th>Rolul tau</th><th></th></tr>
+      {% for f in firms %}
+      <tr{% if active and f['id'] == active['id'] %} style="background:var(--ok-bg)"{% endif %}>
+        <td>{{ f['name'] }}</td>
+        <td>{{ f['cui'] }}</td>
+        <td>{{ f['role'] }}</td>
+        <td style="text-align:right">
+          {% if active and f['id'] == active['id'] %}
+          <span class="chip ok">Activa acum</span>
+          {% else %}
+          <form class="inline" method="post" action="/panou/comutare-firma">
+            <input type="hidden" name="firm_id" value="{{ f['id'] }}">
+            <button class="mic" type="submit">Lucreaza aici</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="sub">Nu ai inca nicio firma legata de cont. Adauga una mai jos.</p>
+    {% endif %}
+    {% if active %}
+    <a class="btn" style="margin-top:16px" href="/app">Deschide aplicatia de reconciliere ({{ active['name'] }})</a>
+    {% endif %}
   </div>
 
   <div class="card">
-    <h2>Echipa</h2>
+    <h2>Adauga o firma (SRL/PFA)</h2>
+    <p class="sub">CUI-ul este verificat automat la ANAF inainte de a fi
+      adaugat — daca nu exista in evidentele ANAF, nu poate fi adaugat.</p>
+    <form method="post" action="/panou/firme">
+      <div class="rand">
+        <div><label for="fn">Denumirea firmei</label><input id="fn" name="name" required></div>
+        <div><label for="fc">CUI</label><input id="fc" name="cui" required placeholder="ex: RO12345678"></div>
+        <button type="submit">Adauga</button>
+      </div>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+  </div>
+
+  {% if active %}
+  <div class="card">
+    <h2>Echipa — {{ active['name'] }}</h2>
     <p class="sub">Rolul stabileste ce poate face fiecare in aplicatie:
       manager (vede tot, exporta), contabil (clientii alocati, exporta),
       junior (fara export).</p>
@@ -25,7 +64,7 @@
         <td>{% if m['active'] %}<span class="chip ok">Activ</span>
             {% else %}<span class="chip oprit">Dezactivat</span>{% endif %}</td>
         <td style="text-align:right">
-          {% if user['role'] == 'admin' and m['role'] != 'admin' and m['active'] %}
+          {% if active['role'] == 'admin' and m['role'] != 'admin' and m['active'] %}
           <form class="inline" method="post"
                 action="/panou/utilizatori/{{ m['username'] }}/dezactivare">
             <button class="mic" type="submit">Dezactiveaza</button>
@@ -37,9 +76,9 @@
     </table>
   </div>
 
-  {% if user['role'] == 'admin' %}
+  {% if active['role'] == 'admin' %}
   <div class="card">
-    <h2>Membru nou</h2>
+    <h2>Membru nou — {{ active['name'] }}</h2>
     <form method="post" action="/panou/utilizatori">
       <div class="rand">
         <div><label for="mu">Utilizator</label><input id="mu" name="username" required></div>
@@ -52,8 +91,8 @@
         <button type="submit">Adauga</button>
       </div>
     </form>
-    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
   </div>
+  {% endif %}
   {% endif %}
 </main>
 {% endblock %}

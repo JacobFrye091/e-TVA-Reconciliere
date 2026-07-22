@@ -1,6 +1,7 @@
 import pytest
 from portal.app import create_app
 from portal import security as psec
+from etva import anaf_cui
 
 
 @pytest.fixture
@@ -8,6 +9,16 @@ def app(tmp_path):
     a = create_app(str(tmp_path))
     a.config["TESTING"] = True
     return a
+
+
+@pytest.fixture(autouse=True)
+def _mock_anaf_cui(monkeypatch):
+    """Tests don't hit the real ANAF service: default to "CUI exists"."""
+    def _fake(cui, on_date=None):
+        return {"cui": anaf_cui.normalize_cui(cui), "denumire": "Firma Test",
+                "adresa": "", "stare_inregistrare": "INREGISTRAT",
+                "scpTVA": True}
+    monkeypatch.setattr(anaf_cui, "verify_cui", _fake)
 
 
 def inregistreaza(c, username="firma1", cui="RO111"):
@@ -85,8 +96,8 @@ def test_member_roles_and_permissions(app):
 def test_master_dashboard_and_firm_toggle(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(NULL,?,?,?)",
-        ("sef", psec.hash_password("ParolaMaster123!"), "master"))
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c_firma = app.test_client()
     inregistreaza(c_firma)
@@ -106,13 +117,68 @@ def test_master_dashboard_and_firm_toggle(app):
 def test_master_cannot_use_app_api(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(NULL,?,?,?)",
-        ("sef", psec.hash_password("ParolaMaster123!"), "master"))
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
     c.post("/autentificare", data={"username": "sef",
                                    "password": "ParolaMaster123!"})
     assert c.get("/api/me").status_code == 401
+
+
+def test_register_rejects_unknown_cui(app, monkeypatch):
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: None)
+    c = app.test_client()
+    r = inregistreaza(c)
+    assert r.status_code == 200
+    assert "nu a fost gasit la ANAF".encode() in r.data
+    assert not app.portal_conn.execute("SELECT 1 FROM firms").fetchone()
+
+
+def test_register_surfaces_anaf_unreachable(app, monkeypatch):
+    def _boom(cui, **kw):
+        raise anaf_cui.AnafCuiError("timeout")
+    monkeypatch.setattr(anaf_cui, "verify_cui", _boom)
+    c = app.test_client()
+    r = inregistreaza(c)
+    assert r.status_code == 200
+    assert "Nu am putut verifica CUI-ul".encode() in r.data
+
+
+def test_user_can_add_second_firm_and_switch(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/panou/firme", data={"name": "Firma Doi PFA", "cui": "RO222"},
+               follow_redirects=True)
+    assert b"Firma Doi PFA" in r.data
+    # a doua firma devine activa automat
+    me = c.get("/api/me").get_json()
+    assert me["firm_name"] == "Firma Doi PFA"
+
+    firm1_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO111'").fetchone()["id"]
+    c.post("/panou/comutare-firma", data={"firm_id": str(firm1_id)})
+    me = c.get("/api/me").get_json()
+    assert me["firm_name"] == "Firma Unu SRL"
+
+
+def test_add_firm_rejects_unknown_cui(app, monkeypatch):
+    c = app.test_client()
+    inregistreaza(c)
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: None)
+    r = c.post("/panou/firme", data={"name": "Firma Fantoma", "cui": "RO333"},
+               follow_redirects=True)
+    assert "nu a fost gasit la ANAF".encode() in r.data
+    assert not app.portal_conn.execute(
+        "SELECT 1 FROM firms WHERE cui='RO333'").fetchone()
+
+
+def test_add_firm_rejects_duplicate_cui(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/panou/firme", data={"name": "Alta Denumire", "cui": "RO111"},
+               follow_redirects=True)
+    assert "Exista deja o firma".encode() in r.data
 
 
 # ---------- product API (in-browser app) ----------
@@ -196,8 +262,8 @@ def test_assignment_gives_visibility(app):
 def test_deactivated_firm_blocks_product(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(NULL,?,?,?)",
-        ("sef", psec.hash_password("ParolaMaster123!"), "master"))
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
     inregistreaza(c)

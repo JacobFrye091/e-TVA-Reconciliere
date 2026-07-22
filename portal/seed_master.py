@@ -20,12 +20,12 @@ def main():
     password = os.environ.get("ETVA_MASTER_PASSWORD") or getpass.getpass(
         "Parola master: ")
     conn = pdb.open_db(os.path.join(data_dir(), "portal.db"))
-    if conn.execute("SELECT 1 FROM users WHERE role='master'").fetchone():
+    if conn.execute("SELECT 1 FROM users WHERE is_master=1").fetchone():
         print("Exista deja un cont master. Nu s-a modificat nimic.")
         sys.exit(1)
     conn.execute(
-        "INSERT INTO users(firm_id, username, pw_hash, role) VALUES(NULL,?,?,?)",
-        (username, psec.hash_password(password), "master"))
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        (username, psec.hash_password(password)))
     conn.commit()
     print(f"Cont master '{username}' creat.")
 
