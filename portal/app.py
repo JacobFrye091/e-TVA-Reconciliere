@@ -22,6 +22,7 @@ from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
 from etva.importer.saga import parse_saga_journal, NotSagaFormat
 from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
+from etva.importer.anaf_p300_json import parse_p300_json, NotAnafP300Json
 from etva.d300 import classify_legend, expand_derived_lines
 from etva.engine import reconcile, reconcile_d300
 from etva.advisor import suggest_d300, suggest_d300_lines
@@ -518,10 +519,14 @@ def create_app(data_dir: str) -> Flask:
         if not company_files:
             return jsonify({"errors": ["Lipseste jurnalul firmei."]}), 400
 
-        if anaf_file.filename.lower().endswith(".pdf"):
+        if anaf_file.filename.lower().endswith((".pdf", ".json")):
+            saved_anaf_path = _save_upload(anaf_file)
             try:
-                anaf_doc = parse_p300_pdf(_save_upload(anaf_file))
-            except NotAnafP300 as e:
+                if anaf_file.filename.lower().endswith(".json"):
+                    anaf_doc = parse_p300_json(saved_anaf_path)
+                else:
+                    anaf_doc = parse_p300_pdf(saved_anaf_path)
+            except (NotAnafP300, NotAnafP300Json) as e:
                 return jsonify({"errors": [str(e)]}), 400
 
             cod_mapping = None

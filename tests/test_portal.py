@@ -403,6 +403,31 @@ def test_d300_line_reconciliation_via_pdf_and_saga(app, monkeypatch):
     assert r3.status_code == 200 and r3.data[:2] == b"PK"
 
 
+def test_d300_line_reconciliation_via_anaf_json_and_saga(app):
+    import json as _json
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+
+    anaf_json = _json.dumps({
+        "CIF": "111", "AN": 2026, "LUNA": 6,
+        "RD9_VAL": 1000.0, "RD9_TVA": 210.0,
+    }).encode()
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["mode"] == "d300_lines"
+    assert body["differences"] == []
+    assert body["totals_anaf"]["9"] == {"base": 1000.0, "vat": 210.0}
+
+
 def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
     import portal.app as app_module
     monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
