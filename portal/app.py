@@ -31,6 +31,9 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LANDING = _ROOT / "docs" / "index.html"
 _FAVICON = _ROOT / "docs" / "favicon.svg"
 _GHID = _ROOT / "docs" / "ghid.html"
+_TERMENI = _ROOT / "docs" / "termeni.html"
+_CONFIDENTIALITATE = _ROOT / "docs" / "confidentialitate.html"
+_COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
 _SPA = _ROOT / "web" / "index.html"
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
@@ -122,6 +125,18 @@ def create_app(data_dir: str) -> Flask:
     def ghid():
         return send_file(_GHID)
 
+    @app.get("/termeni.html")
+    def termeni():
+        return send_file(_TERMENI)
+
+    @app.get("/confidentialitate.html")
+    def confidentialitate():
+        return send_file(_CONFIDENTIALITATE)
+
+    @app.get("/cookie-uri.html")
+    def cookie_uri():
+        return send_file(_COOKIE_URI)
+
     def _verify_cui_or_error(cui: str) -> str | None:
         """Return an error message if the CUI isn't a real, ANAF-registered
         CUI, or None if it checks out."""
@@ -168,6 +183,11 @@ def create_app(data_dir: str) -> Flask:
         if not all([name, cui, username, password]) or tip not in pdb.FIRM_TIPURI:
             return render_template("inregistrare.html",
                                    eroare="Toate campurile sunt obligatorii.")
+        if not f.get("accept_termeni"):
+            return render_template(
+                "inregistrare.html",
+                eroare="Trebuie sa accepti Termenii si Conditiile si Politica "
+                      "de confidentialitate pentru a crea un cont.")
         if len(password) < 10:
             return render_template("inregistrare.html",
                                    eroare="Parola trebuie sa aiba minim 10 caractere.")
@@ -354,6 +374,56 @@ def create_app(data_dir: str) -> Flask:
         conn.execute("UPDATE firms SET active = 1 - active WHERE id=?", (firm_id,))
         conn.commit()
         return redirect(url_for("master"))
+
+    @app.get("/master/utilizatori")
+    def master_users():
+        """Everything about every account in one page: which firms they
+        belong to, with what role, how many clients/reconciliations they
+        have, and when they were last active - no per-firm clicking around."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        users_rows = conn.execute(
+            "SELECT * FROM users ORDER BY is_master DESC, username").fetchall()
+        overview = []
+        for u in users_rows:
+            memberships = conn.execute(
+                "SELECT f.id AS firm_id, f.name AS firm_name, f.cui, f.tip, "
+                "f.active AS firm_active, uf.role, uf.active AS membership_active "
+                "FROM user_firms uf JOIN firms f ON f.id = uf.firm_id "
+                "WHERE uf.user_id=? ORDER BY f.name", (u["id"],)).fetchall()
+            firme = []
+            n_reconcilieri_total = 0
+            ultima_activitate = None
+            for m in memberships:
+                fc = firm_conn(m["firm_id"])
+                n_clienti = fc.execute(
+                    "SELECT COUNT(*) AS n FROM client_assignments "
+                    "WHERE username=?", (u["username"],)).fetchone()["n"]
+                n_reconcilieri = fc.execute(
+                    "SELECT COUNT(*) AS n FROM reconciliations "
+                    "WHERE created_by=?", (u["username"],)).fetchone()["n"]
+                n_reconcilieri_total += n_reconcilieri
+                ultima = fc.execute(
+                    "SELECT action, ts FROM audit_log WHERE user_id=? "
+                    "ORDER BY ts DESC LIMIT 1", (u["username"],)).fetchone()
+                if ultima and (ultima_activitate is None
+                              or ultima["ts"] > ultima_activitate["ts"]):
+                    ultima_activitate = dict(ultima)
+                firme.append({
+                    "firm_id": m["firm_id"], "firm_name": m["firm_name"],
+                    "cui": m["cui"], "tip": m["tip"],
+                    "firm_active": bool(m["firm_active"]), "role": m["role"],
+                    "membership_active": bool(m["membership_active"]),
+                    "n_clienti": n_clienti, "n_reconcilieri": n_reconcilieri,
+                })
+            overview.append({
+                "user": u, "firme": firme,
+                "n_reconcilieri_total": n_reconcilieri_total,
+                "ultima_activitate": ultima_activitate,
+            })
+        return render_template("master_utilizatori.html", user=user,
+                               overview=overview)
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

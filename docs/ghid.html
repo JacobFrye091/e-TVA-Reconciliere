@@ -169,9 +169,14 @@ table.date td.num { text-align: right; font-family: var(--mono); }
 .desc .hero-cta { justify-content: center; }
 
 footer { background: var(--ink); color: var(--muted-inv); padding: 36px 0; font-size: 13.5px; }
-footer .inv { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+footer .footer-grid { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+footer .footer-col { max-width: 46em; }
+footer .footer-firma { margin-top: 8px; font-size: 12.5px; line-height: 1.6; }
+footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+@media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
 footer a { color: var(--muted-inv); }
 footer a:hover { color: #fff; }
+.placeholder-legal { color: #ffb4a8; }
 
 @media (prefers-reduced-motion: no-preference) {
   .reveal { opacity: 0; transform: translateY(16px); transition: opacity .5s ease, transform .5s ease; }
@@ -504,9 +509,22 @@ footer a:hover { color: #fff; }
 </section>
 
 <footer>
-  <div class="inv">
-    <div>© 2026 e-TVA Reconciliere · Instrument independent, neafiliat ANAF.</div>
-    <div><a href="index.html">Înapoi la pagina principală</a></div>
+  <div class="inv footer-grid">
+    <div class="footer-col">
+      <div>© 2026 e-TVA Reconciliere · Instrument independent, neafiliat ANAF.</div>
+      <div class="footer-firma">e-TVA Reconciliere este operat de
+        <span class="placeholder-legal">[DE COMPLETAT: denumirea firmei/PFA, CUI, nr. Reg. Com. dacă e cazul, sediul social]</span>.
+        Contact: <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a>
+        <span class="placeholder-legal">[DE COMPLETAT: adresa reală de contact]</span>.</div>
+    </div>
+    <div class="footer-col footer-links">
+      <a href="termeni.html">Termeni și condiții</a>
+      <a href="confidentialitate.html">Politica de confidențialitate</a>
+      <a href="cookie-uri.html">Politica de cookie-uri</a>
+      <a href="https://anpc.ro" target="_blank" rel="noopener">ANPC</a>
+      <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noopener">Soluționarea online a litigiilor (SOL)</a>
+      <a href="index.html">Înapoi la pagina principală</a>
+    </div>
   </div>
 </footer>
 

@@ -30,6 +30,11 @@
       <input id="username" name="username" required>
       <label for="password">Parola (minim 10 caractere)</label>
       <input id="password" name="password" type="password" required minlength="10">
+      <label class="optiune-tip" style="margin-top:14px">
+        <input type="checkbox" name="accept_termeni" required>
+        <span>Sunt de acord cu <a href="/termeni.html" target="_blank">Termenii si Conditiile</a>
+          si <a href="/confidentialitate.html" target="_blank">Politica de confidentialitate</a>.</span>
+      </label>
       <button class="btn-lat" type="submit">Creeaza contul</button>
     </form>
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}

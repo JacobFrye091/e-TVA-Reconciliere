@@ -24,7 +24,8 @@ def _mock_anaf_cui(monkeypatch):
 def inregistreaza(c, username="firma1", cui="RO111", tip="contabilitate"):
     return c.post("/inregistrare", data={
         "name": "Firma Unu SRL", "cui": cui, "tip": tip,
-        "username": username, "password": "ParolaLunga123!"},
+        "username": username, "password": "ParolaLunga123!",
+        "accept_termeni": "on"},
         follow_redirects=False)
 
 
@@ -94,6 +95,25 @@ def test_register_rejects_missing_tip(app):
     assert "obligatorii".encode() in r.data
     assert not app.portal_conn.execute(
         "SELECT 1 FROM firms WHERE cui='RO555'").fetchone()
+
+
+def test_register_rejects_without_accepting_terms(app):
+    c = app.test_client()
+    r = c.post("/inregistrare", data={
+        "name": "Firma X SRL", "cui": "RO556", "tip": "contabilitate",
+        "username": "userx", "password": "ParolaLunga123!"})
+    assert r.status_code == 200
+    assert "Termenii".encode() in r.data
+    assert not app.portal_conn.execute(
+        "SELECT 1 FROM firms WHERE cui='RO556'").fetchone()
+
+
+def test_legal_pages_are_served(app):
+    c = app.test_client()
+    for path in ("/termeni.html", "/confidentialitate.html", "/cookie-uri.html"):
+        r = c.get(path)
+        assert r.status_code == 200
+        assert b"e-TVA Reconciliere" in r.data
 
 
 def test_direct_firm_gets_a_matching_client_auto_created(app):
@@ -532,3 +552,75 @@ def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
     body = r.get_json()
     assert body["unmapped"] == [{"cod": "99", "label": "Cod ambiguu neclasificat",
                                  "base": 42.0, "vat": 0.0}]
+
+
+def test_master_users_page_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/utilizatori", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_users_shows_everything_about_each_account(app, monkeypatch):
+    import re
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={"9": {"base": 1000.0, "vat": 210.0}}))
+
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+
+    c = app.test_client()
+    inregistreaza(c, username="firma1", cui="RO111", tip="contabilitate")
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    c.post("/api/assignments", json={"username": "firma1", "client_id": cid})
+    c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"username": "sef",
+                                          "password": "ParolaMaster123!"})
+    r = c_master.get("/master/utilizatori")
+    assert r.status_code == 200
+    text = r.data.decode()
+
+    assert "sef" in text and "Master" in text
+    assert "Cont administrator platforma" in text
+
+    assert "firma1" in text
+    assert "1 firma" in text and "1 reconcilieri create in total" in text
+
+    row = re.search(r"<tr>.*?Firma Unu SRL.*?</tr>", text, re.S).group(0)
+    assert "RO111" in row and "Contabilitate" in row and "admin" in row
+    assert row.count("<td>1</td>") == 2  # 1 client alocat, 1 reconciliere
+
+
+def test_master_users_direct_firm_has_no_manual_client_but_gets_reconciliations(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Firma Unu SRL", period="2026-06",
+        lines={"9": {"base": 1000.0, "vat": 210.0}}))
+
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+
+    c = app.test_client()
+    inregistreaza(c, username="pfa1", cui="RO111", tip="direct")
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"username": "sef",
+                                          "password": "ParolaMaster123!"})
+    text = c_master.get("/master/utilizatori").data.decode()
+    assert "pfa1" in text and "Firma/PFA directa" in text
+    assert "0 reconcilieri create in total" in text

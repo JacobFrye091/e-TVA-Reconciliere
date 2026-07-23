@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Politica de confidențialitate — e-TVA Reconciliere</title>
+<meta name="description" content="Cum colectăm, folosim și protejăm datele tale pe platforma e-TVA Reconciliere, conform GDPR.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0e1626; --ink-2: #16233c; --ink-3: #223252;
+  --paper: #f7f9fb; --surface: #ffffff; --border: #e1e7ef;
+  --text: #1b2430; --muted: #64718a; --muted-inv: #93a1bd;
+  --accent: #0d5c63; --accent-2: #12777f; --accent-soft: #e0efee;
+  --danger: #c23a32; --danger-bg: #fdeeed; --warn: #9a6700; --warn-bg: #fff4dd;
+  --ok: #1a7f4b; --ok-bg: #e7f5ec;
+  --disp: "Archivo", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: var(--body); color: var(--text); background: var(--paper);
+  font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { font-family: var(--disp); line-height: 1.15; letter-spacing: -.01em; }
+a { color: inherit; }
+.inv { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+.topbar { position: sticky; top: 0; z-index: 50; background: rgba(14, 22, 38, .92);
+  backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.07); }
+.topbar .inv { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+.brand img { width: 36px; height: 36px; display: block; }
+.brand-name { color: #fff; font-family: var(--disp); font-weight: 700; font-size: 16px; }
+.nav { display: flex; align-items: center; gap: 26px; }
+.nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+.nav a:hover { color: #fff; }
+.nav a.activ { color: #fff; }
+.btn { display: inline-block; font-family: var(--disp); font-weight: 700; font-size: 15px;
+  text-decoration: none; border-radius: 8px; padding: 11px 22px; }
+.btn-plin { background: var(--accent); color: #fff; }
+.btn-plin:hover { background: var(--accent-2); }
+.nav .btn { padding: 8px 16px; font-size: 14px; }
+@media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
+
+.page-header { background: linear-gradient(165deg, var(--ink) 0%, #0b1322 55%, #091020 100%);
+  color: #fff; padding: 56px 0 44px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  letter-spacing: .04em; color: #8fd4cf; background: rgba(13, 92, 99, .3);
+  border: 1px solid rgba(18, 119, 127, .5); border-radius: 999px; padding: 6px 14px; margin-bottom: 20px; }
+.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #35b8ab; }
+.page-header h1 { font-size: clamp(26px, 3.6vw, 36px); font-weight: 800; margin-bottom: 10px; max-width: 22em; }
+.page-header p.sub { font-size: 15.5px; color: var(--muted-inv); max-width: 42em; }
+
+section { padding: 48px 0; }
+section.alt { background: var(--surface); border-block: 1px solid var(--border); }
+.corp { max-width: 760px; }
+.corp h2 { font-size: 21px; margin-bottom: 12px; }
+.corp h2 .tag { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+  font-family: var(--mono); color: var(--accent); margin-bottom: 8px; }
+.corp p { color: var(--text); margin-bottom: 12px; }
+.corp ul, .corp ol { padding-left: 1.3em; margin-bottom: 12px; }
+.corp li { color: var(--text); margin-bottom: 7px; }
+.corp li b { font-weight: 650; }
+.corp + .corp { margin-top: 34px; padding-top: 34px; border-top: 1px solid var(--border); }
+
+.tabel-scroll { overflow-x: auto; max-width: 760px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+table.date { border-collapse: collapse; width: 100%; min-width: 480px; background: var(--surface); }
+table.date th, table.date td { padding: 11px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+table.date thead th { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); background: #fbfcfe; }
+table.date tbody tr:last-child td { border-bottom: 0; }
+
+.nota { background: var(--accent-soft); border-left: 3px solid var(--accent);
+  padding: 14px 18px; border-radius: 0 8px 8px 0; font-size: 14.5px; color: var(--text);
+  max-width: 42em; margin: 8px 0 14px; }
+.nota b { color: var(--accent); }
+.placeholder-legal { color: var(--danger); font-weight: 600; }
+
+footer { background: var(--ink); color: var(--muted-inv); padding: 36px 0; font-size: 13.5px; }
+footer .footer-grid { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+footer .footer-col { max-width: 46em; }
+footer .footer-firma { margin-top: 8px; font-size: 12.5px; line-height: 1.6; }
+footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+@media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
+footer a { color: var(--muted-inv); }
+footer a:hover { color: #fff; }
+footer .placeholder-legal { color: #ffb4a8; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="inv">
+    <a class="brand" href="index.html">
+      <img src="favicon.svg" alt="Logo e-TVA Reconciliere">
+      <span class="brand-name">e-TVA Reconciliere</span>
+    </a>
+    <nav class="nav">
+      <a href="index.html#functionalitati">Funcționalități</a>
+      <a href="ghid.html">Ghid complet</a>
+      <a href="confidentialitate.html" class="activ">Confidențialitate</a>
+      <a href="autentificare" data-auth="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-header">
+  <div class="inv">
+    <span class="eyebrow">Document legal · GDPR</span>
+    <h1>Politica de confidențialitate</h1>
+    <p class="sub">Ultima actualizare: <span class="placeholder-legal">[DE COMPLETAT: data]</span>.
+      Explicăm aici, simplu, ce date colectăm, de ce, cât timp le păstrăm și ce drepturi ai asupra lor,
+      conform Regulamentului (UE) 2016/679 (GDPR).</p>
+  </div>
+</section>
+
+<section>
+  <div class="inv">
+    <div class="corp reveal">
+      <h2><span class="tag">01</span>Cine este operatorul de date</h2>
+      <p>Operatorul datelor cu caracter personal prelucrate prin platforma e-TVA Reconciliere este
+        <span class="placeholder-legal">[DE COMPLETAT: denumirea completă a firmei sau PFA, CUI,
+        nr. Registrul Comerțului dacă e SRL, sediul social]</span>. Pentru orice solicitare legată de
+        datele tale personale, ne poți scrie la
+        <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a>.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">02</span>Ce date colectăm</h2>
+      <div class="tabel-scroll"><table class="date">
+        <thead><tr><th>Categorie</th><th>Exemple</th></tr></thead>
+        <tbody>
+          <tr><td>Date de cont</td><td>Nume de utilizator, parolă (stocată exclusiv ca hash Argon2id,
+            niciodată în clar), rol în firmă.</td></tr>
+          <tr><td>Date de identificare a firmei</td><td>Denumire, CUI — verificat automat în
+            evidențele publice ANAF la înregistrare.</td></tr>
+          <tr><td>Date fiscale încărcate de tine</td><td>Jurnale contabile (SAGA sau echivalent),
+            deconturi ANAF (PDF/JSON), care pot conține CUI-uri și denumiri ale partenerilor
+            comerciali ai firmei tale.</td></tr>
+          <tr><td>Jurnal de audit</td><td>Cine s-a autentificat, cine a creat/exportat o reconciliere
+            și când — păstrat permanent, fără posibilitate de modificare sau ștergere.</td></tr>
+          <tr><td>Date tehnice minime</td><td>Cookie-ul de sesiune (autentificare) — vezi
+            <a href="cookie-uri.html">Politica de cookie-uri</a>.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Nu colectăm date de plată în această etapă (serviciul e gratuit în perioada de lansare) și
+        nu folosim cookie-uri de analiză sau publicitate.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">03</span>Temeiul legal al prelucrării</h2>
+      <ul>
+        <li><b>Executarea contractului</b> (art. 6 alin. (1) lit. b) GDPR) — pentru crearea contului,
+          funcționarea reconcilierii și afișarea rezultatelor.</li>
+        <li><b>Interesul legitim</b> (art. 6 alin. (1) lit. f) GDPR) — pentru jurnalul de audit și
+          măsurile de securitate, necesare pentru integritatea și trasabilitatea datelor fiscale.</li>
+        <li><b>Obligație legală</b> — acolo unde legislația contabilă/fiscală impune păstrarea unor
+          înregistrări pentru o perioadă minimă.</li>
+      </ul>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">04</span>Cum protejăm datele</h2>
+      <ul>
+        <li><b>Criptare per firmă.</b> Datele fiecărei firme stau într-o bază de date proprie,
+          criptată separat (AES-256, prin SQLCipher) — o firmă nu poate accesa niciodată datele
+          alteia.</li>
+        <li><b>Parole cu Argon2id.</b> Nicio parolă nu e stocată în clar.</li>
+        <li><b>Chei de criptare împachetate</b>, ele însele criptate pe server, niciodată în clar
+          pe disc.</li>
+        <li><b>Permisiuni verificate pe server</b> la fiecare cerere, nu doar în interfață.</li>
+      </ul>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">05</span>Cât timp păstrăm datele</h2>
+      <p>Păstrăm datele contului și datele fiscale încărcate atât timp cât contul rămâne activ.
+        Dacă soliciți ștergerea contului, datele de identificare și fișierele încărcate sunt șterse
+        în termen de <span class="placeholder-legal">[DE COMPLETAT: termen, ex. 30 de zile]</span>,
+        cu excepția înregistrărilor din jurnalul de audit pe care legea ne poate obliga să le
+        păstrăm mai departe, și a copiilor de siguranță tehnice, care expiră conform politicii
+        noastre de backup.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">06</span>Cui transmitem datele</h2>
+      <p>Nu vindem și nu închiriem datele tale către terți. Datele pot fi transmise strict către:</p>
+      <ul>
+        <li><b>ANAF</b> — exclusiv pentru verificarea publică a CUI-ului firmei la înregistrare
+          (cerere care conține doar CUI-ul, un identificator deja public).</li>
+        <li><b>Autorități publice</b>, numai atunci când suntem obligați legal (de exemplu printr-o
+          cerere legală a unei autorități competente).</li>
+        <li><span class="placeholder-legal">[DE COMPLETAT dacă se adaugă un furnizor tehnic terț,
+          ex. găzduire cloud sau procesator de plăți — numele acestuia și locația serverelor]</span>.</li>
+      </ul>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">07</span>Transferuri internaționale</h2>
+      <p>În prezent, datele sunt găzduite
+        <span class="placeholder-legal">[DE COMPLETAT: locația serverului/serverelor — ex. „pe un
+        server din Uniunea Europeană"]</span>. Dacă la un moment dat un furnizor tehnic implică
+        transferul datelor în afara Spațiului Economic European, acest lucru se va face doar în
+        baza unor garanții adecvate (de exemplu Clauze Contractuale Standard), iar această politică
+        va fi actualizată.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">08</span>Drepturile tale</h2>
+      <p>Conform GDPR, ai dreptul de a solicita, în legătură cu datele tale personale:</p>
+      <ul>
+        <li><b>Acces</b> — o copie a datelor pe care le deținem despre tine;</li>
+        <li><b>Rectificare</b> — corectarea datelor inexacte;</li>
+        <li><b>Ștergere</b> — „dreptul de a fi uitat", cu excepțiile legale de mai sus;</li>
+        <li><b>Restricționarea prelucrării</b> — în anumite condiții prevăzute de lege;</li>
+        <li><b>Portabilitate</b> — primirea datelor într-un format structurat, uzual citit automat;</li>
+        <li><b>Opoziție</b> — la prelucrări bazate pe interes legitim.</li>
+      </ul>
+      <p>Poți exercita aceste drepturi scriind la
+        <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a>.
+        Îți vom răspunde în cel mult 30 de zile. Dacă nu ești mulțumit de răspuns, ai dreptul de a
+        depune o plângere la Autoritatea Națională de Supraveghere a Prelucrării Datelor cu Caracter
+        Personal (<a href="https://www.dataprotection.ro" target="_blank" rel="noopener">ANSPDCP</a>).</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">09</span>Modificarea acestei politici</h2>
+      <p>Putem actualiza această politică periodic. Vom afișa data ultimei actualizări în partea de
+        sus a paginii; modificările importante îți vor fi comunicate separat.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">10</span>Contact</h2>
+      <p>Pentru orice întrebare privind datele tale personale:
+        <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="inv footer-grid">
+    <div class="footer-col">
+      <div>© 2026 e-TVA Reconciliere · Instrument independent, neafiliat ANAF.</div>
+      <div class="footer-firma">e-TVA Reconciliere este operat de
+        <span class="placeholder-legal">[DE COMPLETAT: denumirea firmei/PFA, CUI, nr. Reg. Com. dacă e cazul, sediul social]</span>.
+        Contact: <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a></div>
+    </div>
+    <div class="footer-col footer-links">
+      <a href="termeni.html">Termeni și condiții</a>
+      <a href="confidentialitate.html">Politica de confidențialitate</a>
+      <a href="cookie-uri.html">Politica de cookie-uri</a>
+      <a href="https://anpc.ro" target="_blank" rel="noopener">ANPC</a>
+      <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noopener">Soluționarea online a litigiilor (SOL)</a>
+      <a href="index.html">Înapoi la pagina principală</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

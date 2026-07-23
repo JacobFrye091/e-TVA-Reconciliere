@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block titlu %}Utilizatori — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card">
+    <h2>Toti utilizatorii</h2>
+    <p class="sub">Vedere completa, dintr-o singura pagina: fiecare cont,
+      firmele lui, cate clienti si reconcilieri are si cand a fost activ
+      ultima data.</p>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  {% for o in overview %}
+  <div class="card">
+    <h2>{{ o.user['username'] }}
+      {% if o.user['is_master'] %}<span class="chip ok">Master</span>{% endif %}
+      {% if not o.user['active'] %}<span class="chip oprit">Dezactivat</span>{% endif %}
+    </h2>
+    {% if o.user['is_master'] %}
+    <p class="sub">Cont administrator platforma — fara firme asociate.</p>
+    {% elif o.firme %}
+    <p class="sub">
+      {{ o.firme|length }} firm{{ 'a' if o.firme|length == 1 else 'e' }} ·
+      {{ o.n_reconcilieri_total }} reconcilieri create in total
+      {% if o.ultima_activitate %} · ultima activitate:
+        {{ o.ultima_activitate['action'] }} ({{ o.ultima_activitate['ts'] }})
+      {% endif %}
+    </p>
+    <table>
+      <tr><th>Firma</th><th>CUI</th><th>Tip</th><th>Rol</th><th>Status</th>
+        <th>Clienti alocati</th><th>Reconcilieri</th></tr>
+      {% for f in o.firme %}
+      <tr>
+        <td>{{ f.firm_name }}</td>
+        <td>{{ f.cui }}</td>
+        <td>{{ 'Firma/PFA directa' if f.tip == 'direct' else 'Contabilitate' }}</td>
+        <td>{{ f.role }}</td>
+        <td>
+          {% if not f.firm_active %}<span class="chip oprit">Firma dezactivata</span>
+          {% elif not f.membership_active %}<span class="chip oprit">Membru dezactivat</span>
+          {% else %}<span class="chip ok">Activ</span>{% endif %}
+        </td>
+        <td>{{ f.n_clienti }}</td>
+        <td>{{ f.n_reconcilieri }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="sub">Fara nicio firma asociata inca.</p>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="card"><p class="sub">Niciun utilizator inregistrat inca.</p></div>
+  {% endfor %}
+</main>
+{% endblock %}

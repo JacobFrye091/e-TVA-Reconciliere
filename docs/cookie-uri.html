@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Politica de cookie-uri — e-TVA Reconciliere</title>
+<meta name="description" content="Ce cookie-uri folosește platforma e-TVA Reconciliere și de ce.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0e1626; --ink-2: #16233c; --ink-3: #223252;
+  --paper: #f7f9fb; --surface: #ffffff; --border: #e1e7ef;
+  --text: #1b2430; --muted: #64718a; --muted-inv: #93a1bd;
+  --accent: #0d5c63; --accent-2: #12777f; --accent-soft: #e0efee;
+  --danger: #c23a32; --danger-bg: #fdeeed; --warn: #9a6700; --warn-bg: #fff4dd;
+  --ok: #1a7f4b; --ok-bg: #e7f5ec;
+  --disp: "Archivo", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: var(--body); color: var(--text); background: var(--paper);
+  font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { font-family: var(--disp); line-height: 1.15; letter-spacing: -.01em; }
+a { color: inherit; }
+.inv { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+.topbar { position: sticky; top: 0; z-index: 50; background: rgba(14, 22, 38, .92);
+  backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.07); }
+.topbar .inv { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+.brand img { width: 36px; height: 36px; display: block; }
+.brand-name { color: #fff; font-family: var(--disp); font-weight: 700; font-size: 16px; }
+.nav { display: flex; align-items: center; gap: 26px; }
+.nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+.nav a:hover { color: #fff; }
+.nav a.activ { color: #fff; }
+.btn { display: inline-block; font-family: var(--disp); font-weight: 700; font-size: 15px;
+  text-decoration: none; border-radius: 8px; padding: 11px 22px; }
+.btn-plin { background: var(--accent); color: #fff; }
+.btn-plin:hover { background: var(--accent-2); }
+.nav .btn { padding: 8px 16px; font-size: 14px; }
+@media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
+
+.page-header { background: linear-gradient(165deg, var(--ink) 0%, #0b1322 55%, #091020 100%);
+  color: #fff; padding: 56px 0 44px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  letter-spacing: .04em; color: #8fd4cf; background: rgba(13, 92, 99, .3);
+  border: 1px solid rgba(18, 119, 127, .5); border-radius: 999px; padding: 6px 14px; margin-bottom: 20px; }
+.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #35b8ab; }
+.page-header h1 { font-size: clamp(26px, 3.6vw, 36px); font-weight: 800; margin-bottom: 10px; max-width: 22em; }
+.page-header p.sub { font-size: 15.5px; color: var(--muted-inv); max-width: 42em; }
+
+section { padding: 48px 0; }
+.corp { max-width: 760px; }
+.corp h2 { font-size: 21px; margin-bottom: 12px; }
+.corp h2 .tag { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+  font-family: var(--mono); color: var(--accent); margin-bottom: 8px; }
+.corp p { color: var(--text); margin-bottom: 12px; }
+.corp ul { padding-left: 1.3em; margin-bottom: 12px; }
+.corp li { color: var(--text); margin-bottom: 7px; }
+.corp li b { font-weight: 650; }
+.corp + .corp { margin-top: 34px; padding-top: 34px; border-top: 1px solid var(--border); }
+
+.tabel-scroll { overflow-x: auto; max-width: 760px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+table.date { border-collapse: collapse; width: 100%; min-width: 480px; background: var(--surface); }
+table.date th, table.date td { padding: 11px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+table.date thead th { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); background: #fbfcfe; }
+table.date tbody tr:last-child td { border-bottom: 0; }
+
+.nota { background: var(--accent-soft); border-left: 3px solid var(--accent);
+  padding: 14px 18px; border-radius: 0 8px 8px 0; font-size: 14.5px; color: var(--text);
+  max-width: 42em; margin: 8px 0 14px; }
+.nota b { color: var(--accent); }
+.placeholder-legal { color: var(--danger); font-weight: 600; }
+
+footer { background: var(--ink); color: var(--muted-inv); padding: 36px 0; font-size: 13.5px; }
+footer .footer-grid { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+footer .footer-col { max-width: 46em; }
+footer .footer-firma { margin-top: 8px; font-size: 12.5px; line-height: 1.6; }
+footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+@media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
+footer a { color: var(--muted-inv); }
+footer a:hover { color: #fff; }
+footer .placeholder-legal { color: #ffb4a8; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="inv">
+    <a class="brand" href="index.html">
+      <img src="favicon.svg" alt="Logo e-TVA Reconciliere">
+      <span class="brand-name">e-TVA Reconciliere</span>
+    </a>
+    <nav class="nav">
+      <a href="index.html#functionalitati">Funcționalități</a>
+      <a href="ghid.html">Ghid complet</a>
+      <a href="cookie-uri.html" class="activ">Cookie-uri</a>
+      <a href="autentificare" data-auth="autentificare">Autentificare</a>
+      <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-header">
+  <div class="inv">
+    <span class="eyebrow">Document legal</span>
+    <h1>Politica de cookie-uri</h1>
+    <p class="sub">Ultima actualizare: <span class="placeholder-legal">[DE COMPLETAT: data]</span>.
+      Folosim un singur cookie, strict necesar pentru autentificare — nimic pentru analiză sau
+      publicitate.</p>
+  </div>
+</section>
+
+<section>
+  <div class="inv">
+    <div class="corp reveal">
+      <h2><span class="tag">01</span>Ce este un cookie</h2>
+      <p>Un cookie este un fișier text mic pe care browserul tău îl păstrează atunci când vizitezi
+        un site, pentru a-l ajuta să-și amintească informații despre vizita ta.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">02</span>Ce folosim noi</h2>
+      <div class="tabel-scroll"><table class="date">
+        <thead><tr><th>Nume / tip</th><th>Scop</th><th>Durată</th></tr></thead>
+        <tbody>
+          <tr><td><code>session</code> (cookie de sesiune Flask)</td>
+            <td>Strict necesar — te ține autentificat între pagini, ca să nu introduci parola la
+              fiecare click.</td>
+            <td>Se șterge la închiderea browserului sau la deconectare.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Nu folosim cookie-uri de analiză (ex. Google Analytics), de publicitate sau de urmărire
+        între site-uri. Nu există alte scripturi terțe pe Platformă în afara fonturilor Google Fonts,
+        care nu setează cookie-uri de urmărire.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">03</span>De ce nu ai văzut un banner de consimțământ</h2>
+      <p>Conform art. 5 alin. (3) din Directiva 2002/58/CE (ePrivacy), transpusă în România prin
+        Legea nr. 506/2004, cookie-urile <b>strict necesare</b> funcționării serviciului cerut explicit
+        de tine (cum e cookie-ul de autentificare de mai sus) sunt <b>exceptate de la obligația de
+        consimțământ prealabil</b>. Din acest motiv nu afișăm un banner de cookie-uri — folosim doar
+        acest tip de cookie.</p>
+      <p>Dacă vom introduce vreodată cookie-uri de analiză sau publicitate, vom adăuga un banner de
+        consimțământ înainte de activarea lor și vom actualiza această pagină.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">04</span>Cum poți controla cookie-urile</h2>
+      <p>Poți șterge sau bloca cookie-urile din setările browserului tău (Chrome, Firefox, Safari,
+        Edge — de regulă în secțiunea „Confidențialitate și securitate"). Blocarea cookie-ului de
+        sesiune va împiedica însă autentificarea și funcționarea aplicației.</p>
+    </div>
+
+    <div class="corp reveal">
+      <h2><span class="tag">05</span>Contact</h2>
+      <p>Pentru întrebări legate de această politică:
+        <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a>. Vezi și
+        <a href="confidentialitate.html">Politica de confidențialitate</a> pentru celelalte date pe
+        care le colectăm.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="inv footer-grid">
+    <div class="footer-col">
+      <div>© 2026 e-TVA Reconciliere · Instrument independent, neafiliat ANAF.</div>
+      <div class="footer-firma">e-TVA Reconciliere este operat de
+        <span class="placeholder-legal">[DE COMPLETAT: denumirea firmei/PFA, CUI, nr. Reg. Com. dacă e cazul, sediul social]</span>.
+        Contact: <a href="mailto:contact@etva-reconciliere.ro">contact@etva-reconciliere.ro</a></div>
+    </div>
+    <div class="footer-col footer-links">
+      <a href="termeni.html">Termeni și condiții</a>
+      <a href="confidentialitate.html">Politica de confidențialitate</a>
+      <a href="cookie-uri.html">Politica de cookie-uri</a>
+      <a href="https://anpc.ro" target="_blank" rel="noopener">ANPC</a>
+      <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noopener">Soluționarea online a litigiilor (SOL)</a>
+      <a href="index.html">Înapoi la pagina principală</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
