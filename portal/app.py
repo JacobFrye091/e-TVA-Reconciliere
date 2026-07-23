@@ -390,7 +390,8 @@ def create_app(data_dir: str) -> Flask:
             "SELECT f.*, (SELECT COUNT(*) FROM user_firms uf "
             "WHERE uf.firm_id=f.id AND uf.active=1) AS n_users "
             "FROM firms f ORDER BY f.name").fetchall()
-        return render_template("master.html", user=user, firms=firms)
+        return render_template("master.html", user=user, firms=firms,
+                               versiune=pipeline.running_vs_current())
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):

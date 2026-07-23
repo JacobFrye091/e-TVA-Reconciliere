@@ -51,6 +51,51 @@ def _is_clean(repo_path) -> bool:
     return _git(repo_path, "status", "--porcelain") == ""
 
 
+# The worktree this exact running process was loaded from (whichever
+# environment that happens to be) - same derivation as portal/app.py's _ROOT.
+_OWN_REPO = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _capture_started_commit() -> dict:
+    """Commit/subject of this worktree at the moment this process started.
+
+    A promotion (git merge --ff-only) updates the worktree's branch on
+    disk immediately, but never restarts whatever server process is
+    already running against it - that process keeps executing the code
+    it loaded at startup. Comparing this frozen snapshot against a fresh
+    read of the same worktree later is how a stale-but-still-running
+    server becomes visible instead of silently confusing.
+    """
+    try:
+        return {"commit": _git(_OWN_REPO, "rev-parse", "--short", "HEAD"),
+                "subject": _git(_OWN_REPO, "log", "-1", "--format=%s"),
+                "started_at": datetime.now(timezone.utc)
+                                     .strftime("%Y-%m-%d %H:%M UTC")}
+    except PipelineError:
+        return {"commit": None, "subject": None, "started_at": None}
+
+
+STARTED_AT = _capture_started_commit()
+
+
+def running_vs_current() -> dict:
+    """This process's frozen startup commit vs. the worktree's HEAD right
+    now. `stale=True` means the code on disk has moved on (via promotion)
+    since this server was last started, so a restart is needed to run it."""
+    try:
+        current_commit = _git(_OWN_REPO, "rev-parse", "--short", "HEAD")
+    except PipelineError:
+        current_commit = None
+    return {
+        "started_commit": STARTED_AT["commit"],
+        "started_subject": STARTED_AT["subject"],
+        "started_at": STARTED_AT["started_at"],
+        "current_commit": current_commit,
+        "stale": bool(STARTED_AT["commit"] and current_commit
+                     and STARTED_AT["commit"] != current_commit),
+    }
+
+
 def branch_info(env: str) -> dict:
     """Current commit/subject/date/path for one environment, plus whether
     its worktree exists on disk at all."""

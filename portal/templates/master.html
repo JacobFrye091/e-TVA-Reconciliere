@@ -1,7 +1,31 @@
 {% extends "base.html" %}
 {% block titlu %}Master — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.mu-versiune { border-radius:10px; padding:12px 18px; font-size:13.5px;
+  margin-bottom:18px; border:1px solid; }
+.mu-versiune b { font-family:var(--mono); }
+.mu-versiune.ok { background:var(--ok-bg); color:var(--ok); border-color:var(--ok); }
+.mu-versiune.stale { background:var(--warn-bg); color:var(--warn); border-color:var(--warn); }
+</style>
+{% endblock %}
 {% block continut %}
 <main>
+  {% if versiune.started_commit %}
+  <div class="mu-versiune {{ 'stale' if versiune.stale else 'ok' }}">
+    {% if versiune.stale %}
+      Serverul ruleaza inca de la commit <b>{{ versiune.started_commit }}</b>
+      ("{{ versiune.started_subject }}"), pornit la {{ versiune.started_at }}.
+      Codul de pe disc a avansat intre timp la <b>{{ versiune.current_commit }}</b>
+      (probabil printr-o promovare) — <b>repornește serverul</b> ca sa ruleze
+      versiunea noua.
+    {% else %}
+      Server la zi — ruleaza commit-ul <b>{{ versiune.started_commit }}</b>
+      ("{{ versiune.started_subject }}"), pornit la {{ versiune.started_at }}.
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="card">
     <h2>Medii — dev / testare / productie</h2>
     <p class="sub">Promovarea codului intre medii se face din pipeline-ul

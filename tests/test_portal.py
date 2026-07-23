@@ -192,6 +192,44 @@ def test_master_dashboard_and_firm_toggle(app):
     assert c_firma.get("/api/me").status_code == 401
 
 
+def test_master_page_warns_when_server_is_stale(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module.pipeline, "running_vs_current", lambda: {
+        "started_commit": "abc123", "started_subject": "Old feature",
+        "started_at": "2026-01-01 00:00 UTC", "current_commit": "def456",
+        "stale": True})
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+    c = app.test_client()
+    c.post("/autentificare", data={"username": "sef",
+                                   "password": "ParolaMaster123!"})
+    text = c.get("/master").data.decode()
+    assert "repornește serverul" in text
+    assert "abc123" in text and "def456" in text
+
+
+def test_master_page_shows_up_to_date_server(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module.pipeline, "running_vs_current", lambda: {
+        "started_commit": "abc123", "started_subject": "Latest feature",
+        "started_at": "2026-01-01 00:00 UTC", "current_commit": "abc123",
+        "stale": False})
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+    c = app.test_client()
+    c.post("/autentificare", data={"username": "sef",
+                                   "password": "ParolaMaster123!"})
+    text = c.get("/master").data.decode()
+    assert "Server la zi" in text
+    assert "repornește serverul" not in text
+
+
 def test_master_cannot_use_app_api(app):
     conn = app.portal_conn
     conn.execute(

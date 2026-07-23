@@ -142,3 +142,40 @@ def test_log_and_history_round_trip():
     assert rows[0]["target_env"] == "testare"
     assert rows[0]["commit_hash"] == "abc123"
     assert rows[0]["promoted_by"] == "sef"
+
+
+def test_capture_started_commit_handles_missing_git(monkeypatch):
+    def _boom(*a, **kw):
+        raise pipeline.PipelineError("git not found")
+    monkeypatch.setattr(pipeline, "_git", _boom)
+    assert pipeline._capture_started_commit() == {
+        "commit": None, "subject": None, "started_at": None}
+
+
+def test_running_vs_current_flags_a_stale_server(monkeypatch):
+    monkeypatch.setattr(pipeline, "STARTED_AT", {
+        "commit": "abc123", "subject": "Old feature",
+        "started_at": "2026-01-01 00:00 UTC"})
+    monkeypatch.setattr(pipeline, "_git", lambda repo, *args: "def456")
+    result = pipeline.running_vs_current()
+    assert result == {
+        "started_commit": "abc123", "started_subject": "Old feature",
+        "started_at": "2026-01-01 00:00 UTC", "current_commit": "def456",
+        "stale": True}
+
+
+def test_running_vs_current_not_stale_when_commits_match(monkeypatch):
+    monkeypatch.setattr(pipeline, "STARTED_AT", {
+        "commit": "abc123", "subject": "Latest", "started_at": "t"})
+    monkeypatch.setattr(pipeline, "_git", lambda repo, *args: "abc123")
+    assert pipeline.running_vs_current()["stale"] is False
+
+
+def test_running_vs_current_handles_git_unavailable(monkeypatch):
+    monkeypatch.setattr(pipeline, "STARTED_AT", {
+        "commit": "abc123", "subject": "x", "started_at": "t"})
+    def _boom(*a, **kw):
+        raise pipeline.PipelineError("git not found")
+    monkeypatch.setattr(pipeline, "_git", _boom)
+    result = pipeline.running_vs_current()
+    assert result["current_commit"] is None and result["stale"] is False
