@@ -38,6 +38,32 @@ _SPA = _ROOT / "web" / "index.html"
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
+_AVATAR_PALETTE = ["#0d5c63", "#12777f", "#9a6700", "#1a7f4b", "#5b4fc4", "#b0473e"]
+
+
+def _avatar_color(username: str) -> str:
+    return _AVATAR_PALETTE[sum(map(ord, username)) % len(_AVATAR_PALETTE)]
+
+
+def _bar_pct(value: int, maximum: int) -> int:
+    return round(100 * value / maximum) if maximum else 0
+
+
+def _donut_segments(counts: list[tuple[str, int]]) -> list[dict]:
+    """SVG donut segments for a circle with r=15.9155 (circumference == 100),
+    so each segment's share of the total doubles as its stroke-dasharray
+    length - no separate angle math needed."""
+    total = sum(n for _, n in counts)
+    segments = []
+    offset = 0.0
+    for label, n in counts:
+        pct = (n / total * 100) if total else 0.0
+        segments.append({"label": label, "n": n, "pct": round(pct),
+                         "dasharray": f"{pct:.3f} {100 - pct:.3f}",
+                         "dashoffset": f"{25 - offset:.3f}"})
+        offset += pct
+    return segments
+
 
 def create_app(data_dir: str) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
@@ -408,8 +434,11 @@ def create_app(data_dir: str) -> Flask:
                     "SELECT action, ts FROM audit_log WHERE user_id=? "
                     "ORDER BY ts DESC LIMIT 1", (u["username"],)).fetchone()
                 if ultima and (ultima_activitate is None
-                              or ultima["ts"] > ultima_activitate["ts"]):
-                    ultima_activitate = dict(ultima)
+                              or ultima["ts"] > ultima_activitate["ts_raw"]):
+                    ultima_activitate = {
+                        "action": ultima["action"], "ts_raw": ultima["ts"],
+                        "ts": datetime.fromisoformat(ultima["ts"])
+                                     .strftime("%Y-%m-%d %H:%M")}
                 firme.append({
                     "firm_id": m["firm_id"], "firm_name": m["firm_name"],
                     "cui": m["cui"], "tip": m["tip"],
@@ -417,13 +446,46 @@ def create_app(data_dir: str) -> Flask:
                     "membership_active": bool(m["membership_active"]),
                     "n_clienti": n_clienti, "n_reconcilieri": n_reconcilieri,
                 })
+            firme_max = max((f["n_reconcilieri"] for f in firme), default=0)
+            for f in firme:
+                f["bar_pct"] = _bar_pct(f["n_reconcilieri"], firme_max)
             overview.append({
                 "user": u, "firme": firme,
                 "n_reconcilieri_total": n_reconcilieri_total,
                 "ultima_activitate": ultima_activitate,
+                "avatar_color": _avatar_color(u["username"]),
             })
+
+        conturi = [o for o in overview if not o["user"]["is_master"]]
+        total_reconcilieri = sum(o["n_reconcilieri_total"] for o in conturi)
+        kpi = {
+            "total_conturi": len(conturi),
+            "total_firme_active": conn.execute(
+                "SELECT COUNT(*) AS n FROM firms WHERE active=1"
+            ).fetchone()["n"],
+            "total_reconcilieri": total_reconcilieri,
+            "medie_reconcilieri": round(total_reconcilieri / len(conturi), 1)
+                                 if conturi else 0,
+        }
+        top_conturi = sorted(conturi, key=lambda o: -o["n_reconcilieri_total"])[:8]
+        top_max = max((o["n_reconcilieri_total"] for o in top_conturi), default=0)
+        top_conturi = [{"username": o["user"]["username"],
+                       "n": o["n_reconcilieri_total"],
+                       "bar_pct": _bar_pct(o["n_reconcilieri_total"], top_max)}
+                      for o in top_conturi]
+        tip_counts = conn.execute(
+            "SELECT tip, COUNT(*) AS n FROM firms WHERE active=1 "
+            "GROUP BY tip").fetchall()
+        tip_by_key = {r["tip"]: r["n"] for r in tip_counts}
+        firm_tip_dist = _donut_segments([
+            ("Contabilitate", tip_by_key.get(pdb.FIRM_TIP_CONTABILITATE, 0)),
+            ("Firma/PFA directa", tip_by_key.get(pdb.FIRM_TIP_DIRECT, 0)),
+        ])
+
         return render_template("master_utilizatori.html", user=user,
-                               overview=overview)
+                               overview=overview, kpi=kpi,
+                               top_conturi=top_conturi,
+                               firm_tip_dist=firm_tip_dist)
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

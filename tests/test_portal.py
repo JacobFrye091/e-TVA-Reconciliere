@@ -596,14 +596,17 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
     assert "Cont administrator platforma" in text
 
     assert "firma1" in text
-    assert "1 firma" in text and "1 reconcilieri create in total" in text
+    assert re.search(r"<b>1</b>\s*firma", text)
+    assert re.search(r"<b>1</b>\s*reconcilieri create", text)
 
     row = re.search(r"<tr>.*?Firma Unu SRL.*?</tr>", text, re.S).group(0)
     assert "RO111" in row and "Contabilitate" in row and "admin" in row
-    assert row.count("<td>1</td>") == 2  # 1 client alocat, 1 reconciliere
+    assert row.count("<td>1</td>") == 1  # clienti alocati
+    assert re.search(r'class="val">1</span>', row)  # reconcilieri (microbar)
 
 
 def test_master_users_direct_firm_has_no_manual_client_but_gets_reconciliations(app, monkeypatch):
+    import re
     import portal.app as app_module
     monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
         company_cui="RO111", company_name="Firma Unu SRL", period="2026-06",
@@ -623,4 +626,46 @@ def test_master_users_direct_firm_has_no_manual_client_but_gets_reconciliations(
                                           "password": "ParolaMaster123!"})
     text = c_master.get("/master/utilizatori").data.decode()
     assert "pfa1" in text and "Firma/PFA directa" in text
-    assert "0 reconcilieri create in total" in text
+    assert re.search(r"<b>0</b>\s*reconcilieri create", text)
+
+
+def test_master_users_kpis_and_charts(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={"9": {"base": 1000.0, "vat": 210.0}}))
+
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+
+    c1 = app.test_client()
+    inregistreaza(c1, username="firma1", cui="RO111", tip="contabilitate")
+    cid = c1.post("/api/clients",
+                  json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    c1.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+
+    c2 = app.test_client()
+    inregistreaza(c2, username="pfa1", cui="RO333", tip="direct")
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"username": "sef",
+                                          "password": "ParolaMaster123!"})
+    text = c_master.get("/master/utilizatori").data.decode()
+
+    assert 'class="val">2</div>' in text  # total conturi
+    assert 'class="val">2</div>' in text  # firme active (same value, 2)
+    assert 'class="val">1</div>' in text  # total reconcilieri
+    assert 'class="val">0.5</div>' in text  # medie / cont
+
+    assert "Contabilitate — <b>1</b> (50%)" in text
+    assert "Firma/PFA directa — <b>1</b> (50%)" in text
+
+    rank = text[text.index("Reconcilieri per cont"):text.index("Firme dupa tip")]
+    assert "firma1" in rank and "pfa1" in rank

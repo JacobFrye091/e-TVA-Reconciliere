@@ -1,40 +1,158 @@
 {% extends "base.html" %}
 {% block titlu %}Utilizatori — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+:root { --chart-2:#c98a3e; --chart-2-bg:#faf1e4; }
+.mu-head { display:flex; justify-content:space-between; align-items:flex-start;
+  gap:18px; flex-wrap:wrap; }
+.mu-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px;
+  margin-bottom:18px; }
+.mu-kpi { background:var(--surface); border:1px solid var(--border);
+  border-top:3px solid var(--accent); border-radius:10px; padding:16px 18px; }
+.mu-kpi .et { font-size:10.5px; font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); }
+.mu-kpi .val { font-family:Archivo,sans-serif; font-size:27px; font-weight:800;
+  margin-top:5px; font-variant-numeric:tabular-nums; }
+@media (max-width:760px) { .mu-kpis { grid-template-columns:repeat(2,1fr); } }
+
+.mu-analytics { display:grid; grid-template-columns:1.3fr 1fr; gap:18px; }
+@media (max-width:820px) { .mu-analytics { grid-template-columns:1fr; } }
+.mu-rank-row { display:grid; grid-template-columns:112px 1fr 30px;
+  align-items:center; gap:10px; margin-bottom:10px; }
+.mu-rank-row .nume { font-size:13px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.mu-rank-track { background:var(--paper); border-radius:5px; height:9px;
+  overflow:hidden; }
+.mu-rank-fill { background:var(--accent); height:100%; border-radius:5px; }
+.mu-rank-row .val { font-family:var(--mono); font-size:12.5px; color:var(--muted);
+  text-align:right; font-variant-numeric:tabular-nums; }
+
+.mu-donut-wrap { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+.mu-donut { width:126px; height:126px; flex:none; }
+.mu-donut circle.bg { fill:none; stroke:var(--paper); stroke-width:4; }
+.mu-donut circle.seg { fill:none; stroke-width:4; }
+.mu-legend { display:flex; flex-direction:column; gap:11px; font-size:13.5px; }
+.mu-legend .dot { width:10px; height:10px; border-radius:3px;
+  display:inline-block; margin-right:8px; vertical-align:-1px; }
+.mu-legend b { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+.mu-cont-head { display:flex; align-items:flex-start; gap:14px; margin-bottom:16px; }
+.mu-avatar { width:42px; height:42px; border-radius:10px; flex:none;
+  display:flex; align-items:center; justify-content:center; color:#fff;
+  font-family:Archivo,sans-serif; font-weight:700; font-size:15px; }
+.mu-cont-head h2 { margin-bottom:6px; }
+.mu-metrics { display:flex; gap:16px; flex-wrap:wrap; font-size:13px;
+  color:var(--muted); }
+.mu-metrics b { font-family:var(--mono); color:var(--text);
+  font-variant-numeric:tabular-nums; }
+td.cod { font-family:var(--mono); font-size:13px; }
+.chip.tip-direct { color:var(--chart-2); background:var(--chart-2-bg); }
+.chip.tip-contabil { color:var(--accent); background:var(--ok-bg); }
+.mu-microbar { display:flex; align-items:center; gap:8px; }
+.mu-microbar .val { font-family:var(--mono); min-width:16px; text-align:right;
+  font-variant-numeric:tabular-nums; }
+.mu-microbar .track { flex:1; max-width:64px; height:6px; background:var(--paper);
+  border-radius:3px; overflow:hidden; }
+.mu-microbar .fill { display:block; height:100%; background:var(--accent-2);
+  border-radius:3px; }
+</style>
+{% endblock %}
 {% block continut %}
 <main>
-  <div class="card">
-    <h2>Toti utilizatorii</h2>
-    <p class="sub">Vedere completa, dintr-o singura pagina: fiecare cont,
-      firmele lui, cate clienti si reconcilieri are si cand a fost activ
-      ultima data.</p>
+  <div class="card mu-head">
+    <div>
+      <h2>Toti utilizatorii</h2>
+      <p class="sub">Vedere completa, dintr-o singura pagina: fiecare cont,
+        firmele lui, cate clienti si reconcilieri are si cand a fost activ
+        ultima data.</p>
+    </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
   </div>
 
+  <div class="mu-kpis">
+    <div class="mu-kpi"><div class="et">Conturi</div><div class="val">{{ kpi.total_conturi }}</div></div>
+    <div class="mu-kpi"><div class="et">Firme active</div><div class="val">{{ kpi.total_firme_active }}</div></div>
+    <div class="mu-kpi"><div class="et">Reconcilieri</div><div class="val">{{ kpi.total_reconcilieri }}</div></div>
+    <div class="mu-kpi"><div class="et">Medie / cont</div><div class="val">{{ kpi.medie_reconcilieri }}</div></div>
+  </div>
+
+  <div class="mu-analytics">
+    <div class="card">
+      <h2 style="font-size:15px">Reconcilieri per cont</h2>
+      <p class="sub" style="margin-bottom:14px">Cele mai active conturi, dupa numarul de reconcilieri create.</p>
+      {% for c in top_conturi %}
+      <div class="mu-rank-row">
+        <div class="nume">{{ c.username }}</div>
+        <div class="mu-rank-track"><div class="mu-rank-fill" style="width:{{ c.bar_pct }}%"></div></div>
+        <div class="val">{{ c.n }}</div>
+      </div>
+      {% else %}
+      <p class="sub">Niciun cont cu firme inca.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:15px">Firme dupa tip</h2>
+      <p class="sub" style="margin-bottom:14px">Contabilitate vs. firma/PFA directa.</p>
+      <div class="mu-donut-wrap">
+        <svg class="mu-donut" viewBox="0 0 36 36">
+          <circle class="bg" cx="18" cy="18" r="15.9155"/>
+          {% for seg in firm_tip_dist %}
+          {% if seg.n > 0 %}
+          <circle class="seg" cx="18" cy="18" r="15.9155"
+            stroke="{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"
+            stroke-dasharray="{{ seg.dasharray }}"
+            stroke-dashoffset="{{ seg.dashoffset }}"/>
+          {% endif %}
+          {% endfor %}
+        </svg>
+        <div class="mu-legend">
+          {% for seg in firm_tip_dist %}
+          <div><span class="dot" style="background:{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"></span>
+            {{ seg.label }} — <b>{{ seg.n }}</b> ({{ seg.pct }}%)</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
   {% for o in overview %}
   <div class="card">
-    <h2>{{ o.user['username'] }}
-      {% if o.user['is_master'] %}<span class="chip ok">Master</span>{% endif %}
-      {% if not o.user['active'] %}<span class="chip oprit">Dezactivat</span>{% endif %}
-    </h2>
-    {% if o.user['is_master'] %}
-    <p class="sub">Cont administrator platforma — fara firme asociate.</p>
-    {% elif o.firme %}
-    <p class="sub">
-      {{ o.firme|length }} firm{{ 'a' if o.firme|length == 1 else 'e' }} ·
-      {{ o.n_reconcilieri_total }} reconcilieri create in total
-      {% if o.ultima_activitate %} · ultima activitate:
-        {{ o.ultima_activitate['action'] }} ({{ o.ultima_activitate['ts'] }})
-      {% endif %}
-    </p>
+    <div class="mu-cont-head">
+      <div class="mu-avatar" style="background:{{ o.avatar_color }}">{{ o.user['username'][:2]|upper }}</div>
+      <div>
+        <h2>{{ o.user['username'] }}
+          {% if o.user['is_master'] %}<span class="chip ok">Master</span>{% endif %}
+          {% if not o.user['active'] %}<span class="chip oprit">Dezactivat</span>{% endif %}
+        </h2>
+        {% if o.user['is_master'] %}
+        <p class="sub" style="margin:0">Cont administrator platforma — fara firme asociate.</p>
+        {% elif o.firme %}
+        <div class="mu-metrics">
+          <span><b>{{ o.firme|length }}</b> firm{{ 'a' if o.firme|length == 1 else 'e' }}</span>
+          <span><b>{{ o.n_reconcilieri_total }}</b> reconcilieri create</span>
+          {% if o.ultima_activitate %}<span>ultima activitate:
+            <b>{{ o.ultima_activitate.action }}</b> · {{ o.ultima_activitate.ts }}</span>{% endif %}
+        </div>
+        {% else %}
+        <p class="sub" style="margin:0">Fara nicio firma asociata inca.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if o.firme %}
     <table>
       <tr><th>Firma</th><th>CUI</th><th>Tip</th><th>Rol</th><th>Status</th>
         <th>Clienti alocati</th><th>Reconcilieri</th></tr>
       {% for f in o.firme %}
       <tr>
         <td>{{ f.firm_name }}</td>
-        <td>{{ f.cui }}</td>
-        <td>{{ 'Firma/PFA directa' if f.tip == 'direct' else 'Contabilitate' }}</td>
+        <td class="cod">{{ f.cui }}</td>
+        <td>
+          {% if f.tip == 'direct' %}<span class="chip tip-direct">Firma/PFA directa</span>
+          {% else %}<span class="chip tip-contabil">Contabilitate</span>{% endif %}
+        </td>
         <td>{{ f.role }}</td>
         <td>
           {% if not f.firm_active %}<span class="chip oprit">Firma dezactivata</span>
@@ -42,12 +160,15 @@
           {% else %}<span class="chip ok">Activ</span>{% endif %}
         </td>
         <td>{{ f.n_clienti }}</td>
-        <td>{{ f.n_reconcilieri }}</td>
+        <td>
+          <div class="mu-microbar">
+            <span class="val">{{ f.n_reconcilieri }}</span>
+            <span class="track"><span class="fill" style="width:{{ f.bar_pct }}%"></span></span>
+          </div>
+        </td>
       </tr>
       {% endfor %}
     </table>
-    {% else %}
-    <p class="sub">Fara nicio firma asociata inca.</p>
     {% endif %}
   </div>
   {% else %}

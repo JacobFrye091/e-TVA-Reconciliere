@@ -11,7 +11,8 @@
 :root { --ink:#0e1626; --ink-2:#16233c; --paper:#f7f9fb; --surface:#fff;
   --border:#e1e7ef; --text:#1b2430; --muted:#64718a; --muted-inv:#93a1bd;
   --accent:#0d5c63; --accent-2:#12777f; --danger:#c23a32; --danger-bg:#fdeeed;
-  --ok:#1a7f4b; --ok-bg:#e7f5ec; }
+  --ok:#1a7f4b; --ok-bg:#e7f5ec; --warn:#9a6700; --warn-bg:#fff4dd;
+  --mono:"Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace; }
 * { box-sizing:border-box; margin:0; }
 body { font-family:Inter,system-ui,sans-serif; background:var(--paper);
   color:var(--text); font-size:15px; line-height:1.55; min-height:100vh; }
@@ -68,6 +69,7 @@ button.mic:hover { background:var(--danger-bg); }
 .optiune-tip:has(input:checked) { border-color:var(--accent); background:var(--ok-bg); }
 .optiune-tip input { width:auto; margin-top:3px; }
 </style>
+{% block estilo %}{% endblock %}
 </head>
 <body>
 <header class="topbar"><div class="inv">
