@@ -5,7 +5,7 @@ product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
 import json, os, pathlib, secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (Flask, request, session, redirect, url_for, jsonify,
@@ -75,7 +75,11 @@ def create_app(data_dir: str) -> Flask:
     secret = psec.load_secret(os.path.join(data_dir, "secret.key"))
 
     app = Flask(__name__)
-    app.secret_key = secrets.token_hex(32)
+    # Persisted (not regenerated per process) so a login survives a server
+    # restart: session cookies are signed with this key, so a fresh random
+    # key on every start would silently invalidate every open session.
+    app.secret_key = psec.load_secret(os.path.join(data_dir, "flask_secret.key"))
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
     firm_conns = {}
 
@@ -232,6 +236,7 @@ def create_app(data_dir: str) -> Flask:
             (username, psec.hash_password(password)))
         user_id = cur.lastrowid
         firm_id = _create_firm(name, cui, tip, user_id, "admin")
+        session.permanent = True
         session["user_id"] = user_id
         session["active_firm_id"] = firm_id
         return redirect(url_for("aplicatie"))
@@ -247,6 +252,7 @@ def create_app(data_dir: str) -> Flask:
                                             request.form.get("password", ""))):
             return render_template("autentificare.html",
                                    eroare="Utilizator sau parola incorecta.")
+        session.permanent = True
         session["user_id"] = row["id"]
         if row["is_master"]:
             return redirect(url_for("master"))

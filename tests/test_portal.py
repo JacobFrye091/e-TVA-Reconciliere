@@ -157,6 +157,40 @@ def test_firm_key_persists_across_app_restart(tmp_path):
     assert [x["cui"] for x in vis] == ["RO9"]
 
 
+def test_flask_secret_key_persists_across_restarts(tmp_path):
+    data_dir = str(tmp_path)
+    app1 = create_app(data_dir)
+    app2 = create_app(data_dir)  # simulates a server restart
+    assert app1.secret_key == app2.secret_key
+
+
+def test_login_cookie_is_permanent_with_a_long_lifetime(app):
+    c = app.test_client()
+    r = inregistreaza(c)
+    set_cookie = r.headers.get("Set-Cookie", "")
+    assert "session=" in set_cookie
+    assert "Expires=" in set_cookie or "Max-Age" in set_cookie
+
+
+def test_login_session_survives_a_server_restart(tmp_path):
+    """The whole point of persisting the Flask secret key: a session cookie
+    issued before a restart must still be accepted after one, so a user
+    isn't logged out just because the server process was restarted -
+    only opening a different browser (no cookie at all) should re-prompt."""
+    data_dir = str(tmp_path)
+    app1 = create_app(data_dir)
+    c1 = app1.test_client()
+    r = inregistreaza(c1)
+    session_cookie = r.headers["Set-Cookie"].split("session=")[1].split(";")[0]
+
+    app2 = create_app(data_dir)  # simulates a server restart
+    c2 = app2.test_client()
+    c2.set_cookie("session", session_cookie)
+    r2 = c2.get("/api/me")
+    assert r2.status_code == 200
+    assert r2.get_json()["firm_name"] == "Firma Unu SRL"
+
+
 def test_member_roles_and_permissions(app):
     c = app.test_client()
     inregistreaza(c)
