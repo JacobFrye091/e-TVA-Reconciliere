@@ -331,7 +331,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <p class="sub">Utilizatorii si rolurile se administreaza din portalul de conturi
         (acolo unde firma s-a inregistrat) — sectiunea &bdquo;Echipa&rdquo; din panoul firmei.</p>
     </div>
-    <div class="card">
+    <div class="card" id="cardAlocare">
       <h3>Alocare client la contabil</h3>
       <p class="sub">Contabilii si juniorii vad doar clientii care le sunt alocati aici.</p>
       <div class="actiuni">
@@ -420,10 +420,12 @@ async function intraInAplicatie(ident) {
   btnAudit.style.display = permisiuni.includes('audit.vizualizare') ? '' : 'none';
   cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
   btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
-  // O firma/PFA directa are un singur client (pe ea insasi, creat automat) -
-  // nu are sens sa gestioneze o lista de clienti separata.
+  // O firma/PFA directa reconciliaza ca ea insasi - nu are clienti, deci
+  // nici lista de clienti, nici campul de ales clientul, nici alocarea
+  // clientilor la echipa nu au sens pentru ea.
   cardClienti.style.display = firmaDirecta ? 'none' : '';
   campClient.style.display = firmaDirecta ? 'none' : '';
+  cardAlocare.style.display = firmaDirecta ? 'none' : '';
   const etichetaDash = firmaDirecta ? 'Reconciliere' : 'Clienti si reconciliere';
   etichetaDashboard.textContent = etichetaDash;
   TITLURI.dashboard = etichetaDash;
@@ -471,7 +473,7 @@ function pasiiTurului() {
         text: 'Descarci un raport Excel gata de atasat la dosarul lunii.'});
     }
   }
-  if (esteAdmin) {
+  if (esteAdmin && !firmaDirecta) {
     pasi.push({view: 'admin', sel: '#alocUser', titlu: 'Aloci clienti echipei',
       text: 'Daca ai contabili sau juniori in echipa, aici le aloci clientii pe ' +
         'care ii pot vedea si lucra.'});
@@ -625,7 +627,8 @@ async function ruleazaReconciliere() {
   btnRuleaza.disabled = true; btnRuleaza.textContent = 'Se proceseaza...';
   try {
     const fd = new FormData();
-    fd.append('client_id', selClient.value);
+    // O firma directa reconciliaza ca ea insasi - fara client_id.
+    if (!firmaDirecta) fd.append('client_id', selClient.value);
     fd.append('period', perioada.value);
     for (const f of fisierFirma.files) fd.append('company_file', f);
     fd.append('anaf_file', fisierAnaf.files[0]);

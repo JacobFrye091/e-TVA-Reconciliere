@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS client_assignments(
   username TEXT NOT NULL, client_id INTEGER NOT NULL,
   PRIMARY KEY(username, client_id));
 CREATE TABLE IF NOT EXISTS reconciliations(
-  id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL, period TEXT NOT NULL,
+  id INTEGER PRIMARY KEY, client_id INTEGER, period TEXT NOT NULL,
   created_at TEXT NOT NULL, created_by TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices_company(
   id INTEGER PRIMARY KEY, reconciliation_id INTEGER NOT NULL,
@@ -80,6 +80,31 @@ def open_db(path: str, key: bytes):
     return conn
 
 
+def _migrate_reconciliations_nullable_client(conn) -> None:
+    """reconciliations.client_id was NOT NULL, forcing every reconciliation
+    through a client row - even for a 'direct' firm (a single PFA/SRL
+    reconciling itself), which used to get a fake client pointing at its
+    own CUI just to satisfy this column. A direct firm now reconciles
+    with client_id NULL (itself, no client involved), so older firm
+    databases need the column relaxed to allow that."""
+    cols = conn.execute("PRAGMA table_info(reconciliations)").fetchall()
+    client_col = next((c for c in cols if c["name"] == "client_id"), None)
+    if client_col is None or not client_col["notnull"]:
+        return
+    conn.executescript(
+        "CREATE TABLE reconciliations_new("
+        "  id INTEGER PRIMARY KEY, client_id INTEGER, period TEXT NOT NULL,"
+        "  created_at TEXT NOT NULL, created_by TEXT NOT NULL);")
+    conn.execute(
+        "INSERT INTO reconciliations_new(id, client_id, period, created_at, created_by) "
+        "SELECT id, client_id, period, created_at, created_by FROM reconciliations")
+    conn.executescript(
+        "DROP TABLE reconciliations; "
+        "ALTER TABLE reconciliations_new RENAME TO reconciliations;")
+    conn.commit()
+
+
 def init_schema(conn) -> None:
     conn.executescript(_SCHEMA)
+    _migrate_reconciliations_nullable_client(conn)
     conn.commit()

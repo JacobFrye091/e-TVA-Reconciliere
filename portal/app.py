@@ -238,10 +238,11 @@ def create_app(data_dir: str) -> Flask:
         return f"{desired}{n}"
 
     def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str) -> int:
-        """Create a firm, link it to user_id with the given role, and for a
-        self-reconciling ('direct') firm, auto-create the one client it
-        will ever need — its own CUI — so there's no separate client-
-        management step for that case."""
+        """Create a firm and link it to user_id with the given role. A
+        self-reconciling ('direct') firm has no clients at all - it
+        reconciles as itself, not as its own client - so nothing further
+        happens here for that case; only a 'contabilitate' firm ever
+        gets real clients, added by hand afterwards."""
         if tip not in pdb.FIRM_TIPURI:
             tip = pdb.FIRM_TIP_CONTABILITATE
         cur = conn.execute("INSERT INTO firms(name, cui, tip) VALUES(?,?,?)",
@@ -253,8 +254,6 @@ def create_app(data_dir: str) -> Flask:
         conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
                      (firm_id, psec.wrap_key(secret, os.urandom(32))))
         conn.commit()
-        if tip == pdb.FIRM_TIP_DIRECT:
-            clients.create_client(firm_conn(firm_id), cui, name)
         return firm_id
 
     @app.route("/inregistrare", methods=["GET", "POST"])
@@ -724,9 +723,15 @@ def create_app(data_dir: str) -> Flask:
         return jsonify(clients.visible_clients(firm_conn(ident["firm_id"]),
                                                ident))
 
+    _EROARE_FIRMA_DIRECTA = ("Firmele directe (PFA/SRL care isi fac singure "
+                            "calculele) nu au clienti - reconciliezi direct, "
+                            "ca firma. Doar firmele de contabilitate au clienti.")
+
     @app.post("/api/clients")
     @require("clienti.creare")
     def add_client(ident):
+        if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT:
+            return jsonify({"error": _EROARE_FIRMA_DIRECTA}), 403
         fc = firm_conn(ident["firm_id"])
         data = request.get_json(force=True)
         try:
@@ -739,6 +744,8 @@ def create_app(data_dir: str) -> Flask:
     @app.delete("/api/clients/<int:cid>")
     @require("clienti.stergere")
     def del_client(ident, cid):
+        if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT:
+            return jsonify({"error": _EROARE_FIRMA_DIRECTA}), 403
         fc = firm_conn(ident["firm_id"])
         clients.delete_client(fc, cid)
         audit.log(fc, ident["username"], "client.stergere", "client", str(cid))
@@ -747,6 +754,8 @@ def create_app(data_dir: str) -> Flask:
     @app.post("/api/assignments")
     @require("useri.gestionare")
     def assign_client(ident):
+        if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT:
+            return jsonify({"error": _EROARE_FIRMA_DIRECTA}), 403
         fc = firm_conn(ident["firm_id"])
         data = request.get_json(force=True)
         clients.assign(fc, data["username"].strip(), int(data["client_id"]))
@@ -827,7 +836,10 @@ def create_app(data_dir: str) -> Flask:
     @require("reconciliere.creare")
     def new_reconciliation(ident):
         fc = firm_conn(ident["firm_id"])
-        client_id = int(request.form["client_id"])
+        # O firma directa reconciliaza ca ea insasi, fara client - doar o
+        # firma de contabilitate alege un client dintr-o lista.
+        client_id = (None if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT
+                    else int(request.form["client_id"]))
         period = request.form["period"]
         anaf_file = request.files["anaf_file"]
         company_files = request.files.getlist("company_file")
@@ -926,23 +938,26 @@ def create_app(data_dir: str) -> Flask:
         fc = firm_conn(ident["firm_id"])
         row = fc.execute(
             "SELECT r.period, c.name FROM reconciliations r "
-            "JOIN clients c ON c.id = r.client_id WHERE r.id=?",
+            "LEFT JOIN clients c ON c.id = r.client_id WHERE r.id=?",
             (rid,)).fetchone()
         if row is None:
             return jsonify({"error": "Reconciliere inexistenta"}), 404
+        # O firma directa nu are client (reconciliaza ca ea insasi) - numele
+        # de afisat pe raport e atunci al firmei, nu al unui client.
+        nume_raport = row["name"] or ident["firm_name"]
         path = os.path.join(upload_dir, f"raport_{ident['firm_id']}_{rid}.xlsx")
         if _reconciliation_mode(fc, rid) == "d300_lines":
             comp = _load_lines(fc, rid, "invoices_company")
             anaf = _load_lines(fc, rid, "invoices_anaf")
             result = reconcile_d300(comp, anaf)
             export_mod.write_report_lines(result, suggest_d300_lines(result),
-                                          path, row["name"], row["period"])
+                                          path, nume_raport, row["period"])
         else:
             comp = _load_rows(fc, rid, "invoices_company")
             anaf = _load_rows(fc, rid, "invoices_anaf")
             result = reconcile(comp, anaf)
             export_mod.write_report(result, suggest_d300(result), path,
-                                    row["name"], row["period"])
+                                    nume_raport, row["period"])
         audit.log(fc, ident["username"], "raport.export",
                   "reconciliation", str(rid))
         return send_file(path, as_attachment=True,

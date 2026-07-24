@@ -285,12 +285,13 @@ def test_legal_pages_are_served(app):
         assert b"e-TVA Reconciliere" in r.data
 
 
-def test_direct_firm_gets_a_matching_client_auto_created(app):
+def test_direct_firm_has_no_clients_at_all(app):
+    """O firma directa (PFA/SRL care isi face singura calculele) nu are
+    cum sa se adauge pe sine ca si client - reconciliaza direct, ca firma,
+    fara niciun client implicat."""
     c = app.test_client()
     inregistreaza(c, tip="direct")
-    vis = c.get("/api/clients").get_json()
-    assert len(vis) == 1
-    assert vis[0]["cui"] == "RO111" and vis[0]["name"] == "Firma Unu SRL"
+    assert c.get("/api/clients").get_json() == []
 
 
 def test_contabilitate_firm_starts_with_no_clients(app):
@@ -299,14 +300,43 @@ def test_contabilitate_firm_starts_with_no_clients(app):
     assert c.get("/api/clients").get_json() == []
 
 
-def test_add_firm_direct_also_auto_creates_client(app):
+def test_add_firm_direct_also_has_no_clients(app):
     c = app.test_client()
     inregistreaza(c, tip="contabilitate")
     c.post("/panou/firme",
           data={"name": "PFA Ionescu", "cui": "RO222", "tip": "direct"})
-    vis = c.get("/api/clients").get_json()
-    assert len(vis) == 1
-    assert vis[0]["cui"] == "RO222" and vis[0]["name"] == "PFA Ionescu"
+    # add_firm() comuta automat pe firma noua
+    assert c.get("/api/clients").get_json() == []
+
+
+def test_direct_firm_rejects_adding_a_client(app):
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    r = c.post("/api/clients", json={"cui": "RO999", "name": "Alta Firma"})
+    assert r.status_code == 403
+    assert c.get("/api/clients").get_json() == []
+
+
+def test_direct_firm_rejects_client_assignment(app):
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    r = c.post("/api/assignments", json={"username": "cineva", "client_id": 1})
+    assert r.status_code == 403
+
+
+def test_direct_firm_reconciles_without_a_client(app):
+    """Fara client_id deloc - firma reconciliaza ca ea insasi."""
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    r = c.post("/api/reconciliations", data={
+        "period": "2026-01",
+        "company_file": (_csv(_journal()), "j.csv"),
+        "anaf_file": (_csv(_journal()), "a.csv"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    rid = r.get_json()["id"]
+    r2 = c.get(f"/api/reconciliations/{rid}/export")
+    assert r2.status_code == 200 and r2.data[:2] == b"PK"
 
 
 def test_firm_key_persists_across_app_restart(tmp_path):
