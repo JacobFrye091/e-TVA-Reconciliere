@@ -4,12 +4,13 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import json, os, pathlib, secrets
+import json, os, pathlib, re, secrets
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (Flask, request, session, redirect, url_for, jsonify,
-                   render_template, send_file)
+                   render_template, send_file, Response)
 
 from portal import db as pdb
 from portal import security as psec
@@ -168,20 +169,42 @@ def create_app(data_dir: str) -> Flask:
     def cookie_uri():
         return send_file(_COOKIE_URI)
 
-    def _verify_cui_or_error(cui: str) -> str | None:
-        """Return an error message if the CUI isn't a real, ANAF-registered
-        CUI, or None if it checks out."""
+    def _anaf_lookup(cui: str) -> tuple[dict | None, str | None]:
+        """Look up a CUI at ANAF. Returns (info, None) on success, or
+        (None, mesaj_de_eroare) if the CUI is invalid, unknown, or the
+        service can't be reached right now."""
         try:
             info = anaf_cui.verify_cui(cui)
         except ValueError:
-            return "CUI-ul introdus nu este valid."
+            return None, "CUI-ul introdus nu este valid."
         except anaf_cui.AnafCuiError:
-            return ("Nu am putut verifica CUI-ul la ANAF chiar acum. "
-                    "Incearca din nou peste cateva momente.")
+            return None, ("Nu am putut verifica CUI-ul la ANAF chiar acum. "
+                          "Incearca din nou peste cateva momente.")
         if info is None:
-            return ("CUI-ul introdus nu a fost gasit la ANAF. "
-                    "Verifica-l si incearca din nou.")
-        return None
+            return None, ("CUI-ul introdus nu a fost gasit la ANAF. "
+                          "Verifica-l si incearca din nou.")
+        return info, None
+
+    def _verify_cui_or_error(cui: str) -> str | None:
+        """Return an error message if the CUI isn't a real, ANAF-registered
+        CUI, or None if it checks out."""
+        return _anaf_lookup(cui)[1]
+
+    @app.get("/api/anaf/denumire")
+    def anaf_denumire():
+        """Used by the registration/add-firm forms' 'Cod CUI Completat'
+        checkbox to auto-fill the (readonly) firm-name field from ANAF."""
+        cui = request.args.get("cui", "").strip()
+        if not cui:
+            return jsonify({"denumire": None, "eroare": "Introdu un CUI."})
+        info, eroare = _anaf_lookup(cui)
+        if eroare:
+            return jsonify({"denumire": None, "eroare": eroare})
+        return jsonify({"denumire": info["denumire"], "eroare": None})
+
+    def _slugify(text: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+        return slug or "firma"
 
     def _unique_username(desired: str) -> str:
         """Real people share first names/surnames often enough that a
@@ -222,11 +245,13 @@ def create_app(data_dir: str) -> Flask:
             return render_template("inregistrare.html", eroare=None)
         f = request.form
         name, cui = f.get("name", "").strip(), f.get("cui", "").strip()
-        username, password = f.get("username", "").strip(), f.get("password", "")
+        password = f.get("password", "")
         tip = f.get("tip", "").strip()
-        if not all([name, cui, username, password]) or tip not in pdb.FIRM_TIPURI:
-            return render_template("inregistrare.html",
-                                   eroare="Toate campurile sunt obligatorii.")
+        if not all([name, cui, password]) or tip not in pdb.FIRM_TIPURI:
+            return render_template(
+                "inregistrare.html",
+                eroare="Toate campurile sunt obligatorii - inclusiv "
+                      "denumirea, completata automat din CUI.")
         if not f.get("accept_termeni"):
             return render_template(
                 "inregistrare.html",
@@ -241,7 +266,9 @@ def create_app(data_dir: str) -> Flask:
         eroare = _verify_cui_or_error(cui)
         if eroare:
             return render_template("inregistrare.html", eroare=eroare)
-        username = _unique_username(username)
+        # Login identifies people by CUI + parola, not de un nume ales de ei -
+        # username ramane doar o eticheta interna (audit, panoul de echipa).
+        username = _unique_username(_slugify(name))
         cur = conn.execute(
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
             (username, psec.hash_password(password)))
@@ -256,13 +283,31 @@ def create_app(data_dir: str) -> Flask:
     def login():
         if request.method == "GET":
             return render_template("autentificare.html", eroare=None)
-        row = conn.execute("SELECT * FROM users WHERE username=?",
-                           (request.form.get("username", "").strip(),)).fetchone()
-        if (row is None or not row["active"]
-                or not psec.verify_password(row["pw_hash"],
-                                            request.form.get("password", ""))):
+        identificator = request.form.get("cui", "").strip()
+        password = request.form.get("password", "")
+        eroare_autentificare = "CUI sau parola incorecta."
+
+        # Master nu apartine niciunei firme (nu are CUI), asa ca ramane
+        # singurul cont care se autentifica prin numele lui de utilizator.
+        row = conn.execute(
+            "SELECT * FROM users WHERE username=? AND is_master=1",
+            (identificator,)).fetchone()
+        if row is None or not psec.verify_password(row["pw_hash"], password):
+            row = None
+            # O firma poate avea mai multi colegi (admin/contabil/junior)
+            # care ii impart CUI-ul la autentificare - parola singura ii
+            # distinge (add_member impiedica doi colegi sa aiba aceeasi).
+            candidati = conn.execute(
+                "SELECT u.* FROM users u "
+                "JOIN user_firms uf ON uf.user_id = u.id AND uf.active = 1 "
+                "JOIN firms f ON f.id = uf.firm_id "
+                "WHERE f.cui = ? AND u.active = 1",
+                (identificator,)).fetchall()
+            row = next((r for r in candidati
+                       if psec.verify_password(r["pw_hash"], password)), None)
+        if row is None or not row["active"]:
             return render_template("autentificare.html",
-                                   eroare="Utilizator sau parola incorecta.")
+                                   eroare=eroare_autentificare)
         session.permanent = True
         session["user_id"] = row["id"]
         if row["is_master"]:
@@ -369,6 +414,18 @@ def create_app(data_dir: str) -> Flask:
         if role not in FIRM_SUBROLES or not username or len(password) < 10:
             return redirect(url_for(
                 "panou", eroare="Date invalide (parola minim 10 caractere)."))
+        # Colegii aceleiasi firme se autentifica toti cu acelasi CUI, deci
+        # parola trebuie sa fie unica intre ei ca sa se stie cine e cine.
+        colegi = conn.execute(
+            "SELECT u.pw_hash FROM users u "
+            "JOIN user_firms uf ON uf.user_id = u.id "
+            "WHERE uf.firm_id=? AND uf.active=1", (active_firm_id,)).fetchall()
+        if any(psec.verify_password(c["pw_hash"], password) for c in colegi):
+            return redirect(url_for(
+                "panou", eroare="Aceasta parola este deja folosita de un alt "
+                                "cont din aceasta firma. Alege alta parola, "
+                                "ca fiecare coleg sa poata fi recunoscut unic "
+                                "la autentificare doar cu CUI-ul firmei."))
         username_atribuit = _unique_username(username)
         cur = conn.execute(
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
@@ -381,7 +438,9 @@ def create_app(data_dir: str) -> Flask:
                 if username_atribuit != username else None)
         if mesaj:
             mesaj += (f" Numele '{username}' era deja folosit de alt cont, "
-                     "asa ca a fost atribuit acesta - foloseste-l la autentificare.")
+                     "asa ca a fost atribuit acesta ca eticheta - la "
+                     "autentificare colegul foloseste tot CUI-ul firmei, "
+                     "cu parola lui.")
         return redirect(url_for("panou", mesaj=mesaj))
 
     @app.post("/panou/utilizatori/<username>/dezactivare")
@@ -507,6 +566,65 @@ def create_app(data_dir: str) -> Flask:
                                overview=overview, kpi=kpi,
                                top_conturi=top_conturi,
                                firm_tip_dist=firm_tip_dist)
+
+    def _istoric_utilizator(target) -> list[dict]:
+        """Every audit-log action by this user, across every firm they
+        belong to, newest first. The audit log lives inside each firm's
+        own (encrypted) database, keyed by username, so this fans out
+        across firms and merges by timestamp."""
+        firme = conn.execute(
+            "SELECT f.id, f.name FROM user_firms uf JOIN firms f "
+            "ON f.id = uf.firm_id WHERE uf.user_id=?", (target["id"],)).fetchall()
+        evenimente = []
+        for firma in firme:
+            for e in audit.entries(firm_conn(firma["id"]), limit=5000,
+                                   user_id=target["username"]):
+                evenimente.append({**e, "firm_id": firma["id"],
+                                   "firm_name": firma["name"]})
+        evenimente.sort(key=lambda e: e["ts"], reverse=True)
+        return evenimente
+
+    def _istoric_la_xml(target, evenimente) -> bytes:
+        root = ET.Element("istoric_utilizator", utilizator=target["username"])
+        for e in evenimente:
+            actiune = ET.SubElement(root, "actiune")
+            ET.SubElement(actiune, "data").text = e["ts"]
+            ET.SubElement(actiune, "tip").text = e["action"]
+            ET.SubElement(actiune, "firma").text = e["firm_name"]
+            if e.get("entity"):
+                ET.SubElement(actiune, "entitate").text = str(e["entity"])
+            if e.get("entity_id"):
+                ET.SubElement(actiune, "entitate_id").text = str(e["entity_id"])
+        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    @app.get("/master/utilizatori/<int:user_id>/istoric")
+    def master_user_history(user_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        target = conn.execute("SELECT * FROM users WHERE id=?",
+                              (user_id,)).fetchone()
+        if target is None:
+            return redirect(url_for("master_users"))
+        evenimente = _istoric_utilizator(target)
+        return render_template("master_istoric.html", user=user,
+                               target=target, evenimente=evenimente)
+
+    @app.get("/master/utilizatori/<int:user_id>/istoric.xml")
+    def master_user_history_xml(user_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        target = conn.execute("SELECT * FROM users WHERE id=?",
+                              (user_id,)).fetchone()
+        if target is None:
+            return redirect(url_for("master_users"))
+        evenimente = _istoric_utilizator(target)
+        xml_bytes = _istoric_la_xml(target, evenimente)
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition":
+                     f'attachment; filename="istoric_{target["username"]}.xml"'})
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

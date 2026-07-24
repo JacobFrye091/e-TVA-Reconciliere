@@ -21,11 +21,10 @@ def _mock_anaf_cui(monkeypatch):
     monkeypatch.setattr(anaf_cui, "verify_cui", _fake)
 
 
-def inregistreaza(c, username="firma1", cui="RO111", tip="contabilitate"):
+def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate"):
     return c.post("/inregistrare", data={
-        "name": "Firma Unu SRL", "cui": cui, "tip": tip,
-        "username": username, "password": "ParolaLunga123!",
-        "accept_termeni": "on"},
+        "name": name, "cui": cui, "tip": tip,
+        "password": "ParolaLunga123!", "accept_termeni": "on"},
         follow_redirects=False)
 
 
@@ -40,7 +39,7 @@ def test_register_redirects_to_app(app):
 def test_register_duplicate_cui(app):
     c = app.test_client()
     inregistreaza(c)
-    r = inregistreaza(c, username="alta", cui="RO111")
+    r = inregistreaza(c, name="Alta Firma", cui="RO111")
     assert b"CUI" in r.data
 
 
@@ -49,7 +48,7 @@ def test_login_wrong_password(app):
     inregistreaza(c)
     c.get("/iesire")
     r = c.post("/autentificare",
-               data={"username": "firma1", "password": "gresit"})
+               data={"cui": "RO111", "password": "gresit"})
     assert "incorecta".encode() in r.data
 
 
@@ -118,10 +117,13 @@ def test_onboarding_completat_endpoint_marks_it_done(app):
 
 
 def test_register_auto_renames_a_duplicate_username_instead_of_rejecting(app):
+    # Numele intern (folosit doar pentru afisare/audit, nu la logare) e
+    # derivat din denumirea firmei - doua firme cu aceeasi denumire ciocnesc
+    # exact ca inainte doi useri cu acelasi nume ales manual.
     c1 = app.test_client()
-    inregistreaza(c1, username="andrei", cui="RO111")
+    inregistreaza(c1, name="Andrei", cui="RO111")
     c2 = app.test_client()
-    r2 = inregistreaza(c2, username="andrei", cui="RO222")
+    r2 = inregistreaza(c2, name="Andrei", cui="RO222")
     assert r2.status_code == 302 and "/app" in r2.headers["Location"]
     assert c2.get("/api/me").get_json()["username"] == "andrei2"
     # contul original nu e afectat
@@ -129,18 +131,18 @@ def test_register_auto_renames_a_duplicate_username_instead_of_rejecting(app):
 
 
 def test_register_keeps_auto_renaming_through_several_collisions(app):
-    inregistreaza(app.test_client(), username="andrei", cui="RO111")
-    inregistreaza(app.test_client(), username="andrei", cui="RO222")
+    inregistreaza(app.test_client(), name="Andrei", cui="RO111")
+    inregistreaza(app.test_client(), name="Andrei", cui="RO222")
     c3 = app.test_client()
-    r3 = inregistreaza(c3, username="andrei", cui="RO333")
+    r3 = inregistreaza(c3, name="Andrei", cui="RO333")
     assert c3.get("/api/me").get_json()["username"] == "andrei3"
 
 
 def test_add_member_auto_renames_a_duplicate_username(app):
     c = app.test_client()
-    inregistreaza(c, username="andrei")
+    inregistreaza(c, name="Andrei")
     r = c.post("/panou/utilizatori", data={"username": "andrei",
-                                           "password": "ParolaLunga123!",
+                                           "password": "ParolaMembru123!",
                                            "role": "junior"})
     assert r.status_code == 302
     assert "andrei2" in r.headers["Location"]
@@ -148,16 +150,81 @@ def test_add_member_auto_renames_a_duplicate_username(app):
         "SELECT username FROM users WHERE username != 'andrei'").fetchone()
     assert row["username"] == "andrei2"
     c.get("/iesire")
-    r2 = c.post("/autentificare", data={"username": "andrei2",
-                                        "password": "ParolaLunga123!"})
+    r2 = c.post("/autentificare", data={"cui": "RO111",
+                                        "password": "ParolaMembru123!"})
     assert r2.status_code == 302 and "/app" in r2.headers["Location"]
+
+
+def test_login_by_cui_resolves_the_right_teammate_by_password(app):
+    """Colegii aceleiasi firme impart CUI-ul la autentificare - doar
+    parola ii distinge, deci fiecare trebuie sa ajunga in contul lui,
+    cu rolul lui."""
+    c = app.test_client()
+    inregistreaza(c, name="Firma Echipa", cui="RO444")
+    c.post("/panou/utilizatori", data={"username": "colega",
+                                       "password": "ParolaColega123!",
+                                       "role": "contabil"})
+    c.get("/iesire")
+
+    r_admin = c.post("/autentificare", data={"cui": "RO444",
+                                             "password": "ParolaLunga123!"})
+    assert r_admin.status_code == 302 and "/app" in r_admin.headers["Location"]
+    assert c.get("/api/me").get_json()["role"] == "admin"
+    c.get("/iesire")
+
+    r_coleg = c.post("/autentificare", data={"cui": "RO444",
+                                             "password": "ParolaColega123!"})
+    assert r_coleg.status_code == 302 and "/app" in r_coleg.headers["Location"]
+    assert c.get("/api/me").get_json()["role"] == "contabil"
+
+
+def test_add_member_rejects_a_password_already_used_in_the_same_firm(app):
+    c = app.test_client()
+    inregistreaza(c)  # parola admin: ParolaLunga123!
+    r = c.post("/panou/utilizatori", data={"username": "coleg",
+                                           "password": "ParolaLunga123!",
+                                           "role": "junior"},
+              follow_redirects=True)
+    assert "deja folosita de un alt cont".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 1
+
+
+def test_master_still_logs_in_by_username_not_cui(app):
+    """Master nu are firma (deci nu are CUI) - ramane singurul cont care
+    foloseste numele lui de utilizator in campul de autentificare."""
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+    c = app.test_client()
+    r = c.post("/autentificare", data={"cui": "sef",
+                                       "password": "ParolaMaster123!"})
+    assert r.status_code == 302 and "/master" in r.headers["Location"]
+
+
+def test_anaf_denumire_endpoint_returns_name_for_valid_cui(app):
+    c = app.test_client()
+    r = c.get("/api/anaf/denumire?cui=RO111")
+    body = r.get_json()
+    assert body["denumire"] == "Firma Test" and body["eroare"] is None
+
+
+def test_anaf_denumire_endpoint_surfaces_unknown_cui(app, monkeypatch):
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: None)
+    c = app.test_client()
+    r = c.get("/api/anaf/denumire?cui=RO999")
+    body = r.get_json()
+    assert body["denumire"] is None
+    assert "nu a fost gasit la ANAF" in body["eroare"]
 
 
 def test_register_rejects_missing_tip(app):
     c = app.test_client()
     r = c.post("/inregistrare", data={
         "name": "Firma X SRL", "cui": "RO555",
-        "username": "userx", "password": "ParolaLunga123!"})
+        "password": "ParolaLunga123!"})
     assert r.status_code == 200
     assert "obligatorii".encode() in r.data
     assert not app.portal_conn.execute(
@@ -168,7 +235,7 @@ def test_register_rejects_without_accepting_terms(app):
     c = app.test_client()
     r = c.post("/inregistrare", data={
         "name": "Firma X SRL", "cui": "RO556", "tip": "contabilitate",
-        "username": "userx", "password": "ParolaLunga123!"})
+        "password": "ParolaLunga123!"})
     assert r.status_code == 200
     assert "Termenii".encode() in r.data
     assert not app.portal_conn.execute(
@@ -218,7 +285,7 @@ def test_firm_key_persists_across_app_restart(tmp_path):
 
     app2 = create_app(data_dir)  # simulates a server restart
     c2 = app2.test_client()
-    c2.post("/autentificare", data={"username": "firma1",
+    c2.post("/autentificare", data={"cui": "RO111",
                                     "password": "ParolaLunga123!"})
     vis = c2.get("/api/clients").get_json()
     assert [x["cui"] for x in vis] == ["RO9"]
@@ -262,11 +329,11 @@ def test_member_roles_and_permissions(app):
     c = app.test_client()
     inregistreaza(c)
     c.post("/panou/utilizatori", data={"username": "junior1",
-                                       "password": "ParolaLunga123!",
+                                       "password": "ParolaJunior123!",
                                        "role": "junior"})
     c.get("/iesire")
-    c.post("/autentificare", data={"username": "junior1",
-                                   "password": "ParolaLunga123!"})
+    c.post("/autentificare", data={"cui": "RO111",
+                                   "password": "ParolaJunior123!"})
     body = c.get("/api/me").get_json()
     assert body["role"] == "junior"
     assert "rapoarte.export" not in body["permissions"]
@@ -282,7 +349,7 @@ def test_master_dashboard_and_firm_toggle(app):
     inregistreaza(c_firma)
 
     c_master = app.test_client()
-    r = c_master.post("/autentificare", data={"username": "sef",
+    r = c_master.post("/autentificare", data={"cui": "sef",
                                               "password": "ParolaMaster123!"})
     assert "/master" in r.headers["Location"]
     assert b"Firma Unu SRL" in c_master.get("/master").data
@@ -305,7 +372,7 @@ def test_master_page_warns_when_server_is_stale(app, monkeypatch):
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef",
+    c.post("/autentificare", data={"cui": "sef",
                                    "password": "ParolaMaster123!"})
     text = c.get("/master").data.decode()
     assert "repornește serverul" in text
@@ -324,7 +391,7 @@ def test_master_page_shows_up_to_date_server(app, monkeypatch):
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef",
+    c.post("/autentificare", data={"cui": "sef",
                                    "password": "ParolaMaster123!"})
     text = c.get("/master").data.decode()
     assert "Server la zi" in text
@@ -338,7 +405,7 @@ def test_master_cannot_use_app_api(app):
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef",
+    c.post("/autentificare", data={"cui": "sef",
                                    "password": "ParolaMaster123!"})
     assert c.get("/api/me").status_code == 401
 
@@ -431,7 +498,7 @@ def test_pipeline_dashboard_and_promote(app, monkeypatch):
         "commit": "deadbeef", "pushed": True, "push_error": None})
 
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     r = c.get("/master/pipeline")
     assert r.status_code == 200 and b"Promoveaza" in r.data
 
@@ -448,7 +515,7 @@ def test_pipeline_promote_reports_when_push_fails(app, monkeypatch):
     monkeypatch.setattr(pl, "promote", lambda s, t: {
         "commit": "deadbeef", "pushed": False, "push_error": "no network"})
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     r = c.post("/master/pipeline/promoveaza",
               data={"source": "dev", "target": "testare"}, follow_redirects=True)
     assert "no network".encode() in r.data
@@ -464,7 +531,7 @@ def test_pipeline_promote_surfaces_error(app, monkeypatch):
         raise pl.PipelineError("nu se poate promova acum")
     monkeypatch.setattr(pl, "promote", _boom)
     c = app.test_client()
-    c.post("/autentificare", data={"username": "sef", "password": "ParolaMaster123!"})
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     r = c.post("/master/pipeline/promoveaza",
               data={"source": "dev", "target": "testare"}, follow_redirects=True)
     assert "nu se poate promova acum".encode() in r.data
@@ -529,11 +596,11 @@ def test_junior_limited_in_product(app):
     c = app.test_client()
     inregistreaza(c)
     c.post("/panou/utilizatori", data={"username": "jr",
-                                       "password": "ParolaLunga123!",
+                                       "password": "ParolaJunior123!",
                                        "role": "junior"})
     c.get("/iesire")
-    c.post("/autentificare", data={"username": "jr",
-                                   "password": "ParolaLunga123!"})
+    c.post("/autentificare", data={"cui": "RO111",
+                                   "password": "ParolaJunior123!"})
     assert c.get("/api/reconciliations/1/export").status_code == 403
     assert c.post("/api/clients",
                   json={"cui": "RO2", "name": "Y"}).status_code == 403
@@ -546,12 +613,12 @@ def test_assignment_gives_visibility(app):
     cid = c.post("/api/clients",
                  json={"cui": "RO9", "name": "Client X"}).get_json()["id"]
     c.post("/panou/utilizatori", data={"username": "cont1",
-                                       "password": "ParolaLunga123!",
+                                       "password": "ParolaContabil123!",
                                        "role": "contabil"})
     c.post("/api/assignments", json={"username": "cont1", "client_id": cid})
     c.get("/iesire")
-    c.post("/autentificare", data={"username": "cont1",
-                                   "password": "ParolaLunga123!"})
+    c.post("/autentificare", data={"cui": "RO111",
+                                   "password": "ParolaContabil123!"})
     vis = c.get("/api/clients").get_json()
     assert [x["cui"] for x in vis] == ["RO9"]
 
@@ -714,7 +781,7 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
     conn.commit()
 
     c = app.test_client()
-    inregistreaza(c, username="firma1", cui="RO111", tip="contabilitate")
+    inregistreaza(c, name="Firma1", cui="RO111", tip="contabilitate")
     cid = c.post("/api/clients",
                  json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
     c.post("/api/assignments", json={"username": "firma1", "client_id": cid})
@@ -725,7 +792,7 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
     }, content_type="multipart/form-data")
 
     c_master = app.test_client()
-    c_master.post("/autentificare", data={"username": "sef",
+    c_master.post("/autentificare", data={"cui": "sef",
                                           "password": "ParolaMaster123!"})
     r = c_master.get("/master/utilizatori")
     assert r.status_code == 200
@@ -738,7 +805,7 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
     assert re.search(r"<b>1</b>\s*firma", text)
     assert re.search(r"<b>1</b>\s*reconcilieri create", text)
 
-    row = re.search(r"<tr>.*?Firma Unu SRL.*?</tr>", text, re.S).group(0)
+    row = re.search(r"<tr>.*?Firma1.*?</tr>", text, re.S).group(0)
     assert "RO111" in row and "Contabilitate" in row and "admin" in row
     assert row.count("<td>1</td>") == 1  # clienti alocati
     assert re.search(r'class="val">1</span>', row)  # reconcilieri (microbar)
@@ -758,10 +825,10 @@ def test_master_users_direct_firm_has_no_manual_client_but_gets_reconciliations(
     conn.commit()
 
     c = app.test_client()
-    inregistreaza(c, username="pfa1", cui="RO111", tip="direct")
+    inregistreaza(c, name="Pfa1", cui="RO111", tip="direct")
 
     c_master = app.test_client()
-    c_master.post("/autentificare", data={"username": "sef",
+    c_master.post("/autentificare", data={"cui": "sef",
                                           "password": "ParolaMaster123!"})
     text = c_master.get("/master/utilizatori").data.decode()
     assert "pfa1" in text and "Firma/PFA directa" in text
@@ -781,7 +848,7 @@ def test_master_users_kpis_and_charts(app, monkeypatch):
     conn.commit()
 
     c1 = app.test_client()
-    inregistreaza(c1, username="firma1", cui="RO111", tip="contabilitate")
+    inregistreaza(c1, name="Firma1", cui="RO111", tip="contabilitate")
     cid = c1.post("/api/clients",
                   json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
     c1.post("/api/reconciliations", data={
@@ -791,10 +858,10 @@ def test_master_users_kpis_and_charts(app, monkeypatch):
     }, content_type="multipart/form-data")
 
     c2 = app.test_client()
-    inregistreaza(c2, username="pfa1", cui="RO333", tip="direct")
+    inregistreaza(c2, name="Pfa1", cui="RO333", tip="direct")
 
     c_master = app.test_client()
-    c_master.post("/autentificare", data={"username": "sef",
+    c_master.post("/autentificare", data={"cui": "sef",
                                           "password": "ParolaMaster123!"})
     text = c_master.get("/master/utilizatori").data.decode()
 
@@ -808,3 +875,40 @@ def test_master_users_kpis_and_charts(app, monkeypatch):
 
     rank = text[text.index("Reconcilieri per cont"):text.index("Firme dupa tip")]
     assert "firma1" in rank and "pfa1" in rank
+
+
+def test_master_user_history_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/utilizatori/1/istoric", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_user_history_lists_actions_across_firms_and_exports_xml(app):
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL", cui="RO111")
+    c.post("/api/clients", json={"cui": "RO9", "name": "Client X"})
+    user_id = conn.execute(
+        "SELECT id FROM users WHERE username='firma-unu-srl'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef",
+                                          "password": "ParolaMaster123!"})
+
+    r = c_master.get(f"/master/utilizatori/{user_id}/istoric")
+    assert r.status_code == 200
+    assert b"client.creare" in r.data
+
+    r_xml = c_master.get(f"/master/utilizatori/{user_id}/istoric.xml")
+    assert r_xml.status_code == 200
+    assert r_xml.mimetype == "application/xml"
+    assert b"attachment" in r_xml.headers["Content-Disposition"].encode()
+    assert b'<istoric_utilizator utilizator="firma-unu-srl">' in r_xml.data
+    assert b"<tip>client.creare</tip>" in r_xml.data
+    assert b"<firma>Firma Unu SRL</firma>" in r_xml.data

@@ -4,8 +4,10 @@
 <main>
   <div class="card">
     <h2>Firmele mele</h2>
-    <p class="sub">Contul tau: {{ user['username'] }}. Poti avea una sau mai
-      multe firme (SRL/PFA) legate de acelasi cont — alege cu care lucrezi.</p>
+    <p class="sub">Te autentifici cu CUI-ul firmei si parola ta{% if active %}
+      — CUI-ul firmei active acum: <b>{{ active['cui'] }}</b>{% endif %}.
+      Poti avea una sau mai multe firme (SRL/PFA) legate de acelasi cont —
+      alege cu care lucrezi.</p>
     {% if firms %}
     <table>
       <tr><th>Firma</th><th>CUI</th><th>Tip</th><th>Rolul tau</th><th></th></tr>
@@ -38,22 +40,88 @@
 
   <div class="card">
     <h2>Adauga o firma (SRL/PFA)</h2>
-    <p class="sub">CUI-ul este verificat automat la ANAF inainte de a fi
-      adaugat — daca nu exista in evidentele ANAF, nu poate fi adaugat.</p>
+    <p class="sub">Completeaza CUI-ul si bifeaza "Cod CUI Completat" ca sa
+      preluam automat denumirea de la ANAF — pas obligatoriu inainte de a
+      adauga firma.</p>
     <form method="post" action="/panou/firme">
       <div class="rand">
-        <div><label for="fn">Denumirea firmei</label><input id="fn" name="name" required></div>
         <div><label for="fc">CUI</label><input id="fc" name="cui" required placeholder="ex: RO12345678"></div>
+        <div><label class="optiune-tip" style="margin-top:22px">
+            <input type="checkbox" id="fCuiCompletat">
+            <span>Cod CUI Completat</span></label></div>
+        <div><label for="fn">Denumirea firmei (completata automat)</label>
+          <input id="fn" name="name" required readonly placeholder="Se completeaza dupa verificarea CUI"></div>
         <div><label for="ft">Tip</label>
           <select id="ft" name="tip">
             <option value="direct">Firma/PFA care isi face singura calculele</option>
             <option value="contabilitate">Firma de contabilitate (mai multi clienti)</option>
           </select></div>
-        <button type="submit">Adauga</button>
+        <button type="submit" id="fBtnAdauga" disabled>Adauga</button>
       </div>
     </form>
+    <p class="nota" id="fCuiStare" style="margin-top:2px">
+      Bifeaza "Cod CUI Completat" dupa ce introduci CUI-ul.</p>
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
   </div>
+  <script>
+  (function () {
+    var cuiInput = document.getElementById('fc');
+    var bifa = document.getElementById('fCuiCompletat');
+    var nameInput = document.getElementById('fn');
+    var stare = document.getElementById('fCuiStare');
+    var buton = document.getElementById('fBtnAdauga');
+
+    function seteazaStare(text, eroare) {
+      stare.textContent = text;
+      stare.style.color = eroare ? 'var(--danger)' : '';
+    }
+    function reseteaza(mesaj, eroare) {
+      nameInput.value = '';
+      buton.disabled = true;
+      seteazaStare(mesaj, eroare);
+    }
+
+    bifa.addEventListener('change', function () {
+      if (!bifa.checked) {
+        reseteaza('Bifeaza "Cod CUI Completat" dupa ce introduci CUI-ul.');
+        return;
+      }
+      var cui = cuiInput.value.trim();
+      if (!cui) {
+        bifa.checked = false;
+        reseteaza('Completeaza mai intai CUI-ul.', true);
+        return;
+      }
+      bifa.disabled = true;
+      seteazaStare('Se verifica CUI-ul la ANAF...');
+      fetch('/api/anaf/denumire?cui=' + encodeURIComponent(cui))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          bifa.disabled = false;
+          if (data.eroare) {
+            bifa.checked = false;
+            reseteaza(data.eroare, true);
+            return;
+          }
+          nameInput.value = data.denumire;
+          buton.disabled = false;
+          seteazaStare('Denumire preluata de la ANAF: ' + data.denumire + '.');
+        })
+        .catch(function () {
+          bifa.disabled = false;
+          bifa.checked = false;
+          reseteaza('Nu am putut contacta serviciul ANAF chiar acum. Incearca din nou.', true);
+        });
+    });
+
+    cuiInput.addEventListener('input', function () {
+      if (bifa.checked) {
+        bifa.checked = false;
+        reseteaza('CUI-ul s-a schimbat — bifeaza din nou "Cod CUI Completat".');
+      }
+    });
+  })();
+  </script>
 
   {% if mesaj %}
   <div class="card">
@@ -66,9 +134,10 @@
     <h2>Echipa — {{ active['name'] }}</h2>
     <p class="sub">Rolul stabileste ce poate face fiecare in aplicatie:
       manager (vede tot, exporta), contabil (clientii alocati, exporta),
-      junior (fara export).</p>
+      junior (fara export). Toata lumea se autentifica cu CUI-ul firmei —
+      parola ii distinge, asa ca fiecare coleg are propria parola, unica.</p>
     <table>
-      <tr><th>Utilizator</th><th>Rol</th><th>Status</th><th></th></tr>
+      <tr><th>Nume</th><th>Rol</th><th>Status</th><th></th></tr>
       {% for m in members %}
       <tr>
         <td>{{ m['username'] }}</td>
@@ -93,7 +162,8 @@
     <h2>Membru nou — {{ active['name'] }}</h2>
     <form method="post" action="/panou/utilizatori">
       <div class="rand">
-        <div><label for="mu">Utilizator</label><input id="mu" name="username" required></div>
+        <div><label for="mu">Nume (eticheta, nu se foloseste la logare)</label>
+          <input id="mu" name="username" required></div>
         <div><label for="mp">Parola</label>
           <input id="mp" name="password" type="password" required minlength="10"></div>
         <div><label for="mr">Rol</label>

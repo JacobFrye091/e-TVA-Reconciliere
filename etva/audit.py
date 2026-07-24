@@ -11,7 +11,12 @@ def log(conn, user_id, action, entity=None, entity_id=None) -> None:
     conn.commit()
 
 
-def entries(conn, limit: int = 200) -> list:
-    rows = conn.execute(
-        "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+def entries(conn, limit: int = 200, user_id: str | None = None) -> list:
+    if user_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE user_id=? ORDER BY id DESC LIMIT ?",
+            (user_id, limit))
+    else:
+        rows = conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
     return [dict(r) for r in rows]

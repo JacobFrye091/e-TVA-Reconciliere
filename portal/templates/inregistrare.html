@@ -20,14 +20,19 @@
             <span class="nota" style="margin:0">Gestionezi reconcilierea pentru mai multi clienti.</span></span>
         </label>
       </div>
-      <label for="name">Denumirea firmei</label>
-      <input id="name" name="name" required autofocus>
       <label for="cui">CUI</label>
-      <input id="cui" name="cui" required placeholder="ex: RO12345678">
-      <p class="nota" style="margin-top:2px">Verificat automat la ANAF —
-        firma trebuie sa existe acolo pentru a putea crea contul.</p>
-      <label for="username">Utilizator (administratorul firmei)</label>
-      <input id="username" name="username" required>
+      <input id="cui" name="cui" required autofocus placeholder="ex: RO12345678">
+      <label class="optiune-tip" style="margin-top:8px">
+        <input type="checkbox" id="cuiCompletat">
+        <span>Cod CUI Completat</span>
+      </label>
+      <p class="nota" id="cuiStare" style="margin-top:2px">
+        Bifeaza "Cod CUI Completat" ca sa preluam automat denumirea firmei de
+        la ANAF — este un pas obligatoriu inainte de a putea crea contul.
+      </p>
+      <label for="name">Denumirea firmei (completata automat din CUI)</label>
+      <input id="name" name="name" required readonly
+             placeholder="Se completeaza dupa verificarea CUI">
       <label for="password">Parola (minim 10 caractere)</label>
       <input id="password" name="password" type="password" required minlength="10">
       <label class="optiune-tip" style="margin-top:14px">
@@ -35,10 +40,74 @@
         <span>Sunt de acord cu <a href="/termeni.html" target="_blank">Termenii si Conditiile</a>
           si <a href="/confidentialitate.html" target="_blank">Politica de confidentialitate</a>.</span>
       </label>
-      <button class="btn-lat" type="submit">Creeaza contul</button>
+      <button class="btn-lat" type="submit" id="btnCreeaza" disabled>Creeaza contul</button>
     </form>
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
     <p class="nota">Ai deja cont? <a href="/autentificare">Autentifica-te</a>.</p>
   </div>
 </main>
+<script>
+(function () {
+  var cuiInput = document.getElementById('cui');
+  var bifa = document.getElementById('cuiCompletat');
+  var nameInput = document.getElementById('name');
+  var stare = document.getElementById('cuiStare');
+  var buton = document.getElementById('btnCreeaza');
+
+  function seteazaStare(text, eroare) {
+    stare.textContent = text;
+    stare.style.color = eroare ? 'var(--danger)' : '';
+  }
+
+  function reseteaza(mesaj, eroare) {
+    nameInput.value = '';
+    buton.disabled = true;
+    seteazaStare(mesaj, eroare);
+  }
+
+  bifa.addEventListener('change', function () {
+    if (!bifa.checked) {
+      reseteaza('Bifeaza "Cod CUI Completat" ca sa preluam automat '
+        + 'denumirea firmei de la ANAF — este un pas obligatoriu inainte '
+        + 'de a putea crea contul.');
+      return;
+    }
+    var cui = cuiInput.value.trim();
+    if (!cui) {
+      bifa.checked = false;
+      reseteaza('Completeaza mai intai CUI-ul.', true);
+      return;
+    }
+    bifa.disabled = true;
+    seteazaStare('Se verifica CUI-ul la ANAF...');
+    fetch('/api/anaf/denumire?cui=' + encodeURIComponent(cui))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        bifa.disabled = false;
+        if (data.eroare) {
+          bifa.checked = false;
+          reseteaza(data.eroare, true);
+          return;
+        }
+        nameInput.value = data.denumire;
+        buton.disabled = false;
+        seteazaStare('Denumire preluata de la ANAF: ' + data.denumire + '.');
+      })
+      .catch(function () {
+        bifa.disabled = false;
+        bifa.checked = false;
+        reseteaza('Nu am putut contacta serviciul ANAF chiar acum. '
+          + 'Incearca din nou.', true);
+      });
+  });
+
+  cuiInput.addEventListener('input', function () {
+    if (bifa.checked) {
+      bifa.checked = false;
+      reseteaza('CUI-ul s-a schimbat — bifeaza din nou "Cod CUI Completat" '
+        + 'ca sa reverifici denumirea.');
+    }
+  });
+})();
+</script>
 {% endblock %}

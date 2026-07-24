@@ -119,7 +119,8 @@ td.cod { font-family:var(--mono); font-size:13px; }
 
   {% for o in overview %}
   <div class="card">
-    <div class="mu-cont-head">
+    <div class="mu-cont-head" style="justify-content:space-between;width:100%">
+    <div style="display:flex;gap:14px;align-items:flex-start">
       <div class="mu-avatar" style="background:{{ o.avatar_color }}">{{ o.user['username'][:2]|upper }}</div>
       <div>
         <h2>{{ o.user['username'] }}
@@ -139,6 +140,9 @@ td.cod { font-family:var(--mono); font-size:13px; }
         <p class="sub" style="margin:0">Fara nicio firma asociata inca.</p>
         {% endif %}
       </div>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border);white-space:nowrap"
+       href="/master/utilizatori/{{ o.user['id'] }}/istoric">Istoric actiuni</a>
     </div>
 
     {% if o.firme %}

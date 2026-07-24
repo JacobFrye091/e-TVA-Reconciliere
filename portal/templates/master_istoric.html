@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block titlu %}Istoric {{ target['username'] }} — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Istoric actiuni — {{ target['username'] }}</h2>
+      <p class="sub">Toate actiunile acestui cont, din toate firmele lui,
+        cele mai recente primele. Utile pentru audit si securitate.</p>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+         href="/master/utilizatori/{{ target['id'] }}/istoric.xml">Descarca XML</a>
+      <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+         href="/master/utilizatori">&larr; Inapoi la utilizatori</a>
+    </div>
+  </div>
+
+  <div class="card">
+    {% if evenimente %}
+    <table>
+      <tr><th>Data</th><th>Actiune</th><th>Firma</th><th>Entitate</th></tr>
+      {% for e in evenimente %}
+      <tr>
+        <td class="cod">{{ e.ts }}</td>
+        <td>{{ e.action }}</td>
+        <td>{{ e.firm_name }}</td>
+        <td>{% if e.entity %}{{ e.entity }}{% if e.entity_id %} #{{ e.entity_id }}{% endif %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="sub">Nicio actiune inregistrata inca pentru acest cont.</p>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}
