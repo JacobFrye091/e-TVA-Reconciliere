@@ -96,6 +96,41 @@ def test_migrate_adds_onboarding_flag_defaulting_to_unseen(tmp_path):
     assert row["onboarding_completat"] == 0
 
 
+def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
+    """Reproduces the real crash: a firm gets soft-deleted (firms/user_firms
+    rows removed, firm_keys kept on purpose so the encrypted database stays
+    recoverable - see sterge_toate_firmele.py), then a brand new firm gets
+    handed that same id back by plain INTEGER PRIMARY KEY reuse and collides
+    with the still-there firm_keys row."""
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE firms(id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "cui TEXT UNIQUE NOT NULL, tip TEXT NOT NULL DEFAULT 'contabilitate', "
+                "active INTEGER NOT NULL DEFAULT 1)")
+    conn.execute("CREATE TABLE firm_keys(firm_id INTEGER PRIMARY KEY, wrapped_key BLOB NOT NULL)")
+    conn.execute("CREATE TABLE user_firms(user_id INTEGER NOT NULL, firm_id INTEGER NOT NULL, "
+                "role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, "
+                "PRIMARY KEY (user_id, firm_id))")
+    conn.execute("INSERT INTO firms(id, name, cui) VALUES (1, 'Firma Veche SRL', 'RO111')")
+    conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES (1, ?)", (b"cheie",))
+    conn.commit()
+    conn.execute("DELETE FROM firms WHERE id=1")  # sterge_toate_firmele.py: cheia ramane
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    cur = reopened.execute(
+        "INSERT INTO firms(name, cui) VALUES ('Firma Noua SRL', 'RO222')")
+    id_nou = cur.lastrowid
+    assert id_nou != 1
+    reopened.execute(  # nu mai pica cu UNIQUE constraint failed: firm_keys.firm_id
+        "INSERT INTO firm_keys(firm_id, wrapped_key) VALUES (?, ?)", (id_nou, b"cheie noua"))
+    reopened.commit()
+
+
 def test_api_me_returns_firm_tip(app):
     c = app.test_client()
     inregistreaza(c, tip="contabilitate")

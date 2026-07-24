@@ -27,7 +27,7 @@ FIRM_TIPURI = (FIRM_TIP_DIRECT, FIRM_TIP_CONTABILITATE)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
   tip TEXT NOT NULL DEFAULT 'contabilitate',
   active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS users(
@@ -119,6 +119,45 @@ def _migrate_add_onboarding_flag(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_firms_autoincrement(conn: sqlite3.Connection) -> None:
+    """firms.id was a plain INTEGER PRIMARY KEY (no AUTOINCREMENT), so
+    SQLite reuses the lowest deleted id for the next INSERT. A firm can be
+    soft-deleted (its firms/user_firms rows removed but firm_keys kept on
+    purpose, so the old encrypted database stays recoverable) - meaning a
+    brand new firm can silently be handed a deleted firm's old id and
+    collide with its still-there firm_keys row (IntegrityError on
+    firm_keys.firm_id). AUTOINCREMENT keeps a monotonic counter so an id,
+    once used, is never handed out again."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='firms'"
+    ).fetchone()["sql"]
+    if "AUTOINCREMENT" in ddl.upper():
+        return
+    max_id = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) AS m FROM ("
+        "  SELECT id FROM firms"
+        "  UNION SELECT firm_id FROM firm_keys"
+        "  UNION SELECT firm_id FROM user_firms)").fetchone()["m"]
+    conn.executescript(
+        "CREATE TABLE firms_new("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,"
+        "  cui TEXT UNIQUE NOT NULL, tip TEXT NOT NULL DEFAULT 'contabilitate',"
+        "  active INTEGER NOT NULL DEFAULT 1);")
+    conn.execute(
+        "INSERT INTO firms_new(id, name, cui, tip, active) "
+        "SELECT id, name, cui, tip, active FROM firms")
+    conn.executescript("DROP TABLE firms; ALTER TABLE firms_new RENAME TO firms;")
+    conn.execute(
+        "DELETE FROM sqlite_sequence WHERE name IN ('firms', 'firms_new')")
+    conn.execute(
+        "INSERT INTO sqlite_sequence(name, seq) VALUES ('firms', ?)", (max_id,))
+    conn.commit()
+
+
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -126,5 +165,6 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firm_tip(conn)
     _migrate_add_onboarding_flag(conn)
     conn.executescript(_SCHEMA)
+    _migrate_firms_autoincrement(conn)
     conn.commit()
     return conn
