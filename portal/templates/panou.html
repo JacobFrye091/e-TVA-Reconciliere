@@ -55,6 +55,12 @@
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
   </div>
 
+  {% if mesaj %}
+  <div class="card">
+    <p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p>
+  </div>
+  {% endif %}
+
   {% if active %}
   <div class="card">
     <h2>Echipa — {{ active['name'] }}</h2>

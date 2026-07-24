@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
   is_master INTEGER NOT NULL DEFAULT 0,
+  onboarding_completat INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS user_firms(
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -102,11 +103,28 @@ def _migrate_add_firm_tip(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_onboarding_flag(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate onboarding_completat - add it,
+    defaulting existing accounts to 0 (unseen) since the guided tour
+    prompt is harmless to show once more; it can always be dismissed."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "users" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "onboarding_completat" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE users ADD COLUMN onboarding_completat INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     _migrate_legacy_users(conn)
     _migrate_add_firm_tip(conn)
+    _migrate_add_onboarding_flag(conn)
     conn.executescript(_SCHEMA)
     conn.commit()
     return conn

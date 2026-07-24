@@ -190,6 +190,34 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
   .view.activ { animation: apar .18s ease-out; }
   @keyframes apar { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
 }
+
+/* ---------- Ghid pasi de lucru (tur) ---------- */
+.tur-fab {
+  position: fixed; right: 24px; bottom: 24px; width: 46px; height: 46px; border-radius: 50%;
+  font-size: 19px; font-weight: 700; box-shadow: var(--shadow); z-index: 500;
+  display: flex; align-items: center; justify-content: center;
+}
+.tur-modal-fundal {
+  position: fixed; inset: 0; z-index: 9000; background: rgba(10, 15, 25, .55);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.tur-blocker { position: fixed; inset: 0; z-index: 8999; background: transparent; }
+.tur-spot {
+  position: fixed; z-index: 9001; border-radius: 8px; pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(10, 15, 25, .55); transition: top .25s ease, left .25s ease,
+    width .25s ease, height .25s ease;
+}
+.tur-tip {
+  position: fixed; z-index: 9002; background: var(--surface); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 16px 18px; width: 300px; max-width: calc(100vw - 20px);
+  transition: top .25s ease, left .25s ease;
+}
+.tur-tip .tur-pas { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 6px; }
+.tur-tip h4 { margin: 0 0 8px; font-size: 15px; font-weight: 650; }
+.tur-tip p { margin: 0; font-size: 13px; color: var(--text); line-height: 1.5; }
+.tur-butoane { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+.tur-butoane .dreapta { display: flex; gap: 8px; }
 </style>
 </head>
 <body>
@@ -325,6 +353,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
   </div>
 </div>
+<button class="tur-fab" onclick="incepeTurul()" title="Ghid pasi de lucru">?</button>
 </div><!-- /shell -->
 
 <script>
@@ -400,11 +429,174 @@ async function intraInAplicatie(ident) {
   TITLURI.dashboard = etichetaDash;
   await incarcaClienti();
   navigheaza('dashboard');
+  if (!ident.onboarding_completat) {
+    setTimeout(arataIntrebareGhid, 500);
+  }
 }
 
 async function logout() {
   await fetch('/api/logout', {method: 'POST'});
   window.location = '/';
+}
+
+/* ---------- Ghid pasi de lucru (tur) ---------- */
+function pasiiTurului() {
+  const esteAdmin = permisiuni.includes('useri.gestionare');
+  const poateAudit = permisiuni.includes('audit.vizualizare');
+  const poateExport = permisiuni.includes('rapoarte.export');
+  const areRezultate = navRezultate.style.display !== 'none';
+  const pasi = [];
+  if (!firmaDirecta) {
+    pasi.push({view: 'dashboard', sel: '#cardClienti', titlu: 'Clientii tai',
+      text: 'Aici vezi toti clientii pentru care faci reconciliere. Adaugi unul nou ' +
+        'completand CUI-ul si denumirea firmei, mai jos in card.'});
+    pasi.push({view: 'dashboard', sel: '#campClient', titlu: 'Alege clientul',
+      text: 'Cand pornesti o reconciliere noua, alegi din lista clientul pentru care o faci.'});
+  }
+  pasi.push({view: 'dashboard', sel: '#perioada', titlu: 'Perioada',
+    text: 'Scrie perioada declaratiei, de exemplu 2026-06.'});
+  pasi.push({view: 'dashboard', sel: '#fisierFirma', titlu: 'Jurnalul firmei',
+    text: 'Incarci aici exportul din programul de contabilitate — vanzari, ' +
+      'cumparari, sau ambele deodata.'});
+  pasi.push({view: 'dashboard', sel: '#fisierAnaf', titlu: 'Decontul ANAF',
+    text: 'Incarci aici decontul precompletat de la ANAF, descarcat din SPV (PDF sau JSON).'});
+  pasi.push({view: 'dashboard', sel: '#btnRuleaza', titlu: 'Ruleaza reconcilierea',
+    text: 'Cand ai ambele fisiere incarcate, apesi aici. Rezultatul apare imediat, cu ' +
+      'toate diferentele explicate clar' + (poateExport ? ' si un buton de export Excel.' : '.')});
+  if (areRezultate) {
+    pasi.push({view: 'rezultate', sel: '#registruTotal', titlu: 'Rezultatul reconcilierii',
+      text: 'Aici vezi totalurile si numarul de diferente dintr-o privire.'});
+    if (poateExport) {
+      pasi.push({view: 'rezultate', sel: '#btnExport', titlu: 'Exporta raportul',
+        text: 'Descarci un raport Excel gata de atasat la dosarul lunii.'});
+    }
+  }
+  if (esteAdmin) {
+    pasi.push({view: 'admin', sel: '#alocUser', titlu: 'Aloci clienti echipei',
+      text: 'Daca ai contabili sau juniori in echipa, aici le aloci clientii pe ' +
+        'care ii pot vedea si lucra.'});
+  }
+  if (poateAudit) {
+    pasi.push({view: 'audit', sel: '#tabelAudit', titlu: 'Jurnalul de audit',
+      text: 'Fiecare actiune importanta ramane inregistrata aici, permanent — util ' +
+        'pentru control si ca dovada ca verificarile s-au facut.'});
+  }
+  return pasi;
+}
+
+function elementVizibilTur(el) {
+  return !!el && el.offsetParent !== null;
+}
+
+let turPasi = [], turIndex = -1;
+
+function construiesteSuprapunereTur() {
+  if (document.getElementById('turBlocker')) return;
+  const blocker = document.createElement('div');
+  blocker.id = 'turBlocker'; blocker.className = 'tur-blocker';
+  const spot = document.createElement('div');
+  spot.id = 'turSpot'; spot.className = 'tur-spot';
+  const tip = document.createElement('div');
+  tip.id = 'turTip'; tip.className = 'tur-tip';
+  document.body.append(blocker, spot, tip);
+}
+
+function distrugeSuprapunereTur() {
+  ['turBlocker', 'turSpot', 'turTip'].forEach(id => document.getElementById(id)?.remove());
+}
+
+async function marcheazaGhidTerminat() {
+  try { await api('/api/onboarding/completat', {method: 'POST'}); } catch (e) { /* ignorat */ }
+}
+
+async function incepeTurul() {
+  turPasi = pasiiTurului();
+  turIndex = 0;
+  construiesteSuprapunereTur();
+  await aratapPasulTur();
+}
+
+async function opresteTurul() {
+  distrugeSuprapunereTur();
+  await marcheazaGhidTerminat();
+  navigheaza('dashboard');
+}
+
+async function urmatorulPasTur() {
+  turIndex++;
+  if (turIndex >= turPasi.length) { await opresteTurul(); return; }
+  await aratapPasulTur();
+}
+
+async function pasulAnteriorTur() {
+  if (turIndex <= 0) return;
+  turIndex--;
+  await aratapPasulTur();
+}
+
+async function aratapPasulTur() {
+  let pas = turPasi[turIndex];
+  while (pas) {
+    if (!document.getElementById(pas.view).classList.contains('activ')) navigheaza(pas.view);
+    if (elementVizibilTur(document.querySelector(pas.sel))) break;
+    turIndex++;
+    pas = turPasi[turIndex];
+  }
+  if (!pas) { await opresteTurul(); return; }
+
+  const el = document.querySelector(pas.sel);
+  el.scrollIntoView({block: 'center', behavior: 'smooth'});
+  await new Promise(r => setTimeout(r, 260));
+
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const spot = document.getElementById('turSpot');
+  spot.style.top = `${r.top - pad}px`;
+  spot.style.left = `${r.left - pad}px`;
+  spot.style.width = `${r.width + pad * 2}px`;
+  spot.style.height = `${r.height + pad * 2}px`;
+
+  const ultimul = turIndex === turPasi.length - 1;
+  const tip = document.getElementById('turTip');
+  tip.innerHTML =
+    `<div class="tur-pas">Pasul ${turIndex + 1} din ${turPasi.length}</div>` +
+    `<h4>${pas.titlu}</h4><p>${pas.text}</p>` +
+    `<div class="tur-butoane">` +
+    `<button class="discret" onclick="opresteTurul()">Sari peste tur</button>` +
+    `<div class="dreapta">` +
+    (turIndex > 0 ? `<button class="secundar" onclick="pasulAnteriorTur()">Inapoi</button>` : '') +
+    `<button onclick="urmatorulPasTur()">${ultimul ? 'Am terminat' : 'Urmatorul'}</button>` +
+    `</div></div>`;
+
+  const tipH = tip.offsetHeight || 170;
+  let top = r.bottom + pad + 10;
+  if (top + tipH > window.innerHeight) top = Math.max(10, r.top - tipH - 10);
+  const left = Math.min(Math.max(10, r.left), window.innerWidth - tip.offsetWidth - 10);
+  tip.style.top = `${top}px`;
+  tip.style.left = `${left}px`;
+}
+
+function arataIntrebareGhid() {
+  const modal = document.createElement('div');
+  modal.id = 'turIntrebare'; modal.className = 'tur-modal-fundal';
+  modal.innerHTML =
+    `<div class="auth-card" style="max-width:420px;text-align:center">` +
+    `<h2>Bine ai venit!</h2>` +
+    `<p class="auth-hint">Contul tau: <b>${userCurent}</b>.</p>` +
+    `<p class="auth-hint">Doriti sa fiti ghidat in pasii de lucru ai platformei?</p>` +
+    `<div style="display:flex;gap:10px;justify-content:center;margin-top:18px">` +
+    `<button class="secundar" id="btnGhidNu">Nu, multumesc</button>` +
+    `<button id="btnGhidDa">Da, ghideaza-ma</button>` +
+    `</div></div>`;
+  document.body.appendChild(modal);
+  document.getElementById('btnGhidDa').onclick = async () => {
+    modal.remove();
+    await incepeTurul();
+  };
+  document.getElementById('btnGhidNu').onclick = async () => {
+    modal.remove();
+    await marcheazaGhidTerminat();
+  };
 }
 
 /* ---------- Clients ---------- */

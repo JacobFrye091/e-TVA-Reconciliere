@@ -80,10 +80,77 @@ def test_migrate_adds_firm_tip_column_defaulting_to_contabilitate(tmp_path):
     assert row["tip"] == "contabilitate"
 
 
+def test_migrate_adds_onboarding_flag_defaulting_to_unseen(tmp_path):
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, "
+                "pw_hash TEXT, is_master INTEGER DEFAULT 0, active INTEGER DEFAULT 1)")
+    conn.execute("INSERT INTO users(username, pw_hash) VALUES('vechi', 'x')")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    row = reopened.execute("SELECT * FROM users WHERE username='vechi'").fetchone()
+    assert row["onboarding_completat"] == 0
+
+
 def test_api_me_returns_firm_tip(app):
     c = app.test_client()
     inregistreaza(c, tip="contabilitate")
     assert c.get("/api/me").get_json()["firm_tip"] == "contabilitate"
+
+
+def test_api_me_returns_onboarding_completat_false_for_new_account(app):
+    c = app.test_client()
+    inregistreaza(c)
+    assert c.get("/api/me").get_json()["onboarding_completat"] is False
+
+
+def test_onboarding_completat_endpoint_marks_it_done(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/api/onboarding/completat")
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert c.get("/api/me").get_json()["onboarding_completat"] is True
+
+
+def test_register_auto_renames_a_duplicate_username_instead_of_rejecting(app):
+    c1 = app.test_client()
+    inregistreaza(c1, username="andrei", cui="RO111")
+    c2 = app.test_client()
+    r2 = inregistreaza(c2, username="andrei", cui="RO222")
+    assert r2.status_code == 302 and "/app" in r2.headers["Location"]
+    assert c2.get("/api/me").get_json()["username"] == "andrei2"
+    # contul original nu e afectat
+    assert c1.get("/api/me").get_json()["username"] == "andrei"
+
+
+def test_register_keeps_auto_renaming_through_several_collisions(app):
+    inregistreaza(app.test_client(), username="andrei", cui="RO111")
+    inregistreaza(app.test_client(), username="andrei", cui="RO222")
+    c3 = app.test_client()
+    r3 = inregistreaza(c3, username="andrei", cui="RO333")
+    assert c3.get("/api/me").get_json()["username"] == "andrei3"
+
+
+def test_add_member_auto_renames_a_duplicate_username(app):
+    c = app.test_client()
+    inregistreaza(c, username="andrei")
+    r = c.post("/panou/utilizatori", data={"username": "andrei",
+                                           "password": "ParolaLunga123!",
+                                           "role": "junior"})
+    assert r.status_code == 302
+    assert "andrei2" in r.headers["Location"]
+    row = app.portal_conn.execute(
+        "SELECT username FROM users WHERE username != 'andrei'").fetchone()
+    assert row["username"] == "andrei2"
+    c.get("/iesire")
+    r2 = c.post("/autentificare", data={"username": "andrei2",
+                                        "password": "ParolaLunga123!"})
+    assert r2.status_code == 302 and "/app" in r2.headers["Location"]
 
 
 def test_register_rejects_missing_tip(app):

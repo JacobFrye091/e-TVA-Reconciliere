@@ -127,6 +127,7 @@ def create_app(data_dir: str) -> Flask:
         return {"username": user["username"], "role": row["role"],
                 "firm_id": row["id"], "firm_name": row["name"],
                 "firm_tip": row["tip"],
+                "onboarding_completat": bool(user["onboarding_completat"]),
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
     def require(perm=None):
@@ -182,6 +183,19 @@ def create_app(data_dir: str) -> Flask:
                     "Verifica-l si incearca din nou.")
         return None
 
+    def _unique_username(desired: str) -> str:
+        """Real people share first names/surnames often enough that a
+        collision shouldn't block signup - append the next free number
+        onto the requested name instead of rejecting it outright."""
+        if not conn.execute("SELECT 1 FROM users WHERE username=?",
+                            (desired,)).fetchone():
+            return desired
+        n = 2
+        while conn.execute("SELECT 1 FROM users WHERE username=?",
+                           (f"{desired}{n}",)).fetchone():
+            n += 1
+        return f"{desired}{n}"
+
     def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str) -> int:
         """Create a firm, link it to user_id with the given role, and for a
         self-reconciling ('direct') firm, auto-create the one client it
@@ -224,13 +238,10 @@ def create_app(data_dir: str) -> Flask:
         if conn.execute("SELECT 1 FROM firms WHERE cui=?", (cui,)).fetchone():
             return render_template("inregistrare.html",
                                    eroare="Exista deja o firma cu acest CUI.")
-        if conn.execute("SELECT 1 FROM users WHERE username=?",
-                        (username,)).fetchone():
-            return render_template("inregistrare.html",
-                                   eroare="Numele de utilizator este deja folosit.")
         eroare = _verify_cui_or_error(cui)
         if eroare:
             return render_template("inregistrare.html", eroare=eroare)
+        username = _unique_username(username)
         cur = conn.execute(
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
             (username, psec.hash_password(password)))
@@ -311,7 +322,8 @@ def create_app(data_dir: str) -> Flask:
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
-                               eroare=request.args.get("eroare"))
+                               eroare=request.args.get("eroare"),
+                               mesaj=request.args.get("mesaj"))
 
     @app.post("/panou/firme")
     def add_firm():
@@ -357,18 +369,20 @@ def create_app(data_dir: str) -> Flask:
         if role not in FIRM_SUBROLES or not username or len(password) < 10:
             return redirect(url_for(
                 "panou", eroare="Date invalide (parola minim 10 caractere)."))
-        if conn.execute("SELECT 1 FROM users WHERE username=?",
-                        (username,)).fetchone():
-            return redirect(url_for(
-                "panou", eroare="Numele de utilizator este deja folosit."))
+        username_atribuit = _unique_username(username)
         cur = conn.execute(
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
-            (username, psec.hash_password(password)))
+            (username_atribuit, psec.hash_password(password)))
         conn.execute(
             "INSERT INTO user_firms(user_id, firm_id, role, active) "
             "VALUES(?,?,?,1)", (cur.lastrowid, active_firm_id, role))
         conn.commit()
-        return redirect(url_for("panou"))
+        mesaj = (f"Cont creat: {username_atribuit}."
+                if username_atribuit != username else None)
+        if mesaj:
+            mesaj += (f" Numele '{username}' era deja folosit de alt cont, "
+                     "asa ca a fost atribuit acesta - foloseste-l la autentificare.")
+        return redirect(url_for("panou", mesaj=mesaj))
 
     @app.post("/panou/utilizatori/<username>/dezactivare")
     def deactivate_member(username):
@@ -550,7 +564,16 @@ def create_app(data_dir: str) -> Flask:
         return jsonify({"username": ident["username"], "role": ident["role"],
                         "firm_name": ident["firm_name"],
                         "firm_tip": ident["firm_tip"],
+                        "onboarding_completat": ident["onboarding_completat"],
                         "permissions": sorted(ident["permissions"])})
+
+    @app.post("/api/onboarding/completat")
+    @require()
+    def onboarding_completat(ident):
+        conn.execute("UPDATE users SET onboarding_completat=1 WHERE username=?",
+                    (ident["username"],))
+        conn.commit()
+        return jsonify({"ok": True})
 
     @app.post("/api/logout")
     @require()
