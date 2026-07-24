@@ -63,8 +63,11 @@ CREATE TABLE IF NOT EXISTS audit_log(
 
 
 def open_db(path: str, key: bytes):
-    # Served from a threaded local server; access is effectively serialized
-    # (one desktop user), so cross-thread use of the connection is safe.
+    # check_same_thread=False only lifts sqlite3's same-thread assertion -
+    # concurrent statement execution on this connection from multiple
+    # request threads is still unsafe. portal/app.py serializes all
+    # requests (and therefore all use of this connection) around a single
+    # lock, so callers must not bypass that.
     conn = sqlcipher.connect(path, check_same_thread=False)
     conn.row_factory = sqlcipher.Row
     conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")

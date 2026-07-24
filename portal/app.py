@@ -4,7 +4,7 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import json, os, pathlib, re, secrets
+import json, os, pathlib, re, secrets, threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -83,6 +83,24 @@ def create_app(data_dir: str) -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
     firm_conns = {}
+
+    # portal.db and every firm_conns[...] are single sqlite3/sqlcipher
+    # connections opened once and reused across requests (see portal/db.py,
+    # etva/db.py). check_same_thread=False only lifts sqlite3's same-thread
+    # assertion - it does not make concurrent statement execution on one
+    # connection safe. Interleaved multi-statement writes from two threads
+    # (e.g. two /inregistrare calls) have produced orphaned rows and
+    # lastrowid races in practice, so every request is serialized around
+    # its DB work.
+    db_lock = threading.RLock()
+
+    @app.before_request
+    def _acquire_db_lock():
+        db_lock.acquire()
+
+    @app.teardown_request
+    def _release_db_lock(exc=None):
+        db_lock.release()
 
     def firm_conn(firm_id: int):
         if firm_id not in firm_conns:

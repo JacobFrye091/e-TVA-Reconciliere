@@ -459,6 +459,49 @@ def test_add_firm_rejects_unknown_cui(app, monkeypatch):
         "SELECT 1 FROM firms WHERE cui='RO333'").fetchone()
 
 
+def test_concurrent_registrations_do_not_corrupt_portal_db(app):
+    """portal.db is one sqlite3 connection shared across request threads
+    (see portal/app.py). Without serializing requests around it, two
+    /inregistrare calls landing near-simultaneously can interleave their
+    INSERT firms / INSERT user_firms / INSERT firm_keys sequences on the
+    shared connection - producing orphaned user_firms rows (referencing
+    a user_id/firm_id from a different request) and UNIQUE constraint
+    crashes from lastrowid races."""
+    import threading
+
+    n = 16
+    barrier = threading.Barrier(n)
+    results = []
+    results_lock = threading.Lock()
+
+    def register_one(i):
+        barrier.wait()
+        c = app.test_client()
+        r = inregistreaza(c, name=f"Firma {i}", cui=f"RO9{i:03d}")
+        with results_lock:
+            results.append(r.status_code)
+
+    threads = [threading.Thread(target=register_one, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results == [302] * n, results
+
+    conn = app.portal_conn
+    assert conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == n
+    assert conn.execute("SELECT COUNT(*) AS n FROM firms").fetchone()["n"] == n
+    assert conn.execute("SELECT COUNT(*) AS n FROM user_firms").fetchone()["n"] == n
+
+    orphans = conn.execute(
+        "SELECT uf.user_id, uf.firm_id FROM user_firms uf "
+        "LEFT JOIN users u ON u.id = uf.user_id "
+        "LEFT JOIN firms f ON f.id = uf.firm_id "
+        "WHERE u.id IS NULL OR f.id IS NULL").fetchall()
+    assert orphans == []
+
+
 def test_add_firm_rejects_duplicate_cui(app):
     c = app.test_client()
     inregistreaza(c)
