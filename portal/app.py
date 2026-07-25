@@ -168,6 +168,7 @@ def create_app(data_dir: str) -> Flask:
 
     # ---------- public pages ----------
     @app.get("/")
+    @app.get("/index.html")
     def landing():
         return send_file(_LANDING)
 

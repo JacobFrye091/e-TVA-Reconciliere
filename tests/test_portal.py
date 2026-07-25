@@ -1189,6 +1189,16 @@ def test_contact_page_served(app):
     assert b"formContact" in r.data
 
 
+def test_index_html_alias_resolves(app):
+    """Every secondary docs page (contact.html included) links back to the
+    homepage as a relative 'index.html', not '/' - that only resolves if
+    Flask also serves that literal path alongside '/'."""
+    c = app.test_client()
+    r = c.get("/index.html")
+    assert r.status_code == 200
+    assert b"e-TVA Reconciliere" in r.data
+
+
 def test_trimite_contact_saves_message(app):
     c = app.test_client()
     r = c.post("/api/contact", json={
