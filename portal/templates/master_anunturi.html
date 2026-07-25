@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block titlu %}Anunțuri — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 6px; font: inherit; resize: vertical; }
+textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.chip.tip-mentenanta { color: var(--warn); background: var(--warn-bg); }
+.chip.tip-incident { color: var(--danger); background: var(--danger-bg); }
+.chip.tip-lansare { color: var(--ok); background: var(--ok-bg); }
+.chip.tip-informativ { color: var(--accent); background: #e0efee; }
+.chip.stare-activ { color: var(--ok); background: var(--ok-bg); }
+.chip.stare-programat { color: var(--accent); background: #e0efee; }
+.chip.stare-expirat { color: var(--muted); background: var(--paper); }
+.an-mesaj { max-width: 360px; }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Anunțuri</h2>
+      <p class="sub">Un banner vizibil tuturor conturilor autentificate, cât timp
+        anunțul e în fereastra lui — se ascunde singur după ce trece ora de sfârșit.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  <div class="card">
+    <h2>Anunț nou</h2>
+    <form method="post" action="/master/anunturi">
+      <label for="mesaj">Mesaj</label>
+      <textarea id="mesaj" name="mesaj" rows="2" required
+                placeholder="Ex: Mentenanță programată — aplicația va fi indisponibilă cateva minute."></textarea>
+      <div class="rand">
+        <div><label for="tip">Tip</label>
+          <select id="tip" name="tip">
+            {% for t in tipuri %}<option value="{{ t }}">{{ etichete[t] }}</option>{% endfor %}
+          </select></div>
+        <div><label for="incepe_la">Începe la</label>
+          <input id="incepe_la" name="incepe_la" type="datetime-local" required></div>
+        <div><label for="se_termina_la">Se termină la</label>
+          <input id="se_termina_la" name="se_termina_la" type="datetime-local" required></div>
+        <button type="submit">Publică anunțul</button>
+      </div>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Toate anunțurile</h2>
+    <table>
+      <tr><th>Mesaj</th><th>Tip</th><th>Începe</th><th>Se termină</th><th>Stare</th><th></th></tr>
+      {% for a in anunturi %}
+      <tr>
+        <td class="an-mesaj">{{ a['mesaj'] }}</td>
+        <td><span class="chip tip-{{ a['tip'] }}">{{ etichete.get(a['tip'], a['tip']) }}</span></td>
+        <td>{{ a['incepe_la'][:16]|replace('T', ' ') }}</td>
+        <td>{{ a['se_termina_la'][:16]|replace('T', ' ') }}</td>
+        <td>
+          {% if not a['activ'] %}<span class="chip stare-expirat">Dezactivat</span>
+          {% elif a['se_termina_la'] < acum %}<span class="chip stare-expirat">Expirat</span>
+          {% elif a['incepe_la'] > acum %}<span class="chip stare-programat">Programat</span>
+          {% else %}<span class="chip stare-activ">Activ acum</span>{% endif %}
+        </td>
+        <td style="text-align:right">
+          {% if a['activ'] and a['se_termina_la'] >= acum %}
+          <form class="inline" method="post" action="/master/anunturi/{{ a['id'] }}/dezactivare">
+            <button class="mic" type="submit">Dezactivează</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" style="color:var(--muted)">Niciun anunț publicat inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

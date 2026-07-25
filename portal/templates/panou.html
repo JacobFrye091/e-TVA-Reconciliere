@@ -1,7 +1,23 @@
 {% extends "base.html" %}
 {% block titlu %}Panoul meu — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.banner-anunt { padding: 12px 18px; border-radius: 8px; margin-bottom: 18px;
+  font-size: 13.5px; border: 1px solid; display: flex; gap: 10px; align-items: baseline; }
+.banner-anunt b { font-family: Archivo, sans-serif; }
+.banner-anunt.tip-mentenanta { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.banner-anunt.tip-incident { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.banner-anunt.tip-lansare { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.banner-anunt.tip-informativ { background: #e0efee; color: var(--accent); border-color: var(--accent); }
+</style>
+{% endblock %}
 {% block continut %}
 <main>
+  {% if anunt %}
+  <div class="banner-anunt tip-{{ anunt['tip'] }}">
+    <b>{{ anunt_eticheta.get(anunt['tip'], anunt['tip']) }}</b><span>{{ anunt['mesaj'] }}</span>
+  </div>
+  {% endif %}
   <div class="card">
     <h2>Firmele mele</h2>
     <p class="sub">Te autentifici cu CUI-ul firmei si parola ta{% if active %}

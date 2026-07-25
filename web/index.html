@@ -125,6 +125,11 @@ aside .jos { margin-top: auto; border-top: 1px solid var(--ink-3); padding-top: 
   padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
 }
 .bara-sus h1 { margin: 0; font-size: 17px; font-weight: 650; }
+.banner-anunt { padding: 10px 28px; font-size: 13px; border-bottom: 1px solid; display: flex; gap: 10px; }
+.banner-anunt.tip-mentenanta { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.banner-anunt.tip-incident { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.banner-anunt.tip-lansare { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.banner-anunt.tip-informativ { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .zona { padding: 24px 28px 40px; max-width: 1180px; width: 100%; margin: 0 auto; }
 
 .view { display: none; }
@@ -260,6 +265,8 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
 <div class="continut">
   <div class="bara-sus"><h1 id="titluPagina">Clienti si reconciliere</h1></div>
+  <div id="bannerAnunt" class="banner-anunt" style="display:none">
+    <b id="bannerAnuntEticheta"></b><span id="bannerAnuntMesaj"></span></div>
   <div class="zona">
 
   <div id="dashboard" class="view">
@@ -434,6 +441,22 @@ async function intraInAplicatie(ident) {
   if (!ident.onboarding_completat) {
     setTimeout(arataIntrebareGhid, 500);
   }
+  verificaAnunt();
+  setInterval(verificaAnunt, 5 * 60 * 1000);
+}
+
+async function verificaAnunt() {
+  try {
+    const anunt = await (await api('/api/anunt-activ')).json();
+    if (anunt) {
+      bannerAnuntEticheta.textContent = anunt.eticheta;
+      bannerAnuntMesaj.textContent = anunt.mesaj;
+      bannerAnunt.className = 'banner-anunt tip-' + anunt.tip;
+      bannerAnunt.style.display = '';
+    } else {
+      bannerAnunt.style.display = 'none';
+    }
+  } catch (e) { /* bannerul nu e critic - nu blocam aplicatia */ }
 }
 
 async function logout() {

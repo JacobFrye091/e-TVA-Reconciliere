@@ -385,7 +385,8 @@ def create_app(data_dir: str) -> Flask:
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
                                eroare=request.args.get("eroare"),
-                               mesaj=request.args.get("mesaj"))
+                               mesaj=request.args.get("mesaj"),
+                               anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE)
 
     @app.post("/panou/firme")
     def add_firm():
@@ -642,6 +643,88 @@ def create_app(data_dir: str) -> Flask:
             xml_bytes, mimetype="application/xml",
             headers={"Content-Disposition":
                      f'attachment; filename="istoric_{target["username"]}.xml"'})
+
+    # ---------- master: anunturi in mediul de productie ----------
+    ANUNT_ETICHETE = {
+        pdb.ANUNT_TIP_MENTENANTA: "Mentenanță",
+        pdb.ANUNT_TIP_INCIDENT: "Incident",
+        pdb.ANUNT_TIP_LANSARE: "Lansare",
+        pdb.ANUNT_TIP_INFORMATIV: "Informativ",
+    }
+
+    def _anunt_activ():
+        """Cel mai recent anunt activ chiar acum (in fereastra lui de timp),
+        daca exista - afisat ca banner tuturor utilizatorilor autentificati.
+        Orele sunt luate ca atare (ora locala a serverului), fara conversie
+        de fus orar - masterul seteaza fereastra in ora lui, pe acelasi
+        calculator pe care ruleaza si serverul."""
+        acum = datetime.now().isoformat()
+        return conn.execute(
+            "SELECT * FROM announcements WHERE activ=1 "
+            "AND incepe_la<=? AND se_termina_la>=? "
+            "ORDER BY incepe_la DESC LIMIT 1", (acum, acum)).fetchone()
+
+    @app.get("/master/anunturi")
+    def master_anunturi():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        anunturi = conn.execute(
+            "SELECT * FROM announcements ORDER BY incepe_la DESC").fetchall()
+        return render_template("master_anunturi.html", user=user,
+                               anunturi=anunturi, tipuri=pdb.ANUNT_TIPURI,
+                               etichete=ANUNT_ETICHETE, acum=datetime.now().isoformat(),
+                               eroare=request.args.get("eroare"))
+
+    @app.post("/master/anunturi")
+    def creeaza_anunt():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        mesaj = request.form.get("mesaj", "").strip()
+        tip = request.form.get("tip", "")
+        incepe_la = request.form.get("incepe_la", "")
+        se_termina_la = request.form.get("se_termina_la", "")
+        if not mesaj or tip not in pdb.ANUNT_TIPURI or not incepe_la or not se_termina_la:
+            return redirect(url_for(
+                "master_anunturi", eroare="Toate campurile sunt obligatorii."))
+        try:
+            inceput_dt = datetime.fromisoformat(incepe_la)
+            sfarsit_dt = datetime.fromisoformat(se_termina_la)
+        except ValueError:
+            return redirect(url_for(
+                "master_anunturi", eroare="Data sau ora introdusa nu este valida."))
+        if sfarsit_dt <= inceput_dt:
+            return redirect(url_for(
+                "master_anunturi", eroare="Sfarsitul trebuie sa fie dupa inceput."))
+        conn.execute(
+            "INSERT INTO announcements(mesaj, tip, incepe_la, se_termina_la, "
+            "creat_de, creat_la) VALUES(?,?,?,?,?,?)",
+            (mesaj, tip, inceput_dt.isoformat(), sfarsit_dt.isoformat(),
+             user["username"], datetime.now().isoformat()))
+        conn.commit()
+        return redirect(url_for("master_anunturi"))
+
+    @app.post("/master/anunturi/<int:anunt_id>/dezactivare")
+    def dezactiveaza_anunt(anunt_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        conn.execute("UPDATE announcements SET activ=0 WHERE id=?", (anunt_id,))
+        conn.commit()
+        return redirect(url_for("master_anunturi"))
+
+    @app.get("/api/anunt-activ")
+    def anunt_activ_api():
+        """Public in interiorul aplicatiei autentificate - orice cont poate
+        intreba daca e vreun anunt activ acum, ca sa arate bannerul."""
+        if current_user() is None:
+            return jsonify(None)
+        anunt = _anunt_activ()
+        if anunt is None:
+            return jsonify(None)
+        return jsonify({"mesaj": anunt["mesaj"], "tip": anunt["tip"],
+                        "eticheta": ANUNT_ETICHETE.get(anunt["tip"], anunt["tip"])})
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

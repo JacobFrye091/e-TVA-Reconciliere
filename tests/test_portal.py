@@ -1020,3 +1020,161 @@ def test_master_user_history_lists_actions_across_firms_and_exports_xml(app):
     assert b'<istoric_utilizator utilizator="firma-unu-srl">' in r_xml.data
     assert b"<tip>client.creare</tip>" in r_xml.data
     assert b"<firma>Firma Unu SRL</firma>" in r_xml.data
+
+
+# ---------- anunturi in mediul de productie (master) ----------
+
+def _fmt_local(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M")
+
+
+def test_master_anunturi_page_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/anunturi", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_creaza_anunt_requires_master(app):
+    from datetime import datetime, timedelta
+    c = app.test_client()
+    inregistreaza(c)
+    now = datetime.now()
+    r = c.post("/master/anunturi", data={
+        "mesaj": "Test", "tip": "informativ",
+        "incepe_la": _fmt_local(now), "se_termina_la": _fmt_local(now + timedelta(hours=1))},
+        follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM announcements").fetchone()["n"] == 0
+
+
+def test_master_creates_and_lists_an_announcement(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    now = datetime.now()
+    r = c.post("/master/anunturi", data={
+        "mesaj": "Mentenanta programata diseara.", "tip": "mentenanta",
+        "incepe_la": _fmt_local(now), "se_termina_la": _fmt_local(now + timedelta(hours=1))},
+        follow_redirects=True)
+    assert r.status_code == 200
+    assert "Mentenanta programata diseara.".encode() in r.data
+    assert "Mentenanță".encode() in r.data
+    row = app.portal_conn.execute("SELECT * FROM announcements").fetchone()
+    assert row["tip"] == "mentenanta" and row["creat_de"] == "sef" and row["activ"] == 1
+
+
+def test_creaza_anunt_rejects_invalid_tip(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    now = datetime.now()
+    r = c.post("/master/anunturi", data={
+        "mesaj": "Test", "tip": "nu-exista",
+        "incepe_la": _fmt_local(now), "se_termina_la": _fmt_local(now + timedelta(hours=1))},
+        follow_redirects=True)
+    assert "obligatorii".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM announcements").fetchone()["n"] == 0
+
+
+def test_creaza_anunt_rejects_end_before_start(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    now = datetime.now()
+    r = c.post("/master/anunturi", data={
+        "mesaj": "Test", "tip": "informativ",
+        "incepe_la": _fmt_local(now), "se_termina_la": _fmt_local(now - timedelta(hours=1))},
+        follow_redirects=True)
+    assert "Sfarsitul trebuie sa fie dupa inceput".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM announcements").fetchone()["n"] == 0
+
+
+def test_anunt_activ_api_returns_null_when_nothing_active(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/api/anunt-activ")
+    assert r.status_code == 200 and r.get_json() is None
+
+
+def test_anunt_activ_api_returns_the_announcement_within_its_window(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    conn = app.portal_conn
+    now = datetime.now()
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/anunturi", data={
+        "mesaj": "Incident in curs de investigare.", "tip": "incident",
+        "incepe_la": _fmt_local(now - timedelta(minutes=5)),
+        "se_termina_la": _fmt_local(now + timedelta(hours=1))})
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO444")
+    r = c.get("/api/anunt-activ")
+    body = r.get_json()
+    assert body["tip"] == "incident"
+    assert body["mesaj"] == "Incident in curs de investigare."
+    assert body["eticheta"] == "Incident"
+
+
+def test_anunt_activ_api_ignores_announcements_outside_their_window(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    now = datetime.now()
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/anunturi", data={
+        "mesaj": "Lansare viitoare.", "tip": "lansare",
+        "incepe_la": _fmt_local(now + timedelta(days=1)),
+        "se_termina_la": _fmt_local(now + timedelta(days=2))})
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO555")
+    assert c.get("/api/anunt-activ").get_json() is None
+
+
+def test_dezactiveaza_anunt_hides_it_immediately(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    now = datetime.now()
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/anunturi", data={
+        "mesaj": "Se dezactiveaza.", "tip": "informativ",
+        "incepe_la": _fmt_local(now - timedelta(minutes=5)),
+        "se_termina_la": _fmt_local(now + timedelta(hours=1))})
+    anunt_id = app.portal_conn.execute("SELECT id FROM announcements").fetchone()["id"]
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO666")
+    assert c.get("/api/anunt-activ").get_json() is not None
+
+    c_master.post(f"/master/anunturi/{anunt_id}/dezactivare")
+    assert c.get("/api/anunt-activ").get_json() is None
+    text = c_master.get("/master/anunturi").data.decode()
+    assert "Dezactivat" in text
+
+
+def test_panou_shows_the_active_announcement_banner(app):
+    from datetime import datetime, timedelta
+    _seed_master(app)
+    now = datetime.now()
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/anunturi", data={
+        "mesaj": "Lansare noua functionalitate.", "tip": "lansare",
+        "incepe_la": _fmt_local(now - timedelta(minutes=5)),
+        "se_termina_la": _fmt_local(now + timedelta(hours=1))})
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO777")
+    text = c.get("/panou").data.decode()
+    assert "Lansare noua functionalitate." in text
+    assert "Lansare" in text

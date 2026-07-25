@@ -18,12 +18,21 @@ ROLE_PERMISSIONS = {
     "junior": DEFAULT_ROLES["Junior"],
 }
 
-# A firm is either its own taxpayer (self-reconciling PFA/SRL - gets an
-# auto-created client matching its own CUI, no separate client list to
-# manage) or an accounting firm juggling several clients' reconciliations.
+# A firm is either its own taxpayer (self-reconciling PFA/SRL, no clients -
+# see etva.clients) or an accounting firm juggling several clients' own
+# reconciliations.
 FIRM_TIP_DIRECT = "direct"
 FIRM_TIP_CONTABILITATE = "contabilitate"
 FIRM_TIPURI = (FIRM_TIP_DIRECT, FIRM_TIP_CONTABILITATE)
+
+# Categories a master-posted announcement can have - each gets its own
+# banner styling (see master_anunturi.html / the banner partial).
+ANUNT_TIP_MENTENANTA = "mentenanta"
+ANUNT_TIP_INCIDENT = "incident"
+ANUNT_TIP_LANSARE = "lansare"
+ANUNT_TIP_INFORMATIV = "informativ"
+ANUNT_TIPURI = (ANUNT_TIP_MENTENANTA, ANUNT_TIP_INCIDENT,
+               ANUNT_TIP_LANSARE, ANUNT_TIP_INFORMATIV)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
@@ -47,6 +56,12 @@ CREATE TABLE IF NOT EXISTS firm_keys(
 CREATE TABLE IF NOT EXISTS pipeline_log(
   id INTEGER PRIMARY KEY, source_env TEXT NOT NULL, target_env TEXT NOT NULL,
   commit_hash TEXT NOT NULL, promoted_by TEXT NOT NULL, promoted_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS announcements(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, mesaj TEXT NOT NULL,
+  tip TEXT NOT NULL DEFAULT 'informativ',
+  incepe_la TEXT NOT NULL, se_termina_la TEXT NOT NULL,
+  creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
+  activ INTEGER NOT NULL DEFAULT 1);
 """
 
 
