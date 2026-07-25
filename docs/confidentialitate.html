@@ -8,17 +8,17 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --ink: #0e1626; --ink-2: #16233c; --ink-3: #223252;
-  --paper: #f7f9fb; --surface: #ffffff; --border: #e1e7ef;
-  --text: #1b2430; --muted: #64718a; --muted-inv: #93a1bd;
-  --accent: #0d5c63; --accent-2: #12777f; --accent-soft: #e0efee;
+  --ink: #17203a; --ink-2: #212b4a; --ink-3: #303c5f;
+  --paper: #e9ecf2; --surface: #ffffff; --border: #d2d7e0;
+  --text: #1b2338; --muted: #5b6478; --muted-inv: #a7b0c4;
+  --accent: #9c3327; --accent-2: #b84433; --accent-soft: #f4e3df;
   --danger: #c23a32; --danger-bg: #fdeeed; --warn: #9a6700; --warn-bg: #fff4dd;
   --ok: #1a7f4b; --ok-bg: #e7f5ec;
-  --disp: "Archivo", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif;
-  --mono: "Cascadia Mono", Consolas, monospace;
+  --disp: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace; --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
 }
 * { box-sizing: border-box; margin: 0; }
 html { scroll-behavior: smooth; }
@@ -28,7 +28,7 @@ h1, h2, h3, h4 { font-family: var(--disp); line-height: 1.15; letter-spacing: -.
 a { color: inherit; }
 .inv { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
-.topbar { position: sticky; top: 0; z-index: 50; background: rgba(14, 22, 38, .92);
+.topbar { position: sticky; top: 0; z-index: 50; background: rgba(23, 32, 58, .94);
   backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.07); }
 .topbar .inv { display: flex; align-items: center; justify-content: space-between; height: 64px; }
 .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
@@ -38,19 +38,20 @@ a { color: inherit; }
 .nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
 .nav a:hover { color: #fff; }
 .nav a.activ { color: #fff; }
-.btn { display: inline-block; font-family: var(--disp); font-weight: 700; font-size: 15px;
-  text-decoration: none; border-radius: 8px; padding: 11px 22px; }
+.btn { display: inline-block; font-family: var(--disp); font-weight: 600; font-size: 14px;
+  text-decoration: none; border-radius: 4px; padding: 11px 22px; }
 .btn-plin { background: var(--accent); color: #fff; }
 .btn-plin:hover { background: var(--accent-2); }
 .nav .btn { padding: 8px 16px; font-size: 14px; }
 @media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
 
-.page-header { background: linear-gradient(165deg, var(--ink) 0%, #0b1322 55%, #091020 100%);
+.page-header { background: linear-gradient(170deg, var(--ink) 0%, #10162a 60%, #0b0f1e 100%);
   color: #fff; padding: 56px 0 44px; }
-.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
-  letter-spacing: .04em; color: #8fd4cf; background: rgba(13, 92, 99, .3);
-  border: 1px solid rgba(18, 119, 127, .5); border-radius: 999px; padding: 6px 14px; margin-bottom: 20px; }
-.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #35b8ab; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--disp); font-size: 12px; font-weight: 600;
+  letter-spacing: .06em; color: #e7a89d; background: rgba(156, 51, 39, .18);
+  border: 1px solid rgba(184, 68, 51, .55); border-radius: 3px; padding: 6px 12px; margin-bottom: 20px;
+  text-transform: uppercase; }
+.eyebrow::before { content: ""; width: 6px; height: 6px; background: #b84433; }
 .page-header h1 { font-size: clamp(26px, 3.6vw, 36px); font-weight: 800; margin-bottom: 10px; max-width: 22em; }
 .page-header p.sub { font-size: 15.5px; color: var(--muted-inv); max-width: 42em; }
 
@@ -87,7 +88,7 @@ footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-it
 @media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
 footer a { color: var(--muted-inv); }
 footer a:hover { color: #fff; }
-footer .placeholder-legal { color: #ffb4a8; }
+footer .placeholder-legal { color: #e7a89d; }
 </style>
 </head>
 <body>
