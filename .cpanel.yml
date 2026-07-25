@@ -1,0 +1,13 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/gymhxjim/public_html/
+    - /bin/cp -f docs/index.html $DEPLOYPATH
+    - /bin/cp -f docs/ghid.html $DEPLOYPATH
+    - /bin/cp -f docs/termeni.html $DEPLOYPATH
+    - /bin/cp -f docs/confidentialitate.html $DEPLOYPATH
+    - /bin/cp -f docs/cookie-uri.html $DEPLOYPATH
+    - /bin/cp -f docs/contact.html $DEPLOYPATH
+    - /bin/cp -f docs/demo.html $DEPLOYPATH
+    - /bin/cp -f docs/demo-data.json $DEPLOYPATH
+    - /bin/cp -f docs/favicon.svg $DEPLOYPATH
