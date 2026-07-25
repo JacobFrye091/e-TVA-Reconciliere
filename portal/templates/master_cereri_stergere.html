@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block titlu %}Cereri de ștergere — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.chip.stare-in_asteptare { color: var(--warn); background: var(--warn-bg); }
+.chip.stare-finalizata { color: var(--ok); background: var(--ok-bg); }
+.chip.stare-anulata { color: var(--muted); background: var(--paper); }
+tr.intarziata { background: var(--danger-bg); }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Cereri de ștergere a datelor</h2>
+      <p class="sub">Fiecare cerere trebuie rezolvată în cel mult 30 de zile
+        de la data primirii, conform politicii de confidențialitate.
+        "Finalizează" anonimizează contul și îi dezactivează accesul —
+        jurnalul de audit rămâne neschimbat.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  <div class="card">
+    <table>
+      <tr><th>Cont</th><th>Firma</th><th>Solicitat la</th><th>Termen</th><th>Stare</th><th></th></tr>
+      {% for c in cereri %}
+      <tr{% if c['intarziata'] %} class="intarziata"{% endif %}>
+        <td>{{ c['username'] }}</td>
+        <td>{{ c['firm_name'] or '—' }}</td>
+        <td class="cod">{{ c['creat_la'][:16]|replace('T', ' ') }}</td>
+        <td class="cod">{{ c['termen_la'][:16]|replace('T', ' ') }}
+          {% if c['stare'] == 'in_asteptare' %}
+            {% if c['intarziata'] %}<br><span class="nota" style="margin:0;color:var(--danger)">depasit cu {{ -c['zile_ramase'] }} zile</span>
+            {% else %}<br><span class="nota" style="margin:0">{{ c['zile_ramase'] }} zile ramase</span>{% endif %}
+          {% endif %}
+        </td>
+        <td>
+          {% if c['stare'] == 'in_asteptare' %}<span class="chip stare-in_asteptare">In asteptare</span>
+          {% elif c['stare'] == 'finalizata' %}<span class="chip stare-finalizata">Finalizata</span>
+          {% else %}<span class="chip stare-anulata">Anulata</span>{% endif %}
+        </td>
+        <td style="text-align:right">
+          {% if c['stare'] == 'in_asteptare' %}
+          <form class="inline" method="post" action="/master/cereri-stergere/{{ c['id'] }}/finalizare">
+            <button class="mic" type="submit">Finalizeaza (sterge)</button>
+          </form>
+          <form class="inline" method="post" action="/master/cereri-stergere/{{ c['id'] }}/anulare">
+            <button class="mic" type="submit">Anuleaza</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" style="color:var(--muted)">Nicio cerere inregistrata inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

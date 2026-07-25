@@ -266,5 +266,31 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
   </div>
   {% endif %}
   {% endif %}
+
+  <div class="card">
+    <h2>Ștergerea datelor contului</h2>
+    {% if cerere_stergere and cerere_stergere['stare'] == 'in_asteptare' %}
+    <p class="sub">Ai o cerere de ștergere înregistrată pe
+      {{ cerere_stergere['creat_la'][:10] }}. Datele contului tău vor fi
+      șterse până cel târziu pe <b>{{ cerere_stergere['termen_la'][:10] }}</b>.</p>
+    {% elif cerere_stergere and cerere_stergere['stare'] == 'finalizata' %}
+    <p class="sub" style="color:var(--ok)">Cererea ta de ștergere a fost
+      finalizată pe {{ cerere_stergere['procesat_la'][:10] }}.</p>
+    {% else %}
+    <p class="sub">Poți solicita oricând ștergerea definitivă a datelor
+      contului tău. Datele de identificare și fișierele încărcate vor fi
+      șterse în termen de cel mult 30 de zile de la primirea cererii, cu
+      excepția înregistrărilor din jurnalul de audit, păstrate permanent
+      conform <a href="/confidentialitate.html#prelucrare">politicii de
+      confidențialitate</a>.</p>
+    <form method="post" action="/panou/cerere-stergere">
+      <label class="optiune-tip">
+        <input type="checkbox" name="accept" required>
+        <span>Sunt de acord cu ștergerea definitivă a datelor contului meu.</span>
+      </label>
+      <button type="submit" style="margin-top:12px">Solicită ștergerea</button>
+    </form>
+    {% endif %}
+  </div>
 </main>
 {% endblock %}

@@ -153,6 +153,14 @@ def create_app(data_dir: str) -> Flask:
                 "onboarding_completat": bool(user["onboarding_completat"]),
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
+    def _log_master_action(user, actiune: str, detalii: str | None = None) -> None:
+        conn.execute(
+            "INSERT INTO master_actions(actiune, detalii, creat_de, creat_la) "
+            "VALUES(?,?,?,?)",
+            (actiune, detalii, user["username"],
+             datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+
     def require(perm=None):
         def deco(fn):
             @wraps(fn)
@@ -390,12 +398,16 @@ def create_app(data_dir: str) -> Flask:
                 "JOIN users u ON u.id = uf.user_id "
                 "WHERE uf.firm_id=? ORDER BY uf.role, u.username",
                 (active["id"],)).fetchall()
+        cerere_stergere = conn.execute(
+            "SELECT * FROM deletion_requests WHERE user_id=? "
+            "ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
                                eroare=request.args.get("eroare"),
                                mesaj=request.args.get("mesaj"),
-                               anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE)
+                               anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE,
+                               cerere_stergere=cerere_stergere)
 
     @app.post("/panou/firme")
     def add_firm():
@@ -486,6 +498,42 @@ def create_app(data_dir: str) -> Flask:
             conn.commit()
         return redirect(url_for("panou"))
 
+    @app.post("/panou/cerere-stergere")
+    def cerere_stergere():
+        """Cerere de stergere a datelor contului, cu acordul explicit al
+        utilizatorului - masterul o rezolva (vezi finalizeaza_cerere_stergere)
+        in cel mult DELETION_TERMEN_ZILE de la data acesteia, conform
+        politicii de confidentialitate publicate."""
+        user = current_user()
+        if user is None or user["is_master"]:
+            return redirect(url_for("login"))
+        if not request.form.get("accept"):
+            return redirect(url_for(
+                "panou", eroare="Trebuie sa bifezi acordul pentru a solicita "
+                                "stergerea datelor contului."))
+        deja_in_asteptare = conn.execute(
+            "SELECT 1 FROM deletion_requests WHERE user_id=? AND stare=?",
+            (user["id"], pdb.DELETION_STARE_IN_ASTEPTARE)).fetchone()
+        if deja_in_asteptare:
+            return redirect(url_for("panou"))
+        active_firm_id = session.get("active_firm_id")
+        firma = (conn.execute("SELECT name FROM firms WHERE id=?",
+                              (active_firm_id,)).fetchone()
+                if active_firm_id else None)
+        acum = datetime.now()
+        termen = acum + timedelta(days=pdb.DELETION_TERMEN_ZILE)
+        conn.execute(
+            "INSERT INTO deletion_requests(user_id, username, firm_id, "
+            "firm_name, creat_la, termen_la, stare) VALUES(?,?,?,?,?,?,?)",
+            (user["id"], user["username"], active_firm_id,
+             firma["name"] if firma else None, acum.isoformat(),
+             termen.isoformat(), pdb.DELETION_STARE_IN_ASTEPTARE))
+        conn.commit()
+        return redirect(url_for(
+            "panou", mesaj="Cererea de stergere a fost inregistrata. Datele "
+                          f"contului tau vor fi sterse pana cel tarziu la "
+                          f"{termen.strftime('%Y-%m-%d')}."))
+
     # ---------- master ----------
     @app.get("/master")
     def master():
@@ -499,17 +547,31 @@ def create_app(data_dir: str) -> Flask:
         n_mesaje_necitite = conn.execute(
             "SELECT COUNT(*) AS n FROM contact_messages WHERE citit=0"
         ).fetchone()["n"]
+        n_cereri_in_asteptare = conn.execute(
+            "SELECT COUNT(*) AS n FROM deletion_requests WHERE stare=?",
+            (pdb.DELETION_STARE_IN_ASTEPTARE,)).fetchone()["n"]
+        n_cereri_intarziate = conn.execute(
+            "SELECT COUNT(*) AS n FROM deletion_requests WHERE stare=? "
+            "AND termen_la<?", (pdb.DELETION_STARE_IN_ASTEPTARE,
+                                datetime.now().isoformat())).fetchone()["n"]
         return render_template("master.html", user=user, firms=firms,
                                versiune=pipeline.running_vs_current(),
-                               n_mesaje_necitite=n_mesaje_necitite)
+                               n_mesaje_necitite=n_mesaje_necitite,
+                               n_cereri_in_asteptare=n_cereri_in_asteptare,
+                               n_cereri_intarziate=n_cereri_intarziate)
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
+        firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         conn.execute("UPDATE firms SET active = 1 - active WHERE id=?", (firm_id,))
         conn.commit()
+        if firma is not None:
+            stare_noua = "dezactivata" if firma["active"] else "activata"
+            _log_master_action(user, "firma.comutare",
+                               f"{firma['name']} (CUI {firma['cui']}) -> {stare_noua}")
         return redirect(url_for("master"))
 
     @app.get("/master/utilizatori")
@@ -657,6 +719,75 @@ def create_app(data_dir: str) -> Flask:
             headers={"Content-Disposition":
                      f'attachment; filename="istoric_{target["username"]}.xml"'})
 
+    @app.get("/master/firme/<int:firm_id>/istoric.xml")
+    def master_firma_istoric_xml(firm_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if firma is None:
+            return redirect(url_for("master"))
+        evenimente = audit.entries(firm_conn(firm_id), limit=1000000)
+        root = ET.Element("istoric_firma", firma=firma["name"], cui=firma["cui"])
+        for e in evenimente:
+            actiune = ET.SubElement(root, "actiune")
+            ET.SubElement(actiune, "data").text = e["ts"]
+            ET.SubElement(actiune, "tip").text = e["action"]
+            ET.SubElement(actiune, "utilizator").text = e["user_id"]
+            if e.get("entity"):
+                ET.SubElement(actiune, "entitate").text = str(e["entity"])
+            if e.get("entity_id"):
+                ET.SubElement(actiune, "entitate_id").text = str(e["entity_id"])
+        xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition":
+                     f'attachment; filename="istoric_{_slugify(firma["name"])}.xml"'})
+
+    def _istoric_master() -> list[dict]:
+        """Actiunile masterului insusi - propriile lui actiuni de administrare
+        (master_actions), plus promovarile intre medii (deja logate separat
+        in pipeline_log de multa vreme) - unite intr-un singur istoric,
+        cele mai recente primele."""
+        evenimente = [
+            {"ts": r["creat_la"], "action": r["actiune"], "detalii": r["detalii"] or ""}
+            for r in conn.execute(
+                "SELECT actiune, detalii, creat_la FROM master_actions "
+                "ORDER BY id DESC")]
+        for p in pipeline.history(conn, limit=1000000):
+            evenimente.append({
+                "ts": p["promoted_at"], "action": "pipeline.promovare",
+                "detalii": f"{p['source_env']} -> {p['target_env']} "
+                          f"(commit {p['commit_hash']})"})
+        evenimente.sort(key=lambda e: e["ts"], reverse=True)
+        return evenimente
+
+    @app.get("/master/istoric")
+    def master_istoric_propriu():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        return render_template("master_istoric_propriu.html", user=user,
+                               evenimente=_istoric_master())
+
+    @app.get("/master/istoric.xml")
+    def master_istoric_propriu_xml():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        root = ET.Element("istoric_master", utilizator=user["username"])
+        for e in _istoric_master():
+            actiune = ET.SubElement(root, "actiune")
+            ET.SubElement(actiune, "data").text = e["ts"]
+            ET.SubElement(actiune, "tip").text = e["action"]
+            if e.get("detalii"):
+                ET.SubElement(actiune, "detalii").text = str(e["detalii"])
+        xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition":
+                     f'attachment; filename="istoric_{user["username"]}.xml"'})
+
     # ---------- master: anunturi in mediul de productie ----------
     ANUNT_ETICHETE = {
         pdb.ANUNT_TIP_MENTENANTA: "Mentenanță",
@@ -716,6 +847,7 @@ def create_app(data_dir: str) -> Flask:
             (mesaj, tip, inceput_dt.isoformat(), sfarsit_dt.isoformat(),
              user["username"], datetime.now().isoformat()))
         conn.commit()
+        _log_master_action(user, "anunt.creare", f"{tip}: {mesaj[:80]}")
         return redirect(url_for("master_anunturi"))
 
     @app.post("/master/anunturi/<int:anunt_id>/dezactivare")
@@ -725,6 +857,7 @@ def create_app(data_dir: str) -> Flask:
             return redirect(url_for("login"))
         conn.execute("UPDATE announcements SET activ=0 WHERE id=?", (anunt_id,))
         conn.commit()
+        _log_master_action(user, "anunt.dezactivare", f"anunt #{anunt_id}")
         return redirect(url_for("master_anunturi"))
 
     @app.get("/api/anunt-activ")
@@ -821,7 +954,76 @@ def create_app(data_dir: str) -> Flask:
             return redirect(url_for("login"))
         conn.execute("UPDATE contact_messages SET citit=1 WHERE id=?", (mesaj_id,))
         conn.commit()
+        _log_master_action(user, "mesaj.citire", f"mesaj #{mesaj_id}")
         return redirect(url_for("master_mesaje"))
+
+    # ---------- master: cereri de stergere a datelor ----------
+    @app.get("/master/cereri-stergere")
+    def master_cereri_stergere():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        acum = datetime.now()
+        rows = conn.execute(
+            "SELECT * FROM deletion_requests ORDER BY "
+            "(stare=?) DESC, creat_la DESC",
+            (pdb.DELETION_STARE_IN_ASTEPTARE,)).fetchall()
+        cereri = []
+        for r in rows:
+            zile_ramase = (datetime.fromisoformat(r["termen_la"]) - acum).days
+            cereri.append({**dict(r), "zile_ramase": zile_ramase,
+                           "intarziata": r["stare"] == pdb.DELETION_STARE_IN_ASTEPTARE
+                                        and zile_ramase < 0})
+        return render_template("master_cereri_stergere.html", user=user, cereri=cereri)
+
+    @app.post("/master/cereri-stergere/<int:cerere_id>/finalizare")
+    def finalizeaza_cerere_stergere(cerere_id):
+        """Anonimizeaza contul (username -> marker anonim, parola invalidata,
+        cont dezactivat, scos din toate firmele) - jurnalul de audit ramane
+        neschimbat, pastrat permanent, conform politicii de confidentialitate
+        (referinte istorice la vechiul username raman, cum e normal intr-un
+        jurnal de audit)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        cerere = conn.execute("SELECT * FROM deletion_requests WHERE id=?",
+                              (cerere_id,)).fetchone()
+        if cerere is None or cerere["stare"] != pdb.DELETION_STARE_IN_ASTEPTARE:
+            return redirect(url_for("master_cereri_stergere"))
+        anonim = f"utilizator-sters-{cerere['user_id']}"
+        conn.execute(
+            "UPDATE users SET username=?, pw_hash=?, active=0 WHERE id=?",
+            (anonim, psec.hash_password(secrets.token_hex(32)), cerere["user_id"]))
+        conn.execute("UPDATE user_firms SET active=0 WHERE user_id=?",
+                     (cerere["user_id"],))
+        conn.execute(
+            "UPDATE deletion_requests SET stare=?, procesat_la=?, procesat_de=? "
+            "WHERE id=?",
+            (pdb.DELETION_STARE_FINALIZATA, datetime.now().isoformat(),
+             user["username"], cerere_id))
+        conn.commit()
+        _log_master_action(user, "cerere_stergere.finalizare",
+                           f"cont #{cerere['user_id']} ({cerere['username']})")
+        return redirect(url_for("master_cereri_stergere"))
+
+    @app.post("/master/cereri-stergere/<int:cerere_id>/anulare")
+    def anuleaza_cerere_stergere(cerere_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        cerere = conn.execute("SELECT * FROM deletion_requests WHERE id=?",
+                              (cerere_id,)).fetchone()
+        if cerere is None or cerere["stare"] != pdb.DELETION_STARE_IN_ASTEPTARE:
+            return redirect(url_for("master_cereri_stergere"))
+        conn.execute(
+            "UPDATE deletion_requests SET stare=?, procesat_la=?, procesat_de=? "
+            "WHERE id=?",
+            (pdb.DELETION_STARE_ANULATA, datetime.now().isoformat(),
+             user["username"], cerere_id))
+        conn.commit()
+        _log_master_action(user, "cerere_stergere.anulare",
+                           f"cont #{cerere['user_id']} ({cerere['username']})")
+        return redirect(url_for("master_cereri_stergere"))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

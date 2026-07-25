@@ -7,6 +7,9 @@
 .mu-versiune b { font-family:var(--mono); }
 .mu-versiune.ok { background:var(--ok-bg); color:var(--ok); border-color:var(--ok); }
 .mu-versiune.stale { background:var(--warn-bg); color:var(--warn); border-color:var(--warn); }
+a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--accent); border:1px solid var(--border); border-radius:7px; }
+a.mic:hover { background:var(--paper); }
 </style>
 {% endblock %}
 {% block continut %}
@@ -58,9 +61,27 @@
   </div>
 
   <div class="card">
+    <h2>Cereri de ștergere a datelor
+      {% if n_cereri_intarziate %}<span class="chip" style="color:var(--danger);background:var(--danger-bg)">{{ n_cereri_intarziate }} depasite</span>
+      {% elif n_cereri_in_asteptare %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">{{ n_cereri_in_asteptare }} in asteptare</span>{% endif %}
+    </h2>
+    <p class="sub">Cererile de ștergere trebuie rezolvate în cel mult 30 de
+      zile de la primire, conform politicii de confidențialitate.</p>
+    <a class="btn" href="/master/cereri-stergere">Deschide cererile</a>
+  </div>
+
+  <div class="card">
+    <h2>Istoricul meu (admin)</h2>
+    <p class="sub">Propriile tale actiuni de administrare — firme, anunturi,
+      mesaje, cereri de stergere, promovari intre medii — descarcabile in XML.</p>
+    <a class="btn" href="/master/istoric">Deschide istoricul</a>
+  </div>
+
+  <div class="card">
     <h2>Firme inregistrate</h2>
     <p class="sub">Vedere de ansamblu a platformei. Dezactivarea unei firme
-      blocheaza autentificarea tuturor utilizatorilor ei.</p>
+      blocheaza autentificarea tuturor utilizatorilor ei. "Istoric XML"
+      descarca toate actiunile inregistrate ale firmei respective.</p>
     <table>
       <tr><th>Firma</th><th>CUI</th><th>Utilizatori</th><th>Status</th><th></th></tr>
       {% for f in firms %}
@@ -71,6 +92,8 @@
         <td>{% if f['active'] %}<span class="chip ok">Activa</span>
             {% else %}<span class="chip oprit">Dezactivata</span>{% endif %}</td>
         <td style="text-align:right">
+          <a class="mic" style="text-decoration:none;margin-right:6px;display:inline-block"
+             href="/master/firme/{{ f['id'] }}/istoric.xml">Istoric XML</a>
           <form class="inline" method="post" action="/master/firma/{{ f['id'] }}/comutare">
             <button class="mic" type="submit">
               {% if f['active'] %}Dezactiveaza{% else %}Reactiveaza{% endif %}</button>

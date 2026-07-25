@@ -1285,3 +1285,164 @@ def test_marcheaza_mesaj_citit_toggles_message(app):
     assert row["citit"] == 1
     text = c_master.get("/master/mesaje").data.decode()
     assert "Necitit" not in text
+
+
+# ---------- istoric XML (admin + per-firma) si cereri de stergere ----------
+
+def test_master_firma_istoric_xml_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    r = c.get(f"/master/firme/{firm_id}/istoric.xml", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_firma_istoric_xml_contains_firm_actions(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL", cui="RO111")
+    c.post("/api/logout")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.get(f"/master/firme/{firm_id}/istoric.xml")
+    assert r.status_code == 200
+    assert b'<istoric_firma firma="Firma Unu SRL" cui="RO111">' in r.data
+    assert b"<tip>logout</tip>" in r.data
+
+
+def test_master_istoric_propriu_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/istoric.xml", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_istoric_propriu_logs_firma_toggle(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL", cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/firma/{firm_id}/comutare")
+    text = c_master.get("/master/istoric").data.decode()
+    assert "firma.comutare" in text and "Firma Unu SRL" in text
+    r_xml = c_master.get("/master/istoric.xml")
+    assert b"<tip>firma.comutare</tip>" in r_xml.data
+
+
+def test_master_istoric_propriu_includes_pipeline_promotions(app):
+    _seed_master(app)
+    pl.log_promotion(app.portal_conn, "dev", "testare", "abc1234", "sef")
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r_xml = c_master.get("/master/istoric.xml")
+    assert b"<tip>pipeline.promovare</tip>" in r_xml.data
+    assert b"dev -&gt; testare" in r_xml.data or b"dev -> testare" in r_xml.data
+
+
+def test_cerere_stergere_requires_accept_checkbox(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/panou/cerere-stergere", data={}, follow_redirects=True)
+    assert "acordul".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM deletion_requests").fetchone()["n"] == 0
+
+
+def test_cerere_stergere_creates_pending_request_with_30_day_deadline(app):
+    from datetime import datetime, timedelta
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL")
+    r = c.post("/panou/cerere-stergere", data={"accept": "on"}, follow_redirects=True)
+    assert r.status_code == 200
+    row = app.portal_conn.execute("SELECT * FROM deletion_requests").fetchone()
+    assert row["stare"] == "in_asteptare" and row["firm_name"] == "Firma Unu SRL"
+    creat = datetime.fromisoformat(row["creat_la"])
+    termen = datetime.fromisoformat(row["termen_la"])
+    assert abs((termen - creat) - timedelta(days=30)) < timedelta(seconds=5)
+
+
+def test_cerere_stergere_rejects_duplicate_while_pending(app):
+    c = app.test_client()
+    inregistreaza(c)
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM deletion_requests").fetchone()["n"] == 1
+
+
+def test_panou_shows_pending_deletion_request_status(app):
+    c = app.test_client()
+    inregistreaza(c)
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    text = c.get("/panou").data.decode()
+    assert "cerere de ștergere înregistrată" in text
+
+
+def test_master_cereri_stergere_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/cereri-stergere", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_cereri_stergere_lists_request(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL")
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    text = c_master.get("/master/cereri-stergere").data.decode()
+    assert "firma-unu-srl" in text and "Firma Unu SRL" in text
+    assert "In asteptare" in text
+
+
+def test_finalizeaza_cerere_stergere_anonymizes_account_and_blocks_login(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO222")
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    cerere_id = app.portal_conn.execute(
+        "SELECT id FROM deletion_requests").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/cereri-stergere/{cerere_id}/finalizare")
+
+    row = app.portal_conn.execute(
+        "SELECT * FROM deletion_requests WHERE id=?", (cerere_id,)).fetchone()
+    assert row["stare"] == "finalizata" and row["procesat_de"] == "sef"
+    user_row = app.portal_conn.execute(
+        "SELECT * FROM users WHERE username LIKE 'utilizator-sters-%'").fetchone()
+    assert user_row is not None and user_row["active"] == 0
+    membership = app.portal_conn.execute(
+        "SELECT active FROM user_firms WHERE user_id=?", (user_row["id"],)).fetchone()
+    assert membership["active"] == 0
+
+    r = app.test_client().post(
+        "/autentificare", data={"cui": "RO222", "password": "ParolaLunga123!"})
+    assert "incorecta".encode() in r.data
+
+
+def test_anuleaza_cerere_stergere_marks_cancelled(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c)
+    c.post("/panou/cerere-stergere", data={"accept": "on"})
+    cerere_id = app.portal_conn.execute(
+        "SELECT id FROM deletion_requests").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/cereri-stergere/{cerere_id}/anulare")
+
+    row = app.portal_conn.execute(
+        "SELECT * FROM deletion_requests WHERE id=?", (cerere_id,)).fetchone()
+    assert row["stare"] == "anulata" and row["procesat_de"] == "sef"
+    text = c_master.get("/master/cereri-stergere").data.decode()
+    assert "Anulata" in text

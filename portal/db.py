@@ -45,6 +45,13 @@ CONTACT_TIP_ALTELE = "altele"
 CONTACT_TIPURI = (CONTACT_TIP_GENERAL, CONTACT_TIP_SUPORT, CONTACT_TIP_FACTURARE,
                   CONTACT_TIP_GDPR, CONTACT_TIP_RECLAMATIE, CONTACT_TIP_ALTELE)
 
+# Termenul (in zile) in care o cerere de stergere trebuie rezolvata, conform
+# politicii de confidentialitate publicata - vezi finalizeaza_cerere_stergere.
+DELETION_TERMEN_ZILE = 30
+DELETION_STARE_IN_ASTEPTARE = "in_asteptare"
+DELETION_STARE_FINALIZATA = "finalizata"
+DELETION_STARE_ANULATA = "anulata"
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
@@ -81,6 +88,17 @@ CREATE TABLE IF NOT EXISTS contact_messages(
   trimis_de TEXT, firma TEXT,
   creat_la TEXT NOT NULL,
   citit INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS master_actions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actiune TEXT NOT NULL, detalii TEXT,
+  creat_de TEXT NOT NULL, creat_la TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS deletion_requests(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL, username TEXT NOT NULL,
+  firm_id INTEGER, firm_name TEXT,
+  creat_la TEXT NOT NULL, termen_la TEXT NOT NULL,
+  stare TEXT NOT NULL DEFAULT 'in_asteptare',
+  procesat_la TEXT, procesat_de TEXT);
 """
 
 

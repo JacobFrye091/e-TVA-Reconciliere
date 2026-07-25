@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block titlu %}Istoricul meu — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Istoricul meu (admin)</h2>
+      <p class="sub">Propriile tale actiuni de administrare a platformei —
+        firme activate/dezactivate, anunturi, mesaje citite, cereri de
+        stergere rezolvate, promovari intre medii. Cele mai recente primele.</p>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+         href="/master/istoric.xml">Descarca XML</a>
+      <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+         href="/master">&larr; Inapoi la panoul master</a>
+    </div>
+  </div>
+
+  <div class="card">
+    {% if evenimente %}
+    <table>
+      <tr><th>Data</th><th>Actiune</th><th>Detalii</th></tr>
+      {% for e in evenimente %}
+      <tr>
+        <td class="cod">{{ e.ts }}</td>
+        <td>{{ e.action }}</td>
+        <td>{{ e.detalii }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="sub">Nicio actiune inregistrata inca.</p>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}
