@@ -1446,3 +1446,137 @@ def test_anuleaza_cerere_stergere_marks_cancelled(app):
     assert row["stare"] == "anulata" and row["procesat_de"] == "sef"
     text = c_master.get("/master/cereri-stergere").data.decode()
     assert "Anulata" in text
+
+
+# ---------- ANAF OAuth2 (decontul precompletat) ----------
+
+from portal import app as portal_app_module
+from etva import anaf_oauth
+
+
+def _stare_anaf(client, code="one-time"):
+    """Parcurge /panou/anaf/autorizare -> /api/anaf/callback cu state-ul
+    corect capturat din redirect, ca un test dublu pentru fluxul complet."""
+    autorizare = client.get("/panou/anaf/autorizare", follow_redirects=False)
+    state = autorizare.headers["Location"].split("state=")[1].split("&")[0]
+    return client.get(f"/api/anaf/callback?code={code}&state={state}",
+                      follow_redirects=True)
+
+
+def test_anaf_oauth_autorizare_requires_login(app):
+    c = app.test_client()
+    r = c.get("/panou/anaf/autorizare", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_anaf_oauth_autorizare_requires_admin_role(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO111")
+    c.post("/panou/utilizatori", data={
+        "username": "junior1", "password": "AltaParola456!", "role": "junior"})
+    c2 = app.test_client()
+    c2.post("/autentificare", data={"cui": "RO111", "password": "AltaParola456!"})
+    r = c2.get("/panou/anaf/autorizare", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_anaf_oauth_autorizare_requires_configured_credentials(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", None)
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", None)
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/panou/anaf/autorizare", follow_redirects=True)
+    assert "nu este configurata".encode() in r.data
+
+
+def test_anaf_oauth_autorizare_redirects_to_anaf_when_configured(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/panou/anaf/autorizare", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].startswith(
+        "https://logincert.anaf.ro/anaf-oauth2/v1/authorize")
+    assert "client_id=test-client-id" in r.headers["Location"]
+    assert "state=" in r.headers["Location"]
+
+
+def test_anaf_oauth_callback_rejects_without_pending_state(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/api/anaf/callback?code=abc&state=xyz", follow_redirects=True)
+    assert "esuat sau a expirat".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM anaf_oauth_tokens").fetchone()["n"] == 0
+
+
+def test_anaf_oauth_callback_rejects_mismatched_state(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    c = app.test_client()
+    inregistreaza(c)
+    c.get("/panou/anaf/autorizare")
+    r = c.get("/api/anaf/callback?code=abc&state=gresit", follow_redirects=True)
+    assert "esuat sau a expirat".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM anaf_oauth_tokens").fetchone()["n"] == 0
+
+
+def test_anaf_oauth_callback_exchanges_code_and_stores_tokens(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    c = app.test_client()
+    inregistreaza(c)
+    r = _stare_anaf(c)
+    assert "autorizat cu succes".encode() in r.data
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    row = app.portal_conn.execute(
+        "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?", (firm_id,)).fetchone()
+    assert row is not None and row["autorizat_de"] == "firma-unu-srl"
+
+
+def test_get_valid_anaf_access_token_returns_none_when_not_authorized(app):
+    c = app.test_client()
+    inregistreaza(c)
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    assert app.get_valid_anaf_access_token(firm_id) is None
+
+
+def test_get_valid_anaf_access_token_returns_stored_token_when_fresh(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "FRESH", "refresh_token": "R1"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    assert app.get_valid_anaf_access_token(firm_id) == "FRESH"
+
+
+def test_get_valid_anaf_access_token_refreshes_when_expired(app, monkeypatch):
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "OLD", "refresh_token": "R1"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+
+    app.portal_conn.execute(
+        "UPDATE anaf_oauth_tokens SET expira_la=? WHERE firm_id=?",
+        ((datetime.now() - timedelta(days=1)).isoformat(), firm_id))
+    app.portal_conn.commit()
+
+    monkeypatch.setattr(anaf_oauth, "refresh_access_token",
+                        lambda *a, **kw: {"access_token": "REFRESHED", "refresh_token": "R2"})
+    assert app.get_valid_anaf_access_token(firm_id) == "REFRESHED"
+    row = app.portal_conn.execute(
+        "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?", (firm_id,)).fetchone()
+    assert row["expira_la"] > datetime.now().isoformat()
+    assert row["autorizat_de"] == "firma-unu-srl"

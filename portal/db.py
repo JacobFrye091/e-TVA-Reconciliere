@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS deletion_requests(
   creat_la TEXT NOT NULL, termen_la TEXT NOT NULL,
   stare TEXT NOT NULL DEFAULT 'in_asteptare',
   procesat_la TEXT, procesat_de TEXT);
+CREATE TABLE IF NOT EXISTS anaf_oauth_tokens(
+  firm_id INTEGER PRIMARY KEY REFERENCES firms(id),
+  wrapped_access_token BLOB NOT NULL,
+  wrapped_refresh_token BLOB NOT NULL,
+  obtinut_la TEXT NOT NULL,
+  expira_la TEXT NOT NULL,
+  autorizat_de TEXT NOT NULL);
 """
 
 

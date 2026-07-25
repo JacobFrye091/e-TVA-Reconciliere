@@ -19,6 +19,7 @@ from portal import pipeline
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
+from etva import anaf_oauth
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
@@ -40,6 +41,12 @@ _CONTACT = _ROOT / "docs" / "contact.html"
 _SPA = _ROOT / "web" / "index.html"
 
 CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "office@ereconciliere.ro")
+
+ANAF_OAUTH_CLIENT_ID = os.environ.get("ANAF_OAUTH_CLIENT_ID")
+ANAF_OAUTH_CLIENT_SECRET = os.environ.get("ANAF_OAUTH_CLIENT_SECRET")
+ANAF_OAUTH_REDIRECT_URI = os.environ.get(
+    "ANAF_OAUTH_REDIRECT_URI", "https://ereconciliere.ro/api/anaf/callback")
+ANAF_TOKEN_VALIDITY_ZILE = 90
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
@@ -237,6 +244,82 @@ def create_app(data_dir: str) -> Flask:
             return jsonify({"denumire": None, "eroare": eroare})
         return jsonify({"denumire": info["denumire"], "eroare": None})
 
+    # ---------- ANAF OAuth2 (decontul precompletat) ----------
+    def _store_anaf_tokens(firm_id: int, tokens: dict, username: str) -> None:
+        acum = datetime.now()
+        expira = acum + timedelta(days=ANAF_TOKEN_VALIDITY_ZILE)
+        conn.execute(
+            "INSERT INTO anaf_oauth_tokens(firm_id, wrapped_access_token, "
+            "wrapped_refresh_token, obtinut_la, expira_la, autorizat_de) "
+            "VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(firm_id) DO UPDATE SET "
+            "wrapped_access_token=excluded.wrapped_access_token, "
+            "wrapped_refresh_token=excluded.wrapped_refresh_token, "
+            "obtinut_la=excluded.obtinut_la, expira_la=excluded.expira_la, "
+            "autorizat_de=excluded.autorizat_de",
+            (firm_id, psec.wrap_key(secret, tokens["access_token"].encode()),
+             psec.wrap_key(secret, tokens["refresh_token"].encode()),
+             acum.isoformat(), expira.isoformat(), username))
+        conn.commit()
+
+    def get_valid_anaf_access_token(firm_id: int) -> str | None:
+        """The firm's current ANAF access token, refreshing it first if it's
+        expired (or close to it). None if the firm never authorized access."""
+        row = conn.execute(
+            "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?", (firm_id,)).fetchone()
+        if row is None:
+            return None
+        expira = datetime.fromisoformat(row["expira_la"])
+        if expira > datetime.now() + timedelta(days=1):
+            return psec.unwrap_key(secret, row["wrapped_access_token"]).decode()
+        refresh_token = psec.unwrap_key(secret, row["wrapped_refresh_token"]).decode()
+        tokens = anaf_oauth.refresh_access_token(
+            ANAF_OAUTH_CLIENT_ID, ANAF_OAUTH_CLIENT_SECRET, refresh_token)
+        _store_anaf_tokens(firm_id, tokens, row["autorizat_de"])
+        return tokens["access_token"]
+
+    @app.get("/panou/anaf/autorizare")
+    def anaf_oauth_autorizare():
+        """Un admin de firma porneste aici fluxul prin care ANAF ii cere
+        certificatul digital calificat al firmei si, daca il accepta,
+        autorizeaza e-TVA Reconciliere sa ii citeasca decontul precompletat -
+        fara ca noi sa vedem vreodata acel certificat."""
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"] or active_firm_id is None
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        if not ANAF_OAUTH_CLIENT_ID or not ANAF_OAUTH_CLIENT_SECRET:
+            return redirect(url_for(
+                "panou", eroare="Integrarea ANAF nu este configurata pe acest server."))
+        state = secrets.token_urlsafe(16)
+        session["anaf_oauth_pending_firm_id"] = active_firm_id
+        session["anaf_oauth_state"] = state
+        return redirect(anaf_oauth.build_authorize_url(
+            ANAF_OAUTH_CLIENT_ID, ANAF_OAUTH_REDIRECT_URI, state))
+
+    @app.get("/api/anaf/callback")
+    def anaf_oauth_callback():
+        firm_id = session.pop("anaf_oauth_pending_firm_id", None)
+        expected_state = session.pop("anaf_oauth_state", None)
+        code = request.args.get("code")
+        state = request.args.get("state")
+        if firm_id is None or not code or state != expected_state:
+            return redirect(url_for(
+                "panou", eroare="Autorizarea ANAF a esuat sau a expirat - "
+                                "incearca din nou."))
+        try:
+            tokens = anaf_oauth.exchange_code_for_tokens(
+                ANAF_OAUTH_CLIENT_ID, ANAF_OAUTH_CLIENT_SECRET, code,
+                ANAF_OAUTH_REDIRECT_URI)
+        except anaf_oauth.AnafOAuthError as e:
+            return redirect(url_for("panou", eroare=f"ANAF: {e}"))
+        user = current_user()
+        _store_anaf_tokens(firm_id, tokens,
+                           user["username"] if user else "necunoscut")
+        return redirect(url_for(
+            "panou", mesaj="Accesul la decontul ANAF a fost autorizat cu succes."))
+
     def _slugify(text: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
         return slug or "firma"
@@ -401,13 +484,19 @@ def create_app(data_dir: str) -> Flask:
         cerere_stergere = conn.execute(
             "SELECT * FROM deletion_requests WHERE user_id=? "
             "ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
+        anaf_autorizare = None
+        if active is not None:
+            anaf_autorizare = conn.execute(
+                "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?",
+                (active["id"],)).fetchone()
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
                                eroare=request.args.get("eroare"),
                                mesaj=request.args.get("mesaj"),
                                anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE,
-                               cerere_stergere=cerere_stergere)
+                               cerere_stergere=cerere_stergere,
+                               anaf_autorizare=anaf_autorizare)
 
     @app.post("/panou/firme")
     def add_firm():
@@ -1352,4 +1441,5 @@ def create_app(data_dir: str) -> Flask:
 
     app.portal_conn = conn  # exposed for tests/seeding
     app.portal_secret = secret
+    app.get_valid_anaf_access_token = get_valid_anaf_access_token  # exposed for tests
     return app

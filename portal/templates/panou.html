@@ -83,7 +83,6 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     </form>
     <p class="nota" id="fCuiStare" style="margin-top:2px">
       Bifeaza "Cod CUI Completat" dupa ce introduci CUI-ul.</p>
-    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
   </div>
   <script>
   (function () {
@@ -148,6 +147,11 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
   {% if mesaj %}
   <div class="card">
     <p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p>
+  </div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card">
+    <p class="sub" style="color:var(--danger);margin:0">{{ eroare }}</p>
   </div>
   {% endif %}
 
@@ -218,6 +222,24 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     });
   })();
   </script>
+
+  {% if active and active['role'] == 'admin' %}
+  <div class="card">
+    <h2>Decontul ANAF — {{ active['name'] }}</h2>
+    {% if anaf_autorizare %}
+    <p class="sub" style="color:var(--ok)">Accesul la decontul precompletat e
+      autorizat (de {{ anaf_autorizare['autorizat_de'] }}, la
+      {{ anaf_autorizare['obtinut_la'][:10] }}). Poți reautoriza oricând mai jos.</p>
+    {% else %}
+    <p class="sub">Autorizează e-TVA Reconciliere să citească automat decontul
+      precompletat de la ANAF, în locul încărcării manuale a fișierului din
+      SPV. Ai nevoie de certificatul digital calificat al firmei — ANAF ți-l
+      cere direct, noi nu îl vedem niciodată.</p>
+    {% endif %}
+    <a class="btn" href="/panou/anaf/autorizare">
+      {% if anaf_autorizare %}Reautorizează{% else %}Autorizează accesul{% endif %}</a>
+  </div>
+  {% endif %}
 
   {% if active %}
   <div class="card">
