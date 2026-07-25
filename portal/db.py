@@ -34,6 +34,17 @@ ANUNT_TIP_INFORMATIV = "informativ"
 ANUNT_TIPURI = (ANUNT_TIP_MENTENANTA, ANUNT_TIP_INCIDENT,
                ANUNT_TIP_LANSARE, ANUNT_TIP_INFORMATIV)
 
+# Tema unei cereri trimise prin formularul de contact - determina si carui
+# departament/proces ii e relevanta (vezi CONTACT_ETICHETE in app.py).
+CONTACT_TIP_GENERAL = "general"
+CONTACT_TIP_SUPORT = "suport"
+CONTACT_TIP_FACTURARE = "facturare"
+CONTACT_TIP_GDPR = "gdpr"
+CONTACT_TIP_RECLAMATIE = "reclamatie"
+CONTACT_TIP_ALTELE = "altele"
+CONTACT_TIPURI = (CONTACT_TIP_GENERAL, CONTACT_TIP_SUPORT, CONTACT_TIP_FACTURARE,
+                  CONTACT_TIP_GDPR, CONTACT_TIP_RECLAMATIE, CONTACT_TIP_ALTELE)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
@@ -62,6 +73,14 @@ CREATE TABLE IF NOT EXISTS announcements(
   incepe_la TEXT NOT NULL, se_termina_la TEXT NOT NULL,
   creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
   activ INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS contact_messages(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nume TEXT NOT NULL, email TEXT NOT NULL,
+  tip TEXT NOT NULL DEFAULT 'general',
+  mesaj TEXT NOT NULL,
+  trimis_de TEXT, firma TEXT,
+  creat_la TEXT NOT NULL,
+  citit INTEGER NOT NULL DEFAULT 0);
 """
 
 

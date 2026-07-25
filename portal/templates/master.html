@@ -49,6 +49,15 @@
   </div>
 
   <div class="card">
+    <h2>Mesaje de contact
+      {% if n_mesaje_necitite %}<span class="chip" style="color:var(--danger);background:var(--danger-bg)">{{ n_mesaje_necitite }} necitite</span>{% endif %}
+    </h2>
+    <p class="sub">Ce trimit vizitatorii si conturile prin formularul de
+      contact — de pe site-ul public sau din panoul contului lor.</p>
+    <a class="btn" href="/master/mesaje">Deschide mesajele</a>
+  </div>
+
+  <div class="card">
     <h2>Firme inregistrate</h2>
     <p class="sub">Vedere de ansamblu a platformei. Dezactivarea unei firme
       blocheaza autentificarea tuturor utilizatorilor ei.</p>

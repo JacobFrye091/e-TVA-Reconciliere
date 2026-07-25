@@ -4,8 +4,9 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import json, os, pathlib, re, secrets, threading
+import json, os, pathlib, re, secrets, smtplib, threading
 import xml.etree.ElementTree as ET
+from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -35,7 +36,10 @@ _GHID = _ROOT / "docs" / "ghid.html"
 _TERMENI = _ROOT / "docs" / "termeni.html"
 _CONFIDENTIALITATE = _ROOT / "docs" / "confidentialitate.html"
 _COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
+_CONTACT = _ROOT / "docs" / "contact.html"
 _SPA = _ROOT / "web" / "index.html"
+
+CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "contact@etva-reconciliere.ro")
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
@@ -186,6 +190,10 @@ def create_app(data_dir: str) -> Flask:
     @app.get("/cookie-uri.html")
     def cookie_uri():
         return send_file(_COOKIE_URI)
+
+    @app.get("/contact.html")
+    def contact_page():
+        return send_file(_CONTACT)
 
     def _anaf_lookup(cui: str) -> tuple[dict | None, str | None]:
         """Look up a CUI at ANAF. Returns (info, None) on success, or
@@ -487,8 +495,12 @@ def create_app(data_dir: str) -> Flask:
             "SELECT f.*, (SELECT COUNT(*) FROM user_firms uf "
             "WHERE uf.firm_id=f.id AND uf.active=1) AS n_users "
             "FROM firms f ORDER BY f.name").fetchall()
+        n_mesaje_necitite = conn.execute(
+            "SELECT COUNT(*) AS n FROM contact_messages WHERE citit=0"
+        ).fetchone()["n"]
         return render_template("master.html", user=user, firms=firms,
-                               versiune=pipeline.running_vs_current())
+                               versiune=pipeline.running_vs_current(),
+                               n_mesaje_necitite=n_mesaje_necitite)
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):
@@ -725,6 +737,90 @@ def create_app(data_dir: str) -> Flask:
             return jsonify(None)
         return jsonify({"mesaj": anunt["mesaj"], "tip": anunt["tip"],
                         "eticheta": ANUNT_ETICHETE.get(anunt["tip"], anunt["tip"])})
+
+    # ---------- formular de contact ----------
+    CONTACT_ETICHETE = {
+        pdb.CONTACT_TIP_GENERAL: "Întrebare generală",
+        pdb.CONTACT_TIP_SUPORT: "Suport tehnic / cont",
+        pdb.CONTACT_TIP_FACTURARE: "Facturare",
+        pdb.CONTACT_TIP_GDPR: "Datele mele personale (GDPR)",
+        pdb.CONTACT_TIP_RECLAMATIE: "Reclamație",
+        pdb.CONTACT_TIP_ALTELE: "Altele",
+    }
+
+    def _trimite_email_contact(nume, email, tip, mesaj):
+        """Retransmite mesajul catre CONTACT_EMAIL_TO prin SMTP, daca serverul
+        are configurate variabilele de mediu SMTP_HOST/SMTP_USER/SMTP_PASSWORD.
+        Mesajul e oricum pastrat in contact_messages - trimiterea prin email e
+        un bonus de notificare, nu singura cale prin care ajunge la master, asa
+        ca o eroare aici nu trebuie sa strice cererea utilizatorului."""
+        host = os.environ.get("SMTP_HOST")
+        if not host:
+            return
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = f"[e-TVA Contact] {CONTACT_ETICHETE.get(tip, tip)}"
+            msg["From"] = os.environ.get("SMTP_FROM", CONTACT_EMAIL_TO)
+            msg["To"] = CONTACT_EMAIL_TO
+            msg["Reply-To"] = email
+            msg.set_content(f"De la: {nume} <{email}>\nTema: "
+                            f"{CONTACT_ETICHETE.get(tip, tip)}\n\n{mesaj}")
+            port = int(os.environ.get("SMTP_PORT", "587"))
+            with smtplib.SMTP(host, port, timeout=10) as s:
+                s.starttls()
+                user = os.environ.get("SMTP_USER")
+                password = os.environ.get("SMTP_PASSWORD")
+                if user and password:
+                    s.login(user, password)
+                s.send_message(msg)
+        except (smtplib.SMTPException, OSError) as e:
+            app.logger.warning("Trimiterea emailului de contact a esuat: %s", e)
+
+    @app.post("/api/contact")
+    def trimite_contact():
+        """Disponibil atat pentru vizitatori anonimi (pagina publica de
+        contact), cat si pentru conturi autentificate (panoul contului) -
+        acelasi endpoint, acelasi tabel, aceeasi retransmitere prin email."""
+        date = request.get_json(silent=True) or request.form
+        nume = (date.get("nume") or "").strip()
+        email = (date.get("email") or "").strip()
+        tip = (date.get("tip") or "").strip()
+        mesaj = (date.get("mesaj") or "").strip()
+        if not nume or not email or not mesaj or tip not in pdb.CONTACT_TIPURI:
+            return jsonify({"eroare": "Completeaza toate campurile obligatorii."}), 400
+        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+            return jsonify({"eroare": "Adresa de email nu pare valida."}), 400
+        user = current_user()
+        ident = current_identity()
+        trimis_de = user["username"] if user else None
+        firma = ident["firm_name"] if ident else None
+        conn.execute(
+            "INSERT INTO contact_messages(nume, email, tip, mesaj, trimis_de, "
+            "firma, creat_la) VALUES(?,?,?,?,?,?,?)",
+            (nume, email, tip, mesaj, trimis_de, firma, datetime.now().isoformat()))
+        conn.commit()
+        _trimite_email_contact(nume, email, tip, mesaj)
+        return jsonify({"ok": True})
+
+    @app.get("/master/mesaje")
+    def master_mesaje():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        mesaje = conn.execute(
+            "SELECT * FROM contact_messages ORDER BY citit ASC, creat_la DESC"
+        ).fetchall()
+        return render_template("master_mesaje.html", user=user, mesaje=mesaje,
+                               etichete=CONTACT_ETICHETE)
+
+    @app.post("/master/mesaje/<int:mesaj_id>/citit")
+    def marcheaza_mesaj_citit(mesaj_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        conn.execute("UPDATE contact_messages SET citit=1 WHERE id=?", (mesaj_id,))
+        conn.commit()
+        return redirect(url_for("master_mesaje"))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

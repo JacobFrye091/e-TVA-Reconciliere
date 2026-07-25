@@ -1178,3 +1178,100 @@ def test_panou_shows_the_active_announcement_banner(app):
     text = c.get("/panou").data.decode()
     assert "Lansare noua functionalitate." in text
     assert "Lansare" in text
+
+
+# ---------- formular de contact ----------
+
+def test_contact_page_served(app):
+    c = app.test_client()
+    r = c.get("/contact.html")
+    assert r.status_code == 200
+    assert b"formContact" in r.data
+
+
+def test_trimite_contact_saves_message(app):
+    c = app.test_client()
+    r = c.post("/api/contact", json={
+        "nume": "Ion Popescu", "email": "ion@exemplu.ro",
+        "tip": "general", "mesaj": "O intrebare generala."})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    row = app.portal_conn.execute("SELECT * FROM contact_messages").fetchone()
+    assert row["nume"] == "Ion Popescu" and row["email"] == "ion@exemplu.ro"
+    assert row["tip"] == "general" and row["citit"] == 0
+    assert row["trimis_de"] is None and row["firma"] is None
+
+
+def test_trimite_contact_rejects_missing_fields(app):
+    c = app.test_client()
+    r = c.post("/api/contact", json={
+        "nume": "Ion", "email": "ion@exemplu.ro", "tip": "general", "mesaj": ""})
+    assert r.status_code == 400
+    assert "obligatorii" in r.get_json()["eroare"]
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contact_messages").fetchone()["n"] == 0
+
+
+def test_trimite_contact_rejects_invalid_email(app):
+    c = app.test_client()
+    r = c.post("/api/contact", json={
+        "nume": "Ion", "email": "nu-e-un-email", "tip": "general", "mesaj": "Test"})
+    assert r.status_code == 400
+    assert "email" in r.get_json()["eroare"]
+
+
+def test_trimite_contact_rejects_invalid_tip(app):
+    c = app.test_client()
+    r = c.post("/api/contact", json={
+        "nume": "Ion", "email": "ion@exemplu.ro", "tip": "nu-exista", "mesaj": "Test"})
+    assert r.status_code == 400
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contact_messages").fetchone()["n"] == 0
+
+
+def test_trimite_contact_captures_logged_in_user_and_firm(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/api/contact", json={
+        "nume": "Ion Popescu", "email": "ion@exemplu.ro",
+        "tip": "gdpr", "mesaj": "Vreau o copie a datelor mele."})
+    assert r.status_code == 200
+    row = app.portal_conn.execute("SELECT * FROM contact_messages").fetchone()
+    assert row["trimis_de"] == "firma-unu-srl" and row["firma"] == "Firma Unu SRL"
+
+
+def test_master_mesaje_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/mesaje", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_mesaje_lists_messages(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/api/contact", json={
+        "nume": "Ion Popescu", "email": "ion@exemplu.ro",
+        "tip": "facturare", "mesaj": "O intrebare despre facturare."})
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    text = c_master.get("/master/mesaje").data.decode()
+    assert "Ion Popescu" in text and "O intrebare despre facturare." in text
+    assert "Facturare" in text and "Necitit" in text
+
+
+def test_marcheaza_mesaj_citit_toggles_message(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/api/contact", json={
+        "nume": "Ion Popescu", "email": "ion@exemplu.ro",
+        "tip": "altele", "mesaj": "Test."})
+    mesaj_id = app.portal_conn.execute(
+        "SELECT id FROM contact_messages").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/mesaje/{mesaj_id}/citit")
+    row = app.portal_conn.execute(
+        "SELECT citit FROM contact_messages WHERE id=?", (mesaj_id,)).fetchone()
+    assert row["citit"] == 1
+    text = c_master.get("/master/mesaje").data.decode()
+    assert "Necitit" not in text

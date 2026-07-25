@@ -9,6 +9,12 @@
 .banner-anunt.tip-incident { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 .banner-anunt.tip-lansare { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
 .banner-anunt.tip-informativ { background: #e0efee; color: var(--accent); border-color: var(--accent); }
+textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 6px; font: inherit; resize: vertical; min-height: 90px; }
+textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.stare-contact { font-size: 13.5px; margin-top: 10px; }
+.stare-contact.ok { color: var(--ok); }
+.stare-contact.eroare { color: var(--danger); }
 </style>
 {% endblock %}
 {% block continut %}
@@ -144,6 +150,74 @@
     <p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p>
   </div>
   {% endif %}
+
+  <div class="card">
+    <h2>Contact</h2>
+    <p class="sub">Ai o intrebare, o problema tehnica sau o cerere despre datele
+      tale personale? Alege tema de mai jos si scrie-ne.</p>
+    <form id="formContactCont">
+      <div class="rand">
+        <div><label for="ccNume">Numele tau</label>
+          <input id="ccNume" name="nume" required value="{{ user['username'] }}"></div>
+        <div><label for="ccEmail">Adresa de email</label>
+          <input id="ccEmail" name="email" type="email" required placeholder="unde iti raspundem"></div>
+        <div><label for="ccTip">Tema cererii</label>
+          <select id="ccTip" name="tip">
+            <option value="general">Intrebare generala</option>
+            <option value="suport">Suport tehnic / cont</option>
+            <option value="facturare">Facturare</option>
+            <option value="gdpr">Datele mele personale (GDPR)</option>
+            <option value="reclamatie">Reclamatie</option>
+            <option value="altele">Altele</option>
+          </select></div>
+      </div>
+      <label for="ccMesaj">Mesajul tau</label>
+      <textarea id="ccMesaj" name="mesaj" required
+                placeholder="Descrie cat mai concret cererea ta."></textarea>
+      <button type="submit" style="margin-top:14px">Trimite mesajul</button>
+      <p class="stare-contact" id="ccStare" role="status"></p>
+    </form>
+  </div>
+  <script>
+  (function () {
+    var form = document.getElementById('formContactCont');
+    var stare = document.getElementById('ccStare');
+    var buton = form.querySelector('button[type="submit"]');
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      buton.disabled = true;
+      stare.className = 'stare-contact';
+      stare.textContent = 'Se trimite...';
+      fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nume: document.getElementById('ccNume').value,
+          email: document.getElementById('ccEmail').value,
+          tip: document.getElementById('ccTip').value,
+          mesaj: document.getElementById('ccMesaj').value,
+        }),
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          buton.disabled = false;
+          if (!res.ok) {
+            stare.className = 'stare-contact eroare';
+            stare.textContent = res.d.eroare || 'Nu am putut trimite mesajul. Incearca din nou.';
+            return;
+          }
+          stare.className = 'stare-contact ok';
+          stare.textContent = 'Mesajul a fost trimis. Iti raspundem la adresa de email lasata.';
+          document.getElementById('ccMesaj').value = '';
+        })
+        .catch(function () {
+          buton.disabled = false;
+          stare.className = 'stare-contact eroare';
+          stare.textContent = 'Nu am putut contacta serviciul chiar acum. Incearca din nou.';
+        });
+    });
+  })();
+  </script>
 
   {% if active %}
   <div class="card">

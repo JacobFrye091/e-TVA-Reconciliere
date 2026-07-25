@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block titlu %}Mesaje de contact — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.chip.tip-general { color: var(--accent); background: #e0efee; }
+.chip.tip-suport { color: var(--accent); background: #e0efee; }
+.chip.tip-facturare { color: var(--warn); background: var(--warn-bg); }
+.chip.tip-gdpr { color: var(--danger); background: var(--danger-bg); }
+.chip.tip-reclamatie { color: var(--danger); background: var(--danger-bg); }
+.chip.tip-altele { color: var(--muted); background: var(--paper); }
+.chip.stare-necitit { color: var(--danger); background: var(--danger-bg); }
+.chip.stare-citit { color: var(--muted); background: var(--paper); }
+.mc-mesaj { max-width: 380px; white-space: pre-wrap; }
+tr.necitit { background: var(--danger-bg); }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Mesaje de contact</h2>
+      <p class="sub">Trimise prin formularul de contact — de pe site-ul public
+        sau din panoul contului. Cele necitite apar primele.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  <div class="card">
+    <table>
+      <tr><th>De la</th><th>Tema</th><th>Mesaj</th><th>Cont</th><th>Primit</th><th>Stare</th><th></th></tr>
+      {% for m in mesaje %}
+      <tr{% if not m['citit'] %} class="necitit"{% endif %}>
+        <td>{{ m['nume'] }}<br><span class="nota" style="margin:0"><a href="mailto:{{ m['email'] }}">{{ m['email'] }}</a></span></td>
+        <td><span class="chip tip-{{ m['tip'] }}">{{ etichete.get(m['tip'], m['tip']) }}</span></td>
+        <td class="mc-mesaj">{{ m['mesaj'] }}</td>
+        <td>{% if m['trimis_de'] %}{{ m['trimis_de'] }}{% if m['firma'] %}<br><span class="nota" style="margin:0">{{ m['firma'] }}</span>{% endif %}{% else %}<span class="nota" style="margin:0">Vizitator</span>{% endif %}</td>
+        <td>{{ m['creat_la'][:16]|replace('T', ' ') }}</td>
+        <td>{% if m['citit'] %}<span class="chip stare-citit">Citit</span>
+            {% else %}<span class="chip stare-necitit">Necitit</span>{% endif %}</td>
+        <td style="text-align:right">
+          {% if not m['citit'] %}
+          <form class="inline" method="post" action="/master/mesaje/{{ m['id'] }}/citit">
+            <button class="mic" type="submit">Marcheaza citit</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" style="color:var(--muted)">Niciun mesaj primit inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}
