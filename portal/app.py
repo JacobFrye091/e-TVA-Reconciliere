@@ -39,7 +39,7 @@ _COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
 _CONTACT = _ROOT / "docs" / "contact.html"
 _SPA = _ROOT / "web" / "index.html"
 
-CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "contact@etva-reconciliere.ro")
+CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "office@ereconciliere.ro")
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
