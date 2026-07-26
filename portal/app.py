@@ -16,6 +16,7 @@ from flask import (Flask, request, session, redirect, url_for, jsonify,
 from portal import db as pdb
 from portal import security as psec
 from portal import pipeline
+from portal import invoicing
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
@@ -1113,6 +1114,80 @@ def create_app(data_dir: str) -> Flask:
         _log_master_action(user, "cerere_stergere.anulare",
                            f"cont #{cerere['user_id']} ({cerere['username']})")
         return redirect(url_for("master_cereri_stergere"))
+
+    # ---------- master: facturare ----------
+    @app.get("/master/facturi")
+    def master_facturi():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        facturi = conn.execute(
+            "SELECT * FROM invoices ORDER BY serie DESC, numar DESC").fetchall()
+        firme = conn.execute(
+            "SELECT id, name, cui FROM firms WHERE active=1 ORDER BY name"
+        ).fetchall()
+        return render_template("master_facturi.html", user=user, facturi=facturi,
+                               firme=firme, eroare=request.args.get("eroare"))
+
+    def _suma_scurta(valoare: float) -> str:
+        return f"{valoare:.2f}"
+
+    @app.post("/master/facturi")
+    def creeaza_factura():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        f = request.form
+        firm_id = f.get("firm_id", type=int)
+        descriere = f.get("descriere", "").strip()
+        valoare_neta = f.get("valoare_neta", type=float)
+        cota_tva = f.get("cota_tva", type=float)
+        perioada_inceput = f.get("perioada_inceput", "").strip() or None
+        perioada_sfarsit = f.get("perioada_sfarsit", "").strip() or None
+        data_scadentei = f.get("data_scadentei", "").strip() or None
+        if (not firm_id or not descriere or valoare_neta is None
+                or valoare_neta <= 0 or cota_tva is None or cota_tva < 0):
+            return redirect(url_for(
+                "master_facturi",
+                eroare="Firma, descrierea si o valoare neta pozitiva sunt obligatorii."))
+        firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if firma is None:
+            return redirect(url_for("master_facturi", eroare="Firma nu a fost gasita."))
+        numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
+        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
+        valoare_totala = round(valoare_neta + valoare_tva, 2)
+        acum = datetime.now()
+        conn.execute(
+            "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
+            "descriere, perioada_inceput, perioada_sfarsit, data_emiterii, "
+            "data_scadentei, valoare_neta, cota_tva, valoare_tva, "
+            "valoare_totala, creat_de, creat_la) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pdb.FACTURA_SERIE, numar, firm_id, firma["name"], firma["cui"],
+             descriere, perioada_inceput, perioada_sfarsit, acum.isoformat(),
+             data_scadentei, valoare_neta, cota_tva, valoare_tva,
+             valoare_totala, user["username"], acum.isoformat()))
+        conn.commit()
+        _log_master_action(
+            user, "factura.emitere",
+            f"{pdb.FACTURA_SERIE} {numar} -> {firma['name']} "
+            f"({_suma_scurta(valoare_totala)} RON)")
+        return redirect(url_for("master_facturi"))
+
+    @app.get("/master/facturi/<int:factura_id>/pdf")
+    def descarca_factura_pdf(factura_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None:
+            return redirect(url_for("master_facturi"))
+        pdf_bytes = invoicing.generate_pdf(dict(factura))
+        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.pdf"
+        return Response(
+            pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

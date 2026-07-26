@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block titlu %}Facturi — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--accent); border:1px solid var(--border); border-radius:7px; }
+a.mic:hover { background:var(--paper); }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Facturi</h2>
+      <p class="sub">Facturile emise de e-TVA Reconciliere firmelor care
+        plătesc pentru platformă. PDF-ul e doar o variantă lizibilă —
+        factura electronică legală (XML, transmisă prin RO e-Factura)
+        e un pas separat, încă neconstruit.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  <div class="card">
+    <h2>Emite factură nouă</h2>
+    <form method="post" action="/master/facturi">
+      <div class="rand">
+        <div><label for="fFirma">Firma</label>
+          <select id="fFirma" name="firm_id" required>
+            <option value="">Alege firma</option>
+            {% for f in firme %}
+            <option value="{{ f['id'] }}">{{ f['name'] }} ({{ f['cui'] }})</option>
+            {% endfor %}
+          </select></div>
+        <div><label for="fValoare">Valoare netă (RON)</label>
+          <input id="fValoare" name="valoare_neta" type="number" step="0.01" min="0.01" required></div>
+        <div><label for="fCota">Cotă TVA (%)</label>
+          <input id="fCota" name="cota_tva" type="number" step="1" min="0" value="19" required></div>
+      </div>
+      <label for="fDescriere">Descriere</label>
+      <input id="fDescriere" name="descriere" required
+             placeholder="ex: Abonament e-TVA Reconciliere - iunie 2026">
+      <div class="rand">
+        <div><label for="fPerioadaInceput">Perioadă facturată — început (opțional)</label>
+          <input id="fPerioadaInceput" name="perioada_inceput" type="date"></div>
+        <div><label for="fPerioadaSfarsit">Perioadă facturată — sfârșit (opțional)</label>
+          <input id="fPerioadaSfarsit" name="perioada_sfarsit" type="date"></div>
+        <div><label for="fScadenta">Data scadenței (opțional)</label>
+          <input id="fScadenta" name="data_scadentei" type="date"></div>
+        <button type="submit">Emite factura</button>
+      </div>
+    </form>
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Toate facturile</h2>
+    <table>
+      <tr><th>Serie / Nr.</th><th>Firma</th><th>Data emiterii</th><th>Total</th><th></th></tr>
+      {% for f in facturi %}
+      <tr>
+        <td class="cod">{{ f['serie'] }} {{ f['numar'] }}</td>
+        <td>{{ f['firm_name'] }}<br><span class="nota" style="margin:0">{{ f['firm_cui'] }}</span></td>
+        <td>{{ f['data_emiterii'][:10] }}</td>
+        <td>{{ '%.2f'|format(f['valoare_totala']) }} {{ f['moneda'] }}</td>
+        <td style="text-align:right">
+          <a class="mic" style="text-decoration:none;display:inline-block"
+             href="/master/facturi/{{ f['id'] }}/pdf">Descarcă PDF</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:var(--muted)">Nicio factură emisă inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

@@ -106,7 +106,28 @@ CREATE TABLE IF NOT EXISTS anaf_oauth_tokens(
   obtinut_la TEXT NOT NULL,
   expira_la TEXT NOT NULL,
   autorizat_de TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS invoices(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  serie TEXT NOT NULL, numar INTEGER NOT NULL,
+  firm_id INTEGER NOT NULL REFERENCES firms(id),
+  firm_name TEXT NOT NULL, firm_cui TEXT NOT NULL,
+  descriere TEXT NOT NULL,
+  perioada_inceput TEXT, perioada_sfarsit TEXT,
+  data_emiterii TEXT NOT NULL, data_scadentei TEXT,
+  valoare_neta REAL NOT NULL, cota_tva REAL NOT NULL DEFAULT 19,
+  valoare_tva REAL NOT NULL, valoare_totala REAL NOT NULL,
+  moneda TEXT NOT NULL DEFAULT 'RON',
+  stare TEXT NOT NULL DEFAULT 'emisa',
+  creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
+  UNIQUE(serie, numar));
 """
+
+# Seria unica de facturare a platformei - un singur emitent (VML EXPERT
+# ADVISOR SRL), deci o singura serie e suficienta; numerotarea e secventiala
+# si fara goluri in cadrul ei (obligatoriu legal, art. 319 alin. 20 lit. a
+# Cod Fiscal), calculata sub acelasi db_lock care serializeaza deja toate
+# cererile catre portal.db.
+FACTURA_SERIE = "ETVA"
 
 
 def _migrate_legacy_users(conn: sqlite3.Connection) -> None:

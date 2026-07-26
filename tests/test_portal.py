@@ -1580,3 +1580,111 @@ def test_get_valid_anaf_access_token_refreshes_when_expired(app, monkeypatch):
         "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?", (firm_id,)).fetchone()
     assert row["expira_la"] > datetime.now().isoformat()
     assert row["autorizat_de"] == "firma-unu-srl"
+
+
+# ---------- facturare (master) ----------
+
+def test_master_facturi_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/master/facturi", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_creeaza_factura_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    r = c.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "Test", "valoare_neta": "100",
+        "cota_tva": "19"}, follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM invoices").fetchone()["n"] == 0
+
+
+def test_creeaza_factura_rejects_missing_fields(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "", "valoare_neta": "100", "cota_tva": "19"},
+        follow_redirects=True)
+    assert "obligatorii".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM invoices").fetchone()["n"] == 0
+
+
+def test_creeaza_factura_computes_totals_and_increments_numbering(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Unu SRL", cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    c_master.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "Abonament iunie",
+        "valoare_neta": "100", "cota_tva": "19"})
+    c_master.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "Abonament iulie",
+        "valoare_neta": "50", "cota_tva": "19"})
+
+    rows = app.portal_conn.execute(
+        "SELECT * FROM invoices ORDER BY numar").fetchall()
+    assert len(rows) == 2
+    assert rows[0]["numar"] == 1 and rows[1]["numar"] == 2
+    assert rows[0]["serie"] == "ETVA"
+    assert rows[0]["firm_name"] == "Firma Unu SRL" and rows[0]["firm_cui"] == "RO111"
+    assert rows[0]["valoare_tva"] == 19.0
+    assert rows[0]["valoare_totala"] == 119.0
+    assert rows[0]["creat_de"] == "sef"
+
+
+def test_descarca_factura_pdf_requires_master(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "Abonament", "valoare_neta": "100",
+        "cota_tva": "19"})
+    factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
+
+    r = c.get(f"/master/facturi/{factura_id}/pdf", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_descarca_factura_pdf_returns_pdf_bytes(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO111")
+    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/facturi", data={
+        "firm_id": firm_id, "descriere": "Abonament e-TVA Reconciliere",
+        "valoare_neta": "100", "cota_tva": "19"})
+    factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
+
+    r = c_master.get(f"/master/facturi/{factura_id}/pdf")
+    assert r.status_code == 200
+    assert r.mimetype == "application/pdf"
+    assert r.data[:4] == b"%PDF"
+
+
+def test_next_invoice_number_starts_at_one_and_increments(app):
+    from portal import invoicing
+    assert invoicing.next_invoice_number(app.portal_conn, "ETVA") == 1
+    app.portal_conn.execute(
+        "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
+        "descriere, data_emiterii, valoare_neta, cota_tva, valoare_tva, "
+        "valoare_totala, creat_de, creat_la) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("ETVA", 1, 1, "Test SRL", "RO1", "Test", "2026-01-01", 100, 19, 19,
+         119, "sef", "2026-01-01"))
+    assert invoicing.next_invoice_number(app.portal_conn, "ETVA") == 2
