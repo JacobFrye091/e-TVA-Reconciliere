@@ -56,6 +56,14 @@ ANAF_TOKEN_VALIDITY_ZILE = 90
 # ce un XML de test a fost validat cu adevarat impotriva sandbox-ului.
 ANAF_EFACTURA_MEDIU = os.environ.get("ANAF_EFACTURA_MEDIU", "test")
 
+# Implicit dezactivat: emailul de confirmare e singura cale de livrare a
+# link-ului de validare (spre deosebire de formularul de contact, unde o
+# eroare de trimitere nu blocheaza nimic), asa ca blocarea reala a
+# conturilor neverificate ramane oprita pana se confirma ca SMTP chiar
+# livreaza pe serverul de productie - altfel un client nou ar ramane blocat
+# definitiv fara nicio alternativa.
+EMAIL_VERIFICARE_OBLIGATORIE = os.environ.get("EMAIL_VERIFICARE_OBLIGATORIE") == "1"
+
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
 _AVATAR_PALETTE = ["#0d5c63", "#12777f", "#9a6700", "#1a7f4b", "#5b4fc4", "#b0473e"]
@@ -331,6 +339,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         return redirect(url_for(
             "panou", mesaj="Accesul la decontul ANAF a fost autorizat cu succes."))
 
+    def _zile_trial_ramase(trial_expira_la: "str | None") -> "int | None":
+        if not trial_expira_la:
+            return None
+        expira = datetime.fromisoformat(trial_expira_la)
+        return max(0, (expira - datetime.now(timezone.utc)).days)
+
     def _slugify(text: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
         return slug or "firma"
@@ -348,16 +362,31 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             n += 1
         return f"{desired}{n}"
 
-    def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str) -> int:
+    def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str,
+                     email_verificat: bool = False) -> tuple[int, "str | None"]:
         """Create a firm and link it to user_id with the given role. A
         self-reconciling ('direct') firm has no clients at all - it
         reconciles as itself, not as its own client - so nothing further
         happens here for that case; only a 'contabilitate' firm ever
-        gets real clients, added by hand afterwards."""
+        gets real clients, added by hand afterwards.
+
+        Every new firm gets a 30-day trial from creation. email_verificat
+        controls whether it starts pre-confirmed (an already-authenticated,
+        already-verified user adding a second firm via /panou/firme) or
+        needs its own confirmation link (a brand new /inregistrare) -
+        returns (firm_id, token) where token is None in the former case."""
         if tip not in pdb.FIRM_TIPURI:
             tip = pdb.FIRM_TIP_CONTABILITATE
-        cur = conn.execute("INSERT INTO firms(name, cui, tip) VALUES(?,?,?)",
-                           (name, cui, tip))
+        now = datetime.now(timezone.utc)
+        creat_la = now.isoformat()
+        trial_expira_la = (now + timedelta(days=pdb.TRIAL_ZILE)).isoformat()
+        token = None if email_verificat else secrets.token_urlsafe(32)
+        cur = conn.execute(
+            "INSERT INTO firms(name, cui, tip, email_verificat, "
+            "email_verificare_token, creat_la, trial_expira_la) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (name, cui, tip, 1 if email_verificat else 0, token,
+             creat_la, trial_expira_la))
         firm_id = cur.lastrowid
         conn.execute(
             "INSERT INTO user_firms(user_id, firm_id, role, active) "
@@ -365,7 +394,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
                      (firm_id, psec.wrap_key(secret, os.urandom(32))))
         conn.commit()
-        return firm_id
+        return firm_id, token
 
     @app.route("/inregistrare", methods=["GET", "POST"])
     def register():
@@ -373,13 +402,17 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return render_template("inregistrare.html", eroare=None)
         f = request.form
         name, cui = f.get("name", "").strip(), f.get("cui", "").strip()
+        email = f.get("email", "").strip()
         password = f.get("password", "")
         tip = f.get("tip", "").strip()
-        if not all([name, cui, password]) or tip not in pdb.FIRM_TIPURI:
+        if not all([name, cui, email, password]) or tip not in pdb.FIRM_TIPURI:
             return render_template(
                 "inregistrare.html",
                 eroare="Toate campurile sunt obligatorii - inclusiv "
                       "denumirea, completata automat din CUI.")
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return render_template("inregistrare.html",
+                                   eroare="Adresa de email nu pare valida.")
         if not f.get("accept_termeni"):
             return render_template(
                 "inregistrare.html",
@@ -398,19 +431,78 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         # username ramane doar o eticheta interna (audit, panoul de echipa).
         username = _unique_username(_slugify(name))
         cur = conn.execute(
-            "INSERT INTO users(username, pw_hash) VALUES(?,?)",
-            (username, psec.hash_password(password)))
+            "INSERT INTO users(username, pw_hash, email) VALUES(?,?,?)",
+            (username, psec.hash_password(password), email))
         user_id = cur.lastrowid
-        firm_id = _create_firm(name, cui, tip, user_id, "admin")
+        firm_id, token = _create_firm(name, cui, tip, user_id, "admin")
+        if token:
+            _trimite_email_verificare(email, name, token)
         session.permanent = True
         session["user_id"] = user_id
         session["active_firm_id"] = firm_id
         return redirect(url_for("aplicatie"))
 
+    @app.get("/verifica-email/<token>")
+    def verifica_email(token):
+        firm = conn.execute(
+            "SELECT * FROM firms WHERE email_verificare_token=?", (token,)).fetchone()
+        if firm is None:
+            return redirect(url_for(
+                "login", eroare="Link de confirmare invalid sau deja folosit."))
+        conn.execute(
+            "UPDATE firms SET email_verificat=1, email_verificare_token=NULL "
+            "WHERE id=?", (firm["id"],))
+        conn.commit()
+        # Ordinea conteaza - clientul primeste confirmarea intai, abia apoi
+        # ajunge si notificarea interna la master.
+        admin = conn.execute(
+            "SELECT u.email FROM user_firms uf "
+            "JOIN users u ON u.id = uf.user_id "
+            "WHERE uf.firm_id=? AND uf.role='admin' LIMIT 1", (firm["id"],)).fetchone()
+        if admin and admin["email"]:
+            _trimite_email(
+                admin["email"], "Contul tau e-TVA Reconciliere e confirmat",
+                f"Salut,\n\nContul firmei {firm['name']} a fost confirmat cu "
+                f"succes. Te poti autentifica oricand pe platforma.")
+        _trimite_email(
+            CONTACT_EMAIL_TO, "[e-TVA] Cont nou confirmat",
+            f"Firma {firm['name']} (CUI {firm['cui']}) si-a confirmat adresa de email.")
+        return redirect(url_for(
+            "login", mesaj="Adresa de email a fost confirmata - te poti autentifica."))
+
+    @app.get("/asteapta-verificare-email")
+    def asteapta_verificare_email():
+        user = current_user()
+        if user is None:
+            return redirect(url_for("login"))
+        return render_template(
+            "asteapta_verificare_email.html", user=user,
+            mesaj=request.args.get("mesaj"))
+
+    @app.post("/retrimite-verificare-email")
+    def retrimite_verificare_email():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if user is None or active_firm_id is None:
+            return redirect(url_for("login"))
+        firm = conn.execute(
+            "SELECT * FROM firms WHERE id=?", (active_firm_id,)).fetchone()
+        if firm is None or firm["email_verificat"] or not user["email"]:
+            return redirect(url_for("asteapta_verificare_email"))
+        token = firm["email_verificare_token"] or secrets.token_urlsafe(32)
+        conn.execute("UPDATE firms SET email_verificare_token=? WHERE id=?",
+                    (token, firm["id"]))
+        conn.commit()
+        _trimite_email_verificare(user["email"], firm["name"], token)
+        return redirect(url_for(
+            "asteapta_verificare_email", mesaj="Email retrimis."))
+
     @app.route("/autentificare", methods=["GET", "POST"])
     def login():
         if request.method == "GET":
-            return render_template("autentificare.html", eroare=None)
+            return render_template(
+                "autentificare.html", eroare=request.args.get("eroare"),
+                mesaj=request.args.get("mesaj"))
         identificator = request.form.get("cui", "").strip()
         password = request.form.get("password", "")
         eroare_autentificare = "CUI sau parola incorecta."
@@ -463,8 +555,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     # ---------- the product (SPA) ----------
     @app.get("/app")
     def aplicatie():
-        if current_identity() is None:
+        ident = current_identity()
+        if ident is None:
             return redirect(url_for("login"))
+        if EMAIL_VERIFICARE_OBLIGATORIE:
+            firma = conn.execute(
+                "SELECT email_verificat FROM firms WHERE id=?",
+                (ident["firm_id"],)).fetchone()
+            if firma is not None and not firma["email_verificat"]:
+                return redirect(url_for("asteapta_verificare_email"))
         return send_file(_SPA)
 
     # ---------- firm account pages ----------
@@ -496,10 +595,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             "SELECT * FROM deletion_requests WHERE user_id=? "
             "ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
         anaf_autorizare = None
+        plan_activ = None
+        zile_trial = None
         if active is not None:
             anaf_autorizare = conn.execute(
                 "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?",
                 (active["id"],)).fetchone()
+            plan_activ = conn.execute(
+                "SELECT email_verificat, trial_expira_la, ciclu_facturare "
+                "FROM firms WHERE id=?", (active["id"],)).fetchone()
+            zile_trial = _zile_trial_ramase(plan_activ["trial_expira_la"])
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
@@ -507,7 +612,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                                mesaj=request.args.get("mesaj"),
                                anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE,
                                cerere_stergere=cerere_stergere,
-                               anaf_autorizare=anaf_autorizare)
+                               anaf_autorizare=anaf_autorizare,
+                               plan_activ=plan_activ, zile_trial=zile_trial,
+                               email_verificare_obligatorie=EMAIL_VERIFICARE_OBLIGATORIE)
 
     @app.post("/panou/firme")
     def add_firm():
@@ -526,9 +633,43 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         eroare = _verify_cui_or_error(cui)
         if eroare:
             return redirect(url_for("panou", eroare=eroare))
-        firm_id = _create_firm(name, cui, tip, user["id"], "admin")
+        # Deja un cont autentificat (deci deja o adresa de email cunoscuta) -
+        # nu mai cerem o a doua confirmare de email pentru firma aditionala.
+        firm_id, _token = _create_firm(name, cui, tip, user["id"], "admin",
+                                       email_verificat=True)
         session["active_firm_id"] = firm_id
         return redirect(url_for("panou"))
+
+    @app.get("/panou/plan")
+    def alege_plan():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (active_firm_id,)).fetchone()
+        return render_template(
+            "alege_plan.html", user=user, firm=firm,
+            preturi=pdb.PRETURI_LUNARE_RON[firm["tip"]],
+            zile_trial=_zile_trial_ramase(firm["trial_expira_la"]),
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/panou/plan")
+    def salveaza_plan():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        ciclu = request.form.get("ciclu", "")
+        if ciclu not in pdb.CICLURI_FACTURARE:
+            return redirect(url_for(
+                "alege_plan", eroare="Alege un ciclu de facturare valid."))
+        conn.execute("UPDATE firms SET ciclu_facturare=? WHERE id=?",
+                    (ciclu, active_firm_id))
+        conn.commit()
+        return redirect(url_for("panou", mesaj="Planul a fost salvat."))
 
     @app.post("/panou/comutare-firma")
     def switch_firm():
@@ -982,23 +1123,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         pdb.CONTACT_TIP_ALTELE: "Altele",
     }
 
-    def _trimite_email_contact(nume, email, tip, mesaj):
-        """Retransmite mesajul catre CONTACT_EMAIL_TO prin SMTP, daca serverul
-        are configurate variabilele de mediu SMTP_HOST/SMTP_USER/SMTP_PASSWORD.
-        Mesajul e oricum pastrat in contact_messages - trimiterea prin email e
-        un bonus de notificare, nu singura cale prin care ajunge la master, asa
-        ca o eroare aici nu trebuie sa strice cererea utilizatorului."""
+    def _trimite_email(destinatar: str, subiect: str, continut: str,
+                       reply_to: str | None = None) -> None:
+        """Trimite un email simplu prin SMTP, daca serverul are configurate
+        variabilele de mediu SMTP_HOST/SMTP_USER/SMTP_PASSWORD - altfel nu
+        face nimic. Apelantii care depind de livrare (verificarea de email)
+        trebuie sa tina cont ca fara SMTP configurat, aceasta functie e un
+        no-op tacut - vezi EMAIL_VERIFICARE_OBLIGATORIE."""
         host = os.environ.get("SMTP_HOST")
         if not host:
             return
         try:
             msg = EmailMessage()
-            msg["Subject"] = f"[e-TVA Contact] {CONTACT_ETICHETE.get(tip, tip)}"
+            msg["Subject"] = subiect
             msg["From"] = os.environ.get("SMTP_FROM", CONTACT_EMAIL_TO)
-            msg["To"] = CONTACT_EMAIL_TO
-            msg["Reply-To"] = email
-            msg.set_content(f"De la: {nume} <{email}>\nTema: "
-                            f"{CONTACT_ETICHETE.get(tip, tip)}\n\n{mesaj}")
+            msg["To"] = destinatar
+            if reply_to:
+                msg["Reply-To"] = reply_to
+            msg.set_content(continut)
             port = int(os.environ.get("SMTP_PORT", "587"))
             with smtplib.SMTP(host, port, timeout=10) as s:
                 s.starttls()
@@ -1008,7 +1150,29 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                     s.login(user, password)
                 s.send_message(msg)
         except (smtplib.SMTPException, OSError) as e:
-            app.logger.warning("Trimiterea emailului de contact a esuat: %s", e)
+            app.logger.warning("Trimiterea emailului catre %s a esuat: %s", destinatar, e)
+
+    def _trimite_email_contact(nume, email, tip, mesaj):
+        """Retransmite mesajul catre CONTACT_EMAIL_TO - mesajul e oricum
+        pastrat in contact_messages, trimiterea prin email e un bonus de
+        notificare, nu singura cale prin care ajunge la master."""
+        _trimite_email(
+            CONTACT_EMAIL_TO, f"[e-TVA Contact] {CONTACT_ETICHETE.get(tip, tip)}",
+            f"De la: {nume} <{email}>\nTema: {CONTACT_ETICHETE.get(tip, tip)}\n\n{mesaj}",
+            reply_to=email)
+
+    def _trimite_email_verificare(email: str, nume_firma: str, token: str) -> None:
+        """Spre deosebire de _trimite_email_contact, aici emailul e singura
+        cale prin care clientul primeste link-ul - de asta accesul nu se
+        blocheaza real (vezi EMAIL_VERIFICARE_OBLIGATORIE) pana nu e
+        confirmat ca SMTP-ul chiar livreaza pe serverul de productie."""
+        link = url_for("verifica_email", token=token, _external=True)
+        _trimite_email(
+            email, "Confirma contul e-TVA Reconciliere",
+            f"Salut,\n\nCa sa activezi contul firmei {nume_firma} pe "
+            f"e-TVA Reconciliere, confirma adresa de email accesand linkul "
+            f"de mai jos:\n\n{link}\n\nDaca nu ai creat tu acest cont, "
+            f"poti ignora acest mesaj.")
 
     @app.post("/api/contact")
     def trimite_contact():

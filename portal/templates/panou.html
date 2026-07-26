@@ -24,6 +24,23 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     <b>{{ anunt_eticheta.get(anunt['tip'], anunt['tip']) }}</b><span>{{ anunt['mesaj'] }}</span>
   </div>
   {% endif %}
+  {% if email_verificare_obligatorie and plan_activ and not plan_activ['email_verificat'] %}
+  <div class="banner-anunt tip-mentenanta">
+    <b>Cont neconfirmat</b><span>Confirmă-ți adresa de email ca să poți
+      folosi aplicația — <a href="/asteapta-verificare-email">vezi detalii</a>.</span>
+  </div>
+  {% endif %}
+  {% if plan_activ and not plan_activ['ciclu_facturare'] %}
+  <div class="banner-anunt {{ 'tip-incident' if zile_trial == 0 else 'tip-informativ' }}">
+    {% if zile_trial and zile_trial > 0 %}
+    <b>Perioadă de probă</b><span>Mai ai {{ zile_trial }} zile gratuite —
+      <a href="/panou/plan">alege un ciclu de facturare</a> oricând.</span>
+    {% else %}
+    <b>Perioada de probă s-a încheiat</b><span>
+      <a href="/panou/plan">Alege un ciclu de facturare</a> ca să continui.</span>
+    {% endif %}
+  </div>
+  {% endif %}
   <div class="card">
     <h2>Firmele mele</h2>
     <p class="sub">Te autentifici cu CUI-ul firmei si parola ta{% if active %}

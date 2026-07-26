@@ -13,6 +13,7 @@
       <button class="btn-lat" type="submit">Intra in cont</button>
     </form>
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+    {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
     <p class="nota">Nu ai cont? <a href="/inregistrare">Creeaza un cont de firma</a>.</p>
   </div>
 </main>

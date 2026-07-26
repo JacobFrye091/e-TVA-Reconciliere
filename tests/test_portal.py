@@ -21,9 +21,10 @@ def _mock_anaf_cui(monkeypatch):
     monkeypatch.setattr(anaf_cui, "verify_cui", _fake)
 
 
-def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate"):
+def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate",
+                  email="test@exemplu.ro"):
     return c.post("/inregistrare", data={
-        "name": name, "cui": cui, "tip": tip,
+        "name": name, "cui": cui, "tip": tip, "email": email,
         "password": "ParolaLunga123!", "accept_termeni": "on"},
         follow_redirects=False)
 
@@ -94,6 +95,44 @@ def test_migrate_adds_onboarding_flag_defaulting_to_unseen(tmp_path):
     reopened = pdb.open_db(path)
     row = reopened.execute("SELECT * FROM users WHERE username='vechi'").fetchone()
     assert row["onboarding_completat"] == 0
+
+
+def test_migrate_adds_users_email_column(tmp_path):
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, "
+                "pw_hash TEXT, is_master INTEGER DEFAULT 0, active INTEGER DEFAULT 1)")
+    conn.execute("INSERT INTO users(username, pw_hash) VALUES('vechi', 'x')")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    row = reopened.execute("SELECT * FROM users WHERE username='vechi'").fetchone()
+    assert row["email"] is None  # coloana noua exista, contul vechi n-avea email
+
+
+def test_migrate_adds_firms_verificare_trial_defaulting_to_already_verified(tmp_path):
+    """Firmele care exista deja inainte de aceasta cerinta nu trebuie
+    blocate retroactiv - email_verificat trebuie sa porneasca 1, nu 0."""
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE firms(id INTEGER PRIMARY KEY, name TEXT, "
+                "cui TEXT UNIQUE, tip TEXT DEFAULT 'contabilitate', active INTEGER DEFAULT 1)")
+    conn.execute("INSERT INTO firms(name, cui) VALUES('Firma Veche SRL', 'RO888')")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    row = reopened.execute("SELECT * FROM firms WHERE cui='RO888'").fetchone()
+    assert row["email_verificat"] == 1
+    assert row["email_verificare_token"] is None
+    assert row["ciclu_facturare"] is None
 
 
 def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
@@ -2016,6 +2055,139 @@ def test_restaureaza_backup_restores_older_state_and_closes_process_connections(
     # pana la restart, nu doar "date invechite"
     with pytest.raises(sqlite3.ProgrammingError):
         app.portal_conn.execute("SELECT 1")
+
+
+# ---------- inregistrare: email obligatoriu + verificare cont + trial ----------
+
+def test_inregistrare_requires_email(app):
+    c = app.test_client()
+    r = c.post("/inregistrare", data={
+        "name": "Firma X SRL", "cui": "RO333", "tip": "direct",
+        "password": "ParolaLunga123!", "accept_termeni": "on"})
+    assert "obligatorii".encode() in r.data
+
+
+def test_inregistrare_rejects_invalid_email_format(app):
+    c = app.test_client()
+    r = c.post("/inregistrare", data={
+        "name": "Firma X SRL", "cui": "RO333", "tip": "direct",
+        "email": "nu-e-email", "password": "ParolaLunga123!",
+        "accept_termeni": "on"})
+    assert "nu pare valida".encode() in r.data
+
+
+def test_inregistrare_stores_email_and_starts_trial(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO333", email="andrei@exemplu.ro")
+    row = app.portal_conn.execute(
+        "SELECT u.email, f.email_verificat, f.email_verificare_token, "
+        "f.creat_la, f.trial_expira_la FROM users u "
+        "JOIN user_firms uf ON uf.user_id=u.id "
+        "JOIN firms f ON f.id=uf.firm_id WHERE f.cui='RO333'").fetchone()
+    assert row["email"] == "andrei@exemplu.ro"
+    assert row["email_verificat"] == 0
+    assert row["email_verificare_token"]
+    assert row["creat_la"] and row["trial_expira_la"]
+
+
+def test_adauga_firma_pe_cont_existent_nu_cere_reverificare(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO901")
+    r = c.post("/panou/firme", data={
+        "name": "A Doua Firma SRL", "cui": "RO902", "tip": "direct"})
+    row = app.portal_conn.execute(
+        "SELECT email_verificat, email_verificare_token FROM firms "
+        "WHERE cui='RO902'").fetchone()
+    assert row["email_verificat"] == 1
+    assert row["email_verificare_token"] is None
+
+
+def test_verifica_email_marks_firm_verified(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO444")
+    token = app.portal_conn.execute(
+        "SELECT email_verificare_token FROM firms WHERE cui='RO444'"
+    ).fetchone()["email_verificare_token"]
+    r = c.get(f"/verifica-email/{token}", follow_redirects=True)
+    assert "confirmata".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT email_verificat, email_verificare_token FROM firms "
+        "WHERE cui='RO444'").fetchone()
+    assert row["email_verificat"] == 1
+    assert row["email_verificare_token"] is None
+
+
+def test_verifica_email_rejects_unknown_token(app):
+    c = app.test_client()
+    r = c.get("/verifica-email/token-inexistent", follow_redirects=True)
+    assert "invalid".encode() in r.data
+
+
+def test_app_allows_access_when_verification_not_enforced(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO555")
+    r = c.get("/app")
+    assert r.status_code == 200
+
+
+def test_app_blocks_unverified_firm_when_enforced(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "EMAIL_VERIFICARE_OBLIGATORIE", True)
+    c = app.test_client()
+    inregistreaza(c, cui="RO666")
+    r = c.get("/app", follow_redirects=False)
+    assert r.status_code == 302
+    assert "asteapta-verificare-email" in r.headers["Location"]
+
+
+def test_app_allows_verified_firm_when_enforced(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "EMAIL_VERIFICARE_OBLIGATORIE", True)
+    c = app.test_client()
+    inregistreaza(c, cui="RO777")
+    token = app.portal_conn.execute(
+        "SELECT email_verificare_token FROM firms WHERE cui='RO777'"
+    ).fetchone()["email_verificare_token"]
+    c.get(f"/verifica-email/{token}")
+    r = c.get("/app")
+    assert r.status_code == 200
+
+
+def test_retrimite_verificare_email_confirms_resend(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO888")
+    r = c.post("/retrimite-verificare-email", follow_redirects=True)
+    assert "Email retrimis".encode() in r.data
+
+
+def test_alege_plan_requires_login(app):
+    c = app.test_client()
+    r = c.get("/panou/plan", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_alege_plan_shows_prices_for_firm_tip(app):
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO999", tip="contabilitate")
+    r = c.get("/panou/plan")
+    assert str(pdb.PRETURI_LUNARE_RON["contabilitate"]["lunar"]).encode() in r.data
+
+
+def test_salveaza_plan_rejects_invalid_cycle(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO101")
+    r = c.post("/panou/plan", data={"ciclu": "saptamanal"}, follow_redirects=True)
+    assert "ciclu de facturare valid".encode() in r.data
+
+
+def test_salveaza_plan_stores_choice(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO102")
+    r = c.post("/panou/plan", data={"ciclu": "an"}, follow_redirects=True)
+    assert "Planul a fost salvat".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT ciclu_facturare FROM firms WHERE cui='RO102'").fetchone()
+    assert row["ciclu_facturare"] == "an"
+
 
 def test_master_backup_list_requires_master(app):
     c = app.test_client()

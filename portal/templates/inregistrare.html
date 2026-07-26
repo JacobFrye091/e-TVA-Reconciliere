@@ -4,8 +4,9 @@
 <main class="ingust">
   <div class="card">
     <h2>Cont nou de firma</h2>
-    <p class="sub">Gratuit in perioada de lansare. Din acest cont iti vei
-      administra echipa si vei folosi aplicatia desktop.</p>
+    <p class="sub">30 de zile gratuite de la crearea contului, fara nicio
+      plata acum. Din acest cont iti vei administra echipa si vei folosi
+      aplicatia desktop.</p>
     <form method="post">
       <label>Ce fel de firma este?</label>
       <div class="tip-firma">
@@ -33,6 +34,11 @@
       <label for="name">Denumirea firmei (completata automat din CUI)</label>
       <input id="name" name="name" required readonly
              placeholder="Se completeaza dupa verificarea CUI">
+      <label for="email">Adresa de email</label>
+      <input id="email" name="email" type="email" required
+             placeholder="ex: nume@firma.ro">
+      <p class="nota" style="margin-top:2px">Trimitem aici un link de
+        confirmare a contului - verifica-ti inbox-ul dupa creare.</p>
       <label for="password">Parola (minim 10 caractere)</label>
       <input id="password" name="password" type="password" required minlength="10">
       <label class="optiune-tip" style="margin-top:14px">

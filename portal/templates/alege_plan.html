@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block titlu %}Alege planul — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.plan-optiuni { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin:16px 0; }
+.plan-card { border:1px solid var(--border); border-radius:10px; padding:16px; }
+.plan-card b { font-size:20px; }
+.plan-card label { display:flex; align-items:center; gap:8px; font-weight:normal;
+  margin-top:10px; }
+.plan-card input[type="radio"] { width:auto; }
+</style>
+{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card">
+    <h2>Planul firmei {{ firm['name'] }}</h2>
+    {% if firm['ciclu_facturare'] %}
+    <p class="sub">Ciclu de facturare ales acum:
+      <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>.
+      Poți schimba oricând mai jos.</p>
+    {% elif zile_trial is not none and zile_trial > 0 %}
+    <p class="sub">Mai ai <b>{{ zile_trial }}</b> zile gratuite din perioada
+      de probă. Alege un ciclu de facturare oricând, sau așteaptă până la
+      final.</p>
+    {% else %}
+    <p class="sub" style="color:var(--warn)">Perioada gratuită de 30 de zile
+      s-a încheiat — alege un ciclu de facturare ca să continui.</p>
+    {% endif %}
+    {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
+    {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
+
+    <form method="post" action="/panou/plan">
+      <div class="plan-optiuni">
+        <div class="plan-card">
+          <span class="nota" style="margin:0">LUNAR</span><br>
+          <b>{{ preturi['lunar'] }} RON</b><span class="nota" style="margin:0">/lună{{ '/client' if firm['tip'] == 'contabilitate' else '' }}</span>
+          <label><input type="radio" name="ciclu" value="lunar"
+                 {% if firm['ciclu_facturare'] == 'lunar' %}checked{% endif %} required> Alege lunar</label>
+        </div>
+        <div class="plan-card">
+          <span class="nota" style="margin:0">6 LUNI</span><br>
+          <b>{{ preturi['6luni'] }} RON</b><span class="nota" style="margin:0">/lună{{ '/client' if firm['tip'] == 'contabilitate' else '' }}</span>
+          <label><input type="radio" name="ciclu" value="6luni"
+                 {% if firm['ciclu_facturare'] == '6luni' %}checked{% endif %} required> Alege la 6 luni</label>
+        </div>
+        <div class="plan-card">
+          <span class="nota" style="margin:0">1 AN</span><br>
+          <b>{{ preturi['an'] }} RON</b><span class="nota" style="margin:0">/lună{{ '/client' if firm['tip'] == 'contabilitate' else '' }}</span>
+          <label><input type="radio" name="ciclu" value="an"
+                 {% if firm['ciclu_facturare'] == 'an' %}checked{% endif %} required> Alege anual</label>
+        </div>
+      </div>
+      <button class="btn-lat" type="submit">Salvează alegerea</button>
+    </form>
+    <p class="nota">Plata efectivă nu e încă automatizată — alegerea de aici
+      ne ajută să pregătim facturarea; te contactăm separat pentru plată.</p>
+    <p class="nota"><a href="/panou">&larr; Înapoi la panou</a></p>
+  </div>
+</main>
+{% endblock %}

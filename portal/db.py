@@ -56,10 +56,16 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
   tip TEXT NOT NULL DEFAULT 'contabilitate',
-  active INTEGER NOT NULL DEFAULT 1);
+  active INTEGER NOT NULL DEFAULT 1,
+  email_verificat INTEGER NOT NULL DEFAULT 0,
+  email_verificare_token TEXT,
+  creat_la TEXT,
+  trial_expira_la TEXT,
+  ciclu_facturare TEXT);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
+  email TEXT,
   is_master INTEGER NOT NULL DEFAULT 0,
   onboarding_completat INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1);
@@ -137,6 +143,24 @@ EFACTURA_RESPINSA = "respinsa"
 # Cod Fiscal), calculata sub acelasi db_lock care serializeaza deja toate
 # cererile catre portal.db.
 FACTURA_SERIE = "ETVA"
+
+# Perioada gratuita de la inregistrare (firms.creat_la) - dupa TRIAL_ZILE,
+# firma trebuie sa aleaga un ciclu de facturare (vezi CICLURI_FACTURARE) ca
+# sa continue sa foloseasca platforma. Alegerea e auto-declarata, fara plata
+# reala - nu exista inca o poarta de plati integrata.
+TRIAL_ZILE = 30
+CICLU_LUNAR = "lunar"
+CICLU_6_LUNI = "6luni"
+CICLU_AN = "an"
+CICLURI_FACTURARE = (CICLU_LUNAR, CICLU_6_LUNI, CICLU_AN)
+
+# Pretul de referinta afisat pe pagina de alegere a ciclului - RON, per luna
+# echivalenta. Pentru firma 'contabilitate' e per client gestionat, nu per
+# firma - vezi etva/clients.py pentru numarul de clienti ai unei firme.
+PRETURI_LUNARE_RON = {
+    FIRM_TIP_DIRECT: {CICLU_LUNAR: 59, CICLU_6_LUNI: 49, CICLU_AN: 39},
+    FIRM_TIP_CONTABILITATE: {CICLU_LUNAR: 25, CICLU_6_LUNI: 20, CICLU_AN: 15},
+}
 
 
 def _migrate_legacy_users(conn: sqlite3.Connection) -> None:
@@ -267,6 +291,42 @@ def _migrate_firms_autoincrement(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_users_email(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate users.email - add it, defaulting
+    existing accounts to NULL (unknown). Was never collected before
+    e-Factura/trial email verification needed somewhere to send to."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "users" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "email" in cols:
+        return
+    conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    conn.commit()
+
+
+def _migrate_add_firms_verificare_trial(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate email verification and the trial/
+    billing-cycle columns on firms - add them, defaulting existing rows to
+    already-verified (email_verificat=1) since they predate the
+    requirement entirely and shouldn't retroactively get locked out."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "email_verificat" in cols:
+        return
+    conn.executescript(
+        "ALTER TABLE firms ADD COLUMN email_verificat INTEGER NOT NULL DEFAULT 1;"
+        "ALTER TABLE firms ADD COLUMN email_verificare_token TEXT;"
+        "ALTER TABLE firms ADD COLUMN creat_la TEXT;"
+        "ALTER TABLE firms ADD COLUMN trial_expira_la TEXT;"
+        "ALTER TABLE firms ADD COLUMN ciclu_facturare TEXT;")
+    conn.commit()
+
+
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -276,5 +336,7 @@ def open_db(path: str) -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     _migrate_firms_autoincrement(conn)
     _migrate_add_efactura_columns(conn)
+    _migrate_add_users_email(conn)
+    _migrate_add_firms_verificare_trial(conn)
     conn.commit()
     return conn

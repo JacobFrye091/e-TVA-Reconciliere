@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block titlu %}Confirmă emailul — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card">
+    <h2>Confirmă-ți adresa de email</h2>
+    <p class="sub">Ți-am trimis un link de confirmare la adresa de email cu
+      care ți-ai creat contul. Deschide-l ca să poți folosi platforma.</p>
+    {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
+    <form method="post" action="/retrimite-verificare-email">
+      <button class="btn-lat" type="submit">Retrimite emailul</button>
+    </form>
+    <p class="nota"><a href="/iesire">Ieși din cont</a>.</p>
+  </div>
+</main>
+{% endblock %}
