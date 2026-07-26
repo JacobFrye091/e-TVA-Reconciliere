@@ -186,6 +186,24 @@ section { padding: 84px 0; }
   border-left: 3px solid var(--stamp-2); padding: 10px 16px; background: rgba(156, 51, 39, .14);
   border-radius: 0 4px 4px 0; }
 
+/* Pricing */
+.pret-grila { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+@media (max-width: 820px) { .pret-grila { grid-template-columns: 1fr; } }
+.pret-card { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 26px 24px; }
+.pret-card h3 { font-size: 17px; margin-bottom: 4px; font-weight: 600; }
+.pret-card > p { color: var(--muted); font-size: 13.5px; font-family: var(--body); margin-bottom: 18px; }
+.pret-cicluri { border-top: 1px solid var(--rule); }
+.pret-rand { display: flex; justify-content: space-between; align-items: baseline;
+  padding: 13px 0; border-bottom: 1px solid var(--rule); }
+.pret-rand .et { font-family: var(--disp); font-size: 13.5px; font-weight: 600; display: flex;
+  align-items: center; gap: 8px; }
+.pret-rand .val { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+.pret-rand .val small { color: var(--muted); font-size: 12px; }
+.pret-bine { font-family: var(--disp); font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--stamp); border: 1px solid var(--stamp); background: var(--stamp-soft);
+  border-radius: 3px; padding: 2px 7px; }
+.pret-nota { margin-top: 18px; font-size: 12.5px; color: var(--muted); font-family: var(--body); }
+
 /* Download CTA */
 .desc { text-align: center; }
 .desc h2 { font-size: clamp(24px, 3vw, 33px); font-weight: 600; margin-bottom: 14px; }
@@ -223,6 +241,7 @@ footer a:hover { color: #fff; }
       <a href="#functionalitati">Funcționalități</a>
       <a href="#cum">Cum funcționează</a>
       <a href="#securitate">Securitate</a>
+      <a href="#preturi">Prețuri</a>
       <a href="ghid.html">Ghid complet</a>
       <a href="contact.html">Contact</a>
       <a href="autentificare" data-auth="autentificare">Autentificare</a>
@@ -379,6 +398,40 @@ footer a:hover { color: #fff; }
     </div>
     <p class="s-nota reveal">Fiecare firmă vede și lucrează exclusiv cu datele proprii —
       izolare completă între conturi, verificată la fiecare cerere.</p>
+  </div>
+</section>
+
+<!-- Preturile de mai jos sunt fixe (nu template Jinja - index.html e servit static),
+    trebuie tinute manual in sincron cu portal/db.py::PRETURI_LUNARE_RON. -->
+<section id="preturi" class="desc">
+  <div class="inv reveal">
+    <h2>Prețuri simple, fără costuri ascunse</h2>
+    <p>30 de zile gratuite de la crearea contului, fără nicio plată. Alegi
+      ciclul de facturare abia după ce ai testat platforma.</p>
+  </div>
+  <div class="inv">
+    <div class="pret-grila">
+      <div class="pret-card reveal">
+        <h3>Firmă/PFA directă</h3>
+        <p>Reconciliezi TVA-ul propriu, fără clienți separați.</p>
+        <div class="pret-cicluri">
+          <div class="pret-rand"><span class="et">Lunar</span><span class="val">59 RON<small>/lună</small></span></div>
+          <div class="pret-rand"><span class="et">La 6 luni</span><span class="val">49 RON<small>/lună</small></span></div>
+          <div class="pret-rand"><span class="et">Anual <span class="pret-bine">CEL MAI BUN PREȚ</span></span><span class="val">39 RON<small>/lună</small></span></div>
+        </div>
+      </div>
+      <div class="pret-card reveal">
+        <h3>Firmă de contabilitate</h3>
+        <p>Gestionezi reconcilierea pentru mai mulți clienți — preț per client.</p>
+        <div class="pret-cicluri">
+          <div class="pret-rand"><span class="et">Lunar</span><span class="val">25 RON<small>/client/lună</small></span></div>
+          <div class="pret-rand"><span class="et">La 6 luni</span><span class="val">20 RON<small>/client/lună</small></span></div>
+          <div class="pret-rand"><span class="et">Anual <span class="pret-bine">CEL MAI BUN PREȚ</span></span><span class="val">15 RON<small>/client/lună</small></span></div>
+        </div>
+      </div>
+    </div>
+    <p class="pret-nota">Prețurile nu includ TVA. Poți schimba ciclul de facturare
+      oricând din panoul contului.</p>
   </div>
 </section>
 
