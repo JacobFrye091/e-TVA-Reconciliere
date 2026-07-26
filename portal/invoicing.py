@@ -20,6 +20,8 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
                                 Paragraph, Spacer)
 
+from portal import pdf_fonts
+
 # Identitatea legala a emitentului (VML EXPERT ADVISOR SRL) - aceleasi date
 # ca in docs/confidentialitate.html si docs/termeni.html. Firma e platitoare
 # de TVA (verificat live la ANAF - scpTVA=True pentru RO35070700).
@@ -54,21 +56,22 @@ def _suma(valoare: float) -> str:
 
 def generate_pdf(invoice: dict) -> bytes:
     """invoice: un rand din tabela invoices (sau un dict cu aceleasi chei)."""
+    pdf_fonts.asigura_fonturi()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         topMargin=18 * mm, bottomMargin=18 * mm,
         leftMargin=18 * mm, rightMargin=18 * mm)
 
-    eyebrow = ParagraphStyle("eyebrow", fontName="Helvetica-Bold", fontSize=9,
+    eyebrow = ParagraphStyle("eyebrow", fontName=pdf_fonts.BOLD, fontSize=9,
                              textColor=_ACCENT, leading=11, spaceAfter=2)
-    title = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=22,
+    title = ParagraphStyle("title", fontName=pdf_fonts.BOLD, fontSize=22,
                            textColor=_INK, leading=26)
-    label = ParagraphStyle("label", fontName="Helvetica-Bold", fontSize=8,
+    label = ParagraphStyle("label", fontName=pdf_fonts.BOLD, fontSize=8,
                            textColor=_MUTED, leading=11)
-    body = ParagraphStyle("body", fontName="Helvetica", fontSize=10,
+    body = ParagraphStyle("body", fontName=pdf_fonts.REGULAR, fontSize=10,
                           textColor=_INK, leading=14)
-    small = ParagraphStyle("small", fontName="Helvetica", fontSize=8.5,
+    small = ParagraphStyle("small", fontName=pdf_fonts.REGULAR, fontSize=8.5,
                            textColor=_MUTED, leading=12)
 
     elems = []

@@ -2343,6 +2343,21 @@ def _apropie_trial_de_final(app, cui):
     app.portal_conn.commit()
 
 
+_PNG_1X1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+           "YAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+
+
+def _semneaza_contract_mouse(c):
+    """Genereaza (daca nu exista deja) si semneaza contractul curent al
+    firmei active a clientului dat, cu o 'semnatura' desenata falsa -
+    suficient cat sa treaca poarta din creeaza_cerere_plata fara sa
+    testeze aici verificarea criptografica (vezi testele dedicate)."""
+    c.get("/panou/contract")
+    return c.post("/panou/contract/semneaza", data={
+        "metoda": "mouse",
+        "semnatura_mouse": "data:image/png;base64," + _PNG_1X1})
+
+
 def test_alege_plan_hides_payment_button_early_in_trial(app):
     c = app.test_client()
     inregistreaza(c, cui="RO201")
@@ -2373,6 +2388,7 @@ def test_creeaza_cerere_plata_direct_firm(app):
     inregistreaza(c, cui="RO204", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO204")
+    _semneaza_contract_mouse(c)
     r = c.post("/panou/plata", data={"recurent": "on"}, follow_redirects=True)
     assert "Cererea de plata a fost inregistrata".encode() in r.data
     row = app.portal_conn.execute(
@@ -2390,6 +2406,7 @@ def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
     inregistreaza(c, cui="RO205", tip="contabilitate")
     c.post("/panou/plan", data={"ciclu": "an"})
     _apropie_trial_de_final(app, "RO205")
+    _semneaza_contract_mouse(c)
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO205'").fetchone()["id"]
     c.post("/panou/plata", data={})
@@ -2416,6 +2433,7 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
     inregistreaza(c, cui="RO206", tip="direct")
     c.post("/panou/plan", data={"ciclu": "6luni"})
     _apropie_trial_de_final(app, "RO206")
+    _semneaza_contract_mouse(c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2444,6 +2462,7 @@ def test_valideaza_plata_rejects_already_validated(app):
     inregistreaza(c, cui="RO207", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO207")
+    _semneaza_contract_mouse(c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2461,6 +2480,7 @@ def test_alege_plan_shows_12_month_payment_history(app):
     inregistreaza(c, cui="RO208", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO208")
+    _semneaza_contract_mouse(c)
     c.post("/panou/plata", data={})
     r = c.get("/panou/plan")
     assert "Istoricul pl".encode() in r.data
@@ -2539,6 +2559,7 @@ def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
     inregistreaza(c, cui="RO209", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO209")
+    _semneaza_contract_mouse(c)
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2597,3 +2618,312 @@ def test_descarca_backup_rejects_unknown_names(app):
     for nume in ("portal.db", "etva-backup-20260101-000000.zip"):
         r = c_master.get(f"/master/backup/{nume}/descarca", follow_redirects=False)
         assert r.status_code == 302 and "/master/backup" in r.headers["Location"]
+
+
+# ---------- contract de prestari servicii ----------
+
+@pytest.fixture(scope="module")
+def _semnatura_certificat():
+    """Genereaza un certificat radacina + unul de test sintetice (doar
+    pentru acest fisier de test - generarea cheilor RSA nu e ieftina),
+    semneaza un PDF minimal cu el si intoarce (pdf_semnat_bytes, root_pem).
+    Nu e un certificat calificat real - vezi etva/trust_anchors/README.md."""
+    import datetime as _dt
+    import os
+    import tempfile
+    from cryptography import x509 as cx509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from reportlab.pdfgen import canvas as _canvas
+    from pyhanko.sign.signers import SimpleSigner, sign_pdf
+    from pyhanko.sign.fields import SigFieldSpec, append_signature_field
+    from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    def _cert(cn, issuer_key, issuer_cert, is_ca):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = cx509.Name([cx509.NameAttribute(NameOID.COMMON_NAME, cn)])
+        issuer_name = issuer_cert.subject if issuer_cert else subject
+        signing_key = issuer_key or key
+        builder = (cx509.CertificateBuilder().subject_name(subject)
+                  .issuer_name(issuer_name).public_key(key.public_key())
+                  .serial_number(cx509.random_serial_number())
+                  .not_valid_before(_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1))
+                  .not_valid_after(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=365))
+                  .add_extension(cx509.BasicConstraints(ca=is_ca, path_length=None),
+                                critical=True))
+        return key, builder.sign(signing_key, hashes.SHA256())
+
+    root_key, root_cert = _cert("Test Root CA", None, None, True)
+    leaf_key, leaf_cert = _cert("Semnatar Test SRL", root_key, root_cert, False)
+    root_pem = root_cert.public_bytes(serialization.Encoding.PEM)
+    leaf_pem = leaf_cert.public_bytes(serialization.Encoding.PEM)
+    leaf_key_pem = leaf_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption())
+
+    buf = io.BytesIO()
+    cv = _canvas.Canvas(buf)
+    cv.drawString(100, 750, "Document de test pentru semnatura.")
+    cv.save()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root_path = os.path.join(tmp, "root.pem")
+        leaf_path = os.path.join(tmp, "leaf.pem")
+        key_path = os.path.join(tmp, "leaf.key")
+        with open(root_path, "wb") as f:
+            f.write(root_pem)
+        with open(leaf_path, "wb") as f:
+            f.write(leaf_pem)
+        with open(key_path, "wb") as f:
+            f.write(leaf_key_pem)
+        signer = SimpleSigner.load(key_path, leaf_path, ca_chain_files=[root_path])
+        w = IncrementalPdfFileWriter(io.BytesIO(buf.getvalue()))
+        append_signature_field(w, SigFieldSpec(sig_field_name="Semnatura1"))
+        out = sign_pdf(w, PdfSignatureMetadata(field_name="Semnatura1"), signer=signer)
+        pdf_semnat = out.getvalue()
+
+    return pdf_semnat, root_pem
+
+
+def test_vezi_contract_requires_login(app):
+    c = app.test_client()
+    r = c.get("/panou/contract", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_vezi_contract_requires_ciclu_ales(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO301")
+    r = c.get("/panou/contract", follow_redirects=True)
+    assert "Alege intai un ciclu".encode() in r.data
+
+
+def test_vezi_contract_genereaza_contract_cu_ambele_parti(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO302", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    r = c.get("/panou/contract")
+    assert r.status_code == 200
+    assert "VML EXPERT ADVISOR SRL".encode() in r.data
+    assert "Firma Test".encode() in r.data  # denumirea mock-uita de _mock_anaf_cui
+    row = app.portal_conn.execute(
+        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO302'").fetchone()
+    assert row["stare"] == "in_asteptare"
+    assert row["ciclu_facturare"] == "lunar"
+    assert row["suma"] == 59
+
+
+def test_vezi_contract_regenereaza_daca_ciclul_se_schimba(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO303", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO303'").fetchone()["id"]
+    numar_initial = app.portal_conn.execute(
+        "SELECT numar FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()["numar"]
+
+    c.post("/panou/plan", data={"ciclu": "an"})
+    c.get("/panou/contract")
+    contracte = app.portal_conn.execute(
+        "SELECT numar, ciclu_facturare FROM contracts WHERE firm_id=? ORDER BY id",
+        (firm_id,)).fetchall()
+    assert len(contracte) == 2
+    assert contracte[-1]["ciclu_facturare"] == "an"
+    assert contracte[-1]["numar"] != numar_initial
+
+
+def test_descarca_contract_pdf(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO310", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.get("/panou/contract/pdf")
+    assert r.status_code == 200
+    assert r.data[:4] == b"%PDF"
+
+
+def test_descarca_contract_pdf_renders_romanian_diacritics(app):
+    """Regresie: fonturile standard Helvetica ale reportlab (WinAnsiEncoding)
+    nu acopera deloc s/t cu virgula dedesubt - le inlocuiau silentios cu
+    alt caracter, fara nicio eroare, pana cand cineva citea PDF-ul cu
+    atentie (vezi portal/pdf_fonts.py). Verificam explicit ca litere ca
+    PARTILE/PRETUL/INCETAREA (cu diacritice) apar corect in textul extras."""
+    import pdfplumber
+    c = app.test_client()
+    inregistreaza(c, cui="RO314", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.get("/panou/contract/pdf")
+    with pdfplumber.open(io.BytesIO(r.data)) as pdf:
+        text = pdf.pages[0].extract_text()
+    for cuvant in ("PĂRȚILE", "PREȚUL", "ÎNCETAREA", "OBLIGAȚIILE"):
+        assert cuvant in text
+
+
+def test_semneaza_contract_mouse(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO304", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _semneaza_contract_mouse(c)
+    row = app.portal_conn.execute(
+        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO304'").fetchone()
+    assert row["stare"] == "semnat"
+    assert row["metoda_semnatura"] == "mouse"
+    assert row["semnatura_verificata"] == 0
+    assert row["pdf_semnat"] is not None
+    assert row["semnat_la"] is not None
+
+
+def test_semneaza_contract_mouse_requires_semnatura(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO313", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.post("/panou/contract/semneaza",
+              data={"metoda": "mouse", "semnatura_mouse": ""},
+              follow_redirects=True)
+    assert "Deseneaza o semnatura".encode() in r.data
+
+
+def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certificat):
+    pdf_semnat, _root_pem = _semnatura_certificat
+    c = app.test_client()
+    inregistreaza(c, cui="RO305", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.post("/panou/contract/semneaza", data={
+        "metoda": "certificat",
+        "semnatura_fisier": (io.BytesIO(pdf_semnat), "contract_semnat.pdf"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 302
+    row = app.portal_conn.execute(
+        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO305'").fetchone()
+    assert row["stare"] == "semnat"
+    assert row["metoda_semnatura"] == "certificat"
+    # Nicio ancora reala de incredere configurata (etva/trust_anchors/ e
+    # gol) - deci valid dar netrusted, exact ce ar trebui sa raporteze.
+    assert row["semnatura_verificata"] == 0
+    import json as _json
+    detalii = _json.loads(row["semnatura_detalii"])
+    assert detalii["valid"] is True
+    assert detalii["trusted"] is False
+
+
+def test_semneaza_contract_certificat_rejects_unsigned_pdf(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO311", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    from reportlab.pdfgen import canvas as _canvas
+    buf = io.BytesIO()
+    cv = _canvas.Canvas(buf)
+    cv.drawString(100, 750, "fara semnatura")
+    cv.save()
+    r = c.post("/panou/contract/semneaza", data={
+        "metoda": "certificat",
+        "semnatura_fisier": (io.BytesIO(buf.getvalue()), "nesemnat.pdf"),
+    }, content_type="multipart/form-data", follow_redirects=True)
+    assert "nu contine nicio semnatura".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT c.stare FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO311'").fetchone()
+    assert row["stare"] == "in_asteptare"
+
+
+def test_semneaza_contract_certificat_rejects_non_pdf_file(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO312", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.post("/panou/contract/semneaza", data={
+        "metoda": "certificat",
+        "semnatura_fisier": (io.BytesIO(b"nu e deloc pdf"), "gresit.txt"),
+    }, content_type="multipart/form-data", follow_redirects=True)
+    assert "nu poate fi citit ca PDF".encode() in r.data
+
+
+def test_creeaza_cerere_plata_requires_signed_contract(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO309", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO309")
+    r = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "semnezi contractul de prestari servicii".encode() in r.data
+
+
+def test_reziliaza_contract_requires_signed_state(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO306", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.post("/panou/contract/reziliaza", follow_redirects=True)
+    assert "Nu exista niciun contract semnat activ".encode() in r.data
+
+
+def test_master_contracte_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/contracte", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_finalizeaza_reziliere_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/contracte/1/reziliaza", data={"ramburs_procent": "10"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_reziliaza_contract_flow_complete(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO307", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _semneaza_contract_mouse(c)
+    r = c.post("/panou/contract/reziliaza", follow_redirects=True)
+    assert "reziliere a fost inregistrata".encode() in r.data
+
+    contract_id = app.portal_conn.execute(
+        "SELECT c.id FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO307'").fetchone()["id"]
+    row = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE id=?", (contract_id,)).fetchone()
+    assert row["stare"] == "reziliere_solicitata"
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r_master = c_master.post(
+        f"/master/contracte/{contract_id}/reziliaza",
+        data={"ramburs_procent": "30"}, follow_redirects=True)
+    assert "reziliat".encode() in r_master.data
+    row = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE id=?", (contract_id,)).fetchone()
+    assert row["stare"] == "reziliat"
+    assert row["ramburs_procent"] == 30
+    assert row["reziliat_de"] == "sef"
+
+
+def test_finalizeaza_reziliere_rejects_ramburs_peste_maxim(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO308", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _semneaza_contract_mouse(c)
+    contract_id = app.portal_conn.execute(
+        "SELECT c.id FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO308'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post(
+        f"/master/contracte/{contract_id}/reziliaza",
+        data={"ramburs_procent": "75"}, follow_redirects=True)
+    assert "trebuie sa fie intre 0 si".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT stare FROM contracts WHERE id=?", (contract_id,)).fetchone()
+    assert row["stare"] == "semnat"

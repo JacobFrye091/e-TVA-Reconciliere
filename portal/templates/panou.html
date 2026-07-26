@@ -77,6 +77,27 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     {% endif %}
   </div>
 
+  {% if active %}
+  <div class="card">
+    <h2>Contract de prestări servicii</h2>
+    {% if contract_activ and contract_activ['stare'] == 'semnat' %}
+    <p class="sub">Contract nr. {{ contract_activ['numar'] }}, semnat la
+      {{ contract_activ['semnat_la'][:10] }}
+      ({{ 'prin certificat digital' if contract_activ['metoda_semnatura'] == 'certificat' else 'semnătură desenată' }}).</p>
+    <a class="btn" href="/panou/contract">Vezi contractul</a>
+    {% elif contract_activ and contract_activ['stare'] == 'reziliere_solicitata' %}
+    <p class="sub" style="color:var(--warn)">Ai solicitat rezilierea contractului —
+      cererea e în curs de procesare.</p>
+    <a class="btn" href="/panou/contract">Vezi contractul</a>
+    {% elif contract_activ and contract_activ['stare'] == 'reziliat' %}
+    <p class="sub">Contractul nr. {{ contract_activ['numar'] }} a fost reziliat.</p>
+    {% else %}
+    <p class="sub">Trebuie semnat înainte de a putea trimite o cerere de plată.</p>
+    <a class="btn" href="/panou/contract">Semnează contractul</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="card">
     <h2>Adauga o firma (SRL/PFA)</h2>
     <p class="sub">Completeaza CUI-ul si bifeaza "Cod CUI Completat" ca sa

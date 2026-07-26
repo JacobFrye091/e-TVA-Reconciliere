@@ -144,6 +144,24 @@ CREATE TABLE IF NOT EXISTS planuri_facturare(
   pret_lunar_ron REAL NOT NULL,
   actualizat_de TEXT, actualizat_la TEXT,
   PRIMARY KEY (tip, ciclu_facturare));
+CREATE TABLE IF NOT EXISTS contracts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  firm_id INTEGER NOT NULL REFERENCES firms(id),
+  numar INTEGER NOT NULL UNIQUE,
+  ciclu_facturare TEXT NOT NULL,
+  suma REAL NOT NULL,
+  continut TEXT NOT NULL,
+  stare TEXT NOT NULL DEFAULT 'in_asteptare',
+  creat_la TEXT NOT NULL,
+  metoda_semnatura TEXT,
+  pdf_semnat BLOB,
+  semnatura_verificata INTEGER NOT NULL DEFAULT 0,
+  semnatura_detalii TEXT,
+  semnat_la TEXT,
+  reziliere_solicitata_la TEXT,
+  reziliat_la TEXT,
+  reziliat_de TEXT,
+  ramburs_procent REAL);
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
@@ -159,6 +177,22 @@ EFACTURA_RESPINSA = "respinsa"
 # incasarea pe alta cale.
 PLATA_IN_ASTEPTARE = "in_asteptare"
 PLATA_VALIDATA = "validata"
+
+# Starile contractului de prestari servicii dintre VML si firma abonata -
+# vezi portal/contract.py pentru generarea textului si etva/digital_signature.py
+# pentru verificarea semnaturii electronice.
+CONTRACT_STARE_IN_ASTEPTARE = "in_asteptare"
+CONTRACT_STARE_SEMNAT = "semnat"
+CONTRACT_STARE_REZILIERE_SOLICITATA = "reziliere_solicitata"
+CONTRACT_STARE_REZILIAT = "reziliat"
+
+CONTRACT_METODA_MOUSE = "mouse"
+CONTRACT_METODA_CERTIFICAT = "certificat"
+
+# Cerut explicit: daca firma reziliaza contractul inainte de finalul
+# perioadei de facturare deja platite, rambursul nu poate depasi jumatate
+# din suma achitata pentru acel ciclu.
+CONTRACT_RAMBURS_MAX_PROCENT = 50
 
 # Seria unica de facturare a platformei - un singur emitent (VML EXPERT
 # ADVISOR SRL), deci o singura serie e suficienta; numerotarea e secventiala

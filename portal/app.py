@@ -4,7 +4,7 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import json, os, pathlib, re, secrets, smtplib, threading
+import base64, json, os, pathlib, re, secrets, smtplib, threading
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
@@ -17,11 +17,13 @@ from portal import db as pdb
 from portal import security as psec
 from portal import pipeline
 from portal import invoicing
+from portal import contract as contract_mod
 from portal import backup as backup_mod
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
 from etva import anaf_oauth
+from etva import digital_signature
 from etva import efactura_xml
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
@@ -613,6 +615,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         anaf_autorizare = None
         plan_activ = None
         zile_trial = None
+        contract_activ = None
         if active is not None:
             anaf_autorizare = conn.execute(
                 "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?",
@@ -621,6 +624,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                 "SELECT email_verificat, trial_expira_la, ciclu_facturare "
                 "FROM firms WHERE id=?", (active["id"],)).fetchone()
             zile_trial = _zile_trial_ramase(plan_activ["trial_expira_la"])
+            contract_activ = conn.execute(
+                "SELECT * FROM contracts WHERE firm_id=? "
+                "ORDER BY id DESC LIMIT 1", (active["id"],)).fetchone()
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
@@ -630,6 +636,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                                cerere_stergere=cerere_stergere,
                                anaf_autorizare=anaf_autorizare,
                                plan_activ=plan_activ, zile_trial=zile_trial,
+                               contract_activ=contract_activ,
                                email_verificare_obligatorie=EMAIL_VERIFICARE_OBLIGATORIE)
 
     @app.post("/panou/firme")
@@ -712,6 +719,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         if firm is None or not firm["ciclu_facturare"]:
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
+        contract_curent = conn.execute(
+            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+            (active_firm_id,)).fetchone()
+        if (contract_curent is None
+                or contract_curent["stare"] != pdb.CONTRACT_STARE_SEMNAT
+                or contract_curent["ciclu_facturare"] != firm["ciclu_facturare"]):
+            return redirect(url_for(
+                "vezi_contract",
+                eroare="Trebuie sa semnezi contractul de prestari servicii "
+                      "inainte de a trimite o cerere de plata."))
         suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
         recurent = 1 if request.form.get("recurent") else 0
         # TODO integrare FGO: aici ar trebui creata factura+link de plata
@@ -728,6 +745,170 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             "alege_plan",
             mesaj="Cererea de plata a fost inregistrata - va fi procesata "
                  "in curand."))
+
+    # ---------- contract de prestari servicii ----------
+    def _contract_curent(firm_id: int):
+        return conn.execute(
+            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+            (firm_id,)).fetchone()
+
+    def _genereaza_contract(firm) -> "tuple[object, str | None]":
+        """Contractul curent al firmei, generat din nou daca nu exista inca
+        unul sau daca firma si-a schimbat ciclul de facturare de atunci.
+        Intoarce (rand, eroare) - eroare != None daca ANAF nu a putut fi
+        contactat (contractul vechi, daca exista, ramane cel curent)."""
+        existent = _contract_curent(firm["id"])
+        if (existent is not None
+                and existent["ciclu_facturare"] == firm["ciclu_facturare"]):
+            return existent, None
+        try:
+            beneficiar = contract_mod.date_beneficiar(firm["cui"])
+        except contract_mod.ContractError as e:
+            return existent, str(e)
+        suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+        numar = contract_mod.next_contract_number(conn)
+        continut = contract_mod.genereaza_text(
+            numar, beneficiar, firm["ciclu_facturare"], suma)
+        cur = conn.execute(
+            "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
+            "continut, stare, creat_la) VALUES(?,?,?,?,?,?,?)",
+            (firm["id"], numar, firm["ciclu_facturare"], suma, continut,
+             pdb.CONTRACT_STARE_IN_ASTEPTARE,
+             datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        return conn.execute(
+            "SELECT * FROM contracts WHERE id=?", (cur.lastrowid,)).fetchone(), None
+
+    @app.get("/panou/contract")
+    def vezi_contract():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (active_firm_id,)).fetchone()
+        if firm is None or not firm["ciclu_facturare"]:
+            return redirect(url_for(
+                "alege_plan", eroare="Alege intai un ciclu de facturare."))
+        contract, eroare_generare = _genereaza_contract(firm)
+        return render_template(
+            "contract_semneaza.html", user=user, firm=firm, contract=contract,
+            eroare=eroare_generare or request.args.get("eroare"),
+            mesaj=request.args.get("mesaj"))
+
+    @app.get("/panou/contract/pdf")
+    def descarca_contract_pdf():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        contract = _contract_curent(active_firm_id)
+        if contract is None:
+            return redirect(url_for("vezi_contract"))
+        if contract["pdf_semnat"]:
+            pdf_bytes = bytes(contract["pdf_semnat"])
+        else:
+            pdf_bytes = contract_mod.genereaza_pdf(contract["continut"])
+        return Response(
+            pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition":
+                    f"inline; filename=contract-{contract['numar']}.pdf"})
+
+    @app.post("/panou/contract/semneaza")
+    def semneaza_contract():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        contract = _contract_curent(active_firm_id)
+        if contract is None or contract["stare"] != pdb.CONTRACT_STARE_IN_ASTEPTARE:
+            return redirect(url_for(
+                "vezi_contract", eroare="Nu exista niciun contract de semnat."))
+        metoda = request.form.get("metoda")
+        acum = datetime.now(timezone.utc).isoformat()
+
+        if metoda == pdb.CONTRACT_METODA_MOUSE:
+            semnatura_b64 = request.form.get("semnatura_mouse", "")
+            if "," in semnatura_b64:
+                semnatura_b64 = semnatura_b64.split(",", 1)[1]
+            if not semnatura_b64:
+                return redirect(url_for(
+                    "vezi_contract", eroare="Deseneaza o semnatura inainte de a trimite."))
+            try:
+                semnatura_png = base64.b64decode(semnatura_b64)
+            except (ValueError, TypeError):
+                return redirect(url_for(
+                    "vezi_contract", eroare="Semnatura trimisa este invalida."))
+            pdf_semnat = contract_mod.genereaza_pdf(
+                contract["continut"], semnatura_img=semnatura_png)
+            conn.execute(
+                "UPDATE contracts SET stare=?, metoda_semnatura=?, "
+                "pdf_semnat=?, semnatura_verificata=0, semnatura_detalii=?, "
+                "semnat_la=? WHERE id=?",
+                (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_MOUSE,
+                 pdf_semnat, json.dumps({
+                     "metoda": "mouse",
+                     "nota": "Semnatura electronica simpla - fara verificare criptografica."}),
+                 acum, contract["id"]))
+            conn.commit()
+        elif metoda == pdb.CONTRACT_METODA_CERTIFICAT:
+            fisier = request.files.get("semnatura_fisier")
+            if fisier is None or not fisier.filename:
+                return redirect(url_for(
+                    "vezi_contract", eroare="Incarca fisierul PDF semnat cu certificatul tau."))
+            pdf_bytes = fisier.read()
+            try:
+                verificare = digital_signature.verifica_semnatura_pdf(pdf_bytes)
+            except digital_signature.SignatureVerificationError as e:
+                return redirect(url_for("vezi_contract", eroare=str(e)))
+            if not verificare["valid"]:
+                return redirect(url_for(
+                    "vezi_contract",
+                    eroare=f"Semnatura nu a putut fi validata: {verificare['eroare']}"))
+            conn.execute(
+                "UPDATE contracts SET stare=?, metoda_semnatura=?, "
+                "pdf_semnat=?, semnatura_verificata=?, semnatura_detalii=?, "
+                "semnat_la=? WHERE id=?",
+                (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_CERTIFICAT,
+                 pdf_bytes, 1 if verificare["trusted"] else 0,
+                 json.dumps(verificare), acum, contract["id"]))
+            conn.commit()
+        else:
+            return redirect(url_for(
+                "vezi_contract", eroare="Alege o metoda de semnatura valida."))
+
+        audit_fc = firm_conn(active_firm_id)
+        audit.log(audit_fc, user["username"], "contract.semnare",
+                  "contract", str(contract["id"]))
+        return redirect(url_for(
+            "vezi_contract", mesaj="Contractul a fost semnat cu succes."))
+
+    @app.post("/panou/contract/reziliaza")
+    def reziliaza_contract():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        contract = _contract_curent(active_firm_id)
+        if contract is None or contract["stare"] != pdb.CONTRACT_STARE_SEMNAT:
+            return redirect(url_for(
+                "vezi_contract", eroare="Nu exista niciun contract semnat activ."))
+        conn.execute(
+            "UPDATE contracts SET stare=?, reziliere_solicitata_la=? WHERE id=?",
+            (pdb.CONTRACT_STARE_REZILIERE_SOLICITATA,
+             datetime.now(timezone.utc).isoformat(), contract["id"]))
+        conn.commit()
+        audit_fc = firm_conn(active_firm_id)
+        audit.log(audit_fc, user["username"], "contract.reziliere_solicitata",
+                  "contract", str(contract["id"]))
+        return redirect(url_for(
+            "vezi_contract",
+            mesaj="Cererea de reziliere a fost inregistrata - va fi procesata "
+                 "de echipa noastra."))
 
     @app.post("/panou/comutare-firma")
     def switch_firm():
@@ -1696,6 +1877,72 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         return redirect(url_for(
             "master_plati",
             mesaj="Incasarea a fost validata si factura a fost emisa."))
+
+    @app.get("/master/contracte")
+    def master_contracte():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        contracte = conn.execute(
+            "SELECT c.*, f.name AS firm_name, f.cui AS firm_cui FROM contracts c "
+            "JOIN firms f ON f.id = c.firm_id ORDER BY c.creat_la DESC").fetchall()
+        return render_template(
+            "master_contracte.html", user=user, contracte=contracte,
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.get("/master/contracte/<int:contract_id>/pdf")
+    def descarca_contract_pdf_master(contract_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        if contract is None:
+            return redirect(url_for("master_contracte"))
+        if contract["pdf_semnat"]:
+            pdf_bytes = bytes(contract["pdf_semnat"])
+        else:
+            pdf_bytes = contract_mod.genereaza_pdf(contract["continut"])
+        return Response(
+            pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition":
+                    f"inline; filename=contract-{contract['numar']}.pdf"})
+
+    @app.post("/master/contracte/<int:contract_id>/reziliaza")
+    def finalizeaza_reziliere_contract(contract_id):
+        """Master proceseaza manual reziliere - fie ceruta de firma, fie
+        initiata direct - cu un ramburs care nu poate depasi jumatate din
+        suma achitata pentru ciclul curent (CONTRACT_RAMBURS_MAX_PROCENT)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        if contract is None or contract["stare"] == pdb.CONTRACT_STARE_REZILIAT:
+            return redirect(url_for(
+                "master_contracte", eroare="Contractul nu exista sau e deja reziliat."))
+        try:
+            ramburs_procent = float(request.form.get("ramburs_procent", ""))
+        except ValueError:
+            ramburs_procent = None
+        if (ramburs_procent is None or ramburs_procent < 0
+                or ramburs_procent > pdb.CONTRACT_RAMBURS_MAX_PROCENT):
+            return redirect(url_for(
+                "master_contracte",
+                eroare=f"Rambursul trebuie sa fie intre 0 si "
+                      f"{pdb.CONTRACT_RAMBURS_MAX_PROCENT}%."))
+        acum = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE contracts SET stare=?, reziliat_la=?, reziliat_de=?, "
+            "ramburs_procent=? WHERE id=?",
+            (pdb.CONTRACT_STARE_REZILIAT, acum, user["username"],
+             ramburs_procent, contract_id))
+        conn.commit()
+        _log_master_action(
+            user, "contract.reziliere",
+            f"contract #{contract['numar']} - ramburs {ramburs_procent:g}%")
+        return redirect(url_for(
+            "master_contracte", mesaj="Contractul a fost reziliat."))
 
     @app.get("/master/nomenclator")
     def master_nomenclator():

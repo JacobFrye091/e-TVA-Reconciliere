@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block titlu %}Contract de prestări servicii — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+.contract-text { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.6; background: var(--paper); border: 1px solid var(--border);
+  border-radius: 8px; padding: 18px; max-height: 420px; overflow-y: auto; }
+.metoda-optiuni { display: flex; gap: 18px; margin: 14px 0; flex-wrap: wrap; }
+.metoda-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+  flex: 1; min-width: 240px; }
+#canvasSemnatura { border: 1px dashed var(--border); border-radius: 8px;
+  touch-action: none; cursor: crosshair; background: #fff; display: block; }
+</style>
+{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <h2>Contract de prestări servicii</h2>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/panou">&larr; Înapoi la panou</a>
+  </div>
+  {% if mesaj %}
+  <div class="card"><p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p></div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
+  {% if contract %}
+  <div class="card">
+    <p class="sub">Contract nr. <b>{{ contract['numar'] }}</b>, ciclu de facturare
+      <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[contract['ciclu_facturare']] }}</b>,
+      {{ '%.2f'|format(contract['suma']) }} RON.
+      <a href="/panou/contract/pdf" target="_blank">Descarcă PDF</a></p>
+    <div class="contract-text">{{ contract['continut'] }}</div>
+  </div>
+
+  {% if contract['stare'] == 'in_asteptare' %}
+  <div class="card">
+    <h2>Semnează contractul</h2>
+    <p class="sub">Alege o metodă de semnătură.</p>
+    <div class="metoda-optiuni">
+      <div class="metoda-card">
+        <h3 style="margin-bottom:8px">Semnătură desenată</h3>
+        <p class="nota" style="margin:0 0 8px">Semnătură electronică simplă — fără verificare
+          criptografică a identității.</p>
+        <canvas id="canvasSemnatura" width="320" height="130"></canvas>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button type="button" class="secundar" onclick="stergeSemnatura()">Șterge</button>
+        </div>
+        <form method="post" action="/panou/contract/semneaza" id="formMouse" style="margin-top:10px">
+          <input type="hidden" name="metoda" value="mouse">
+          <input type="hidden" name="semnatura_mouse" id="semnaturaMouseInput">
+          <button class="btn-lat" type="submit" onclick="return trimiteSemnaturaMouse()">Semnează cu semnătura desenată</button>
+        </form>
+      </div>
+      <div class="metoda-card">
+        <h3 style="margin-bottom:8px">Certificat digital calificat</h3>
+        <p class="nota" style="margin:0 0 8px">Încarcă documentul PDF deja semnat cu propriul
+          certificat calificat — verificăm semnătura încorporată.</p>
+        <form method="post" action="/panou/contract/semneaza" enctype="multipart/form-data">
+          <input type="hidden" name="metoda" value="certificat">
+          <input type="file" name="semnatura_fisier" accept=".pdf" required>
+          <button class="btn-lat" type="submit" style="margin-top:10px">Încarcă documentul semnat</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% elif contract['stare'] == 'semnat' %}
+  <div class="card">
+    <p class="sub" style="color:var(--ok)">Contract semnat la {{ contract['semnat_la'][:10] }}
+      ({{ 'certificat digital' if contract['metoda_semnatura'] == 'certificat' else 'semnătură desenată' }}).</p>
+    <form method="post" action="/panou/contract/reziliaza"
+          onsubmit="return confirm('Sigur vrei să soliciți rezilierea contractului?');">
+      <button class="secundar" type="submit">Solicită rezilierea</button>
+    </form>
+    <p class="nota">Dacă te retragi înainte de finalul perioadei de facturare deja plătite,
+      rambursul nu va depăși 50% din suma achitată pentru acel ciclu.</p>
+  </div>
+  {% elif contract['stare'] == 'reziliere_solicitata' %}
+  <div class="card"><p class="sub" style="color:var(--warn)">Cererea ta de reziliere e în curs
+    de procesare.</p></div>
+  {% elif contract['stare'] == 'reziliat' %}
+  <div class="card"><p class="sub">Acest contract a fost reziliat
+    {% if contract['ramburs_procent'] is not none %}, cu un ramburs de {{ contract['ramburs_procent']|round(0, 'floor')|int }}%{% endif %}.</p></div>
+  {% endif %}
+  {% endif %}
+</main>
+<script>
+(function() {
+  const canvas = document.getElementById('canvasSemnatura');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#17203a';
+  let desenand = false, are_traseu = false;
+
+  function pozitie(e) {
+    const r = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return {x: p.clientX - r.left, y: p.clientY - r.top};
+  }
+  function start(e) { desenand = true; are_traseu = true; const p = pozitie(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+  function move(e) { if (!desenand) return; const p = pozitie(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
+  function stop() { desenand = false; }
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', stop);
+  canvas.addEventListener('touchstart', start);
+  canvas.addEventListener('touchmove', move);
+  window.addEventListener('touchend', stop);
+
+  window.stergeSemnatura = function() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    are_traseu = false;
+  };
+  window.trimiteSemnaturaMouse = function() {
+    if (!are_traseu) { alert('Desenează o semnătură înainte de a trimite.'); return false; }
+    document.getElementById('semnaturaMouseInput').value = canvas.toDataURL('image/png');
+    return true;
+  };
+})();
+</script>
+{% endblock %}
