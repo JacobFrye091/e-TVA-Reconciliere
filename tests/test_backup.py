@@ -97,3 +97,56 @@ def test_seconds_until_due_zero_when_overdue(tmp_path):
     stamp = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y%m%d-%H%M%S")
     _touch_backup(tmp_path, stamp)
     assert backup._seconds_until_due(str(tmp_path)) == 0.0
+
+
+def test_restore_backup_round_trip(tmp_path):
+    src_dir = tmp_path / "productie"
+    src_dir.mkdir()
+    _seed_data_dir(src_dir)
+    zip_path = backup.create_backup(str(src_dir))
+
+    dest_dir = tmp_path / "testare"
+    dest_dir.mkdir()
+    with open(zip_path, "rb") as fisier:
+        backup.restore_backup(str(dest_dir), fisier)
+
+    assert (dest_dir / "portal.db").read_bytes() == b"portal-db-bytes"
+    assert (dest_dir / "secret.key").read_bytes() == b"secret-key-bytes"
+    assert (dest_dir / "flask_secret.key").read_bytes() == b"flask-secret-bytes"
+    assert (dest_dir / "firms" / "firm_1.db").read_bytes() == b"firm-1-encrypted-bytes"
+
+
+def test_restore_backup_overwrites_existing_files(tmp_path):
+    src_dir = tmp_path / "productie"
+    src_dir.mkdir()
+    _seed_data_dir(src_dir)
+    zip_path = backup.create_backup(str(src_dir))
+
+    dest_dir = tmp_path / "testare"
+    dest_dir.mkdir()
+    (dest_dir / "portal.db").write_bytes(b"stale-testare-data")
+    (dest_dir / "secret.key").write_bytes(b"stale-testare-key")
+
+    with open(zip_path, "rb") as fisier:
+        backup.restore_backup(str(dest_dir), fisier)
+
+    assert (dest_dir / "portal.db").read_bytes() == b"portal-db-bytes"
+    assert (dest_dir / "secret.key").read_bytes() == b"secret-key-bytes"
+
+
+def test_restore_backup_rejects_zip_without_portal_db(tmp_path):
+    dest_dir = tmp_path / "testare"
+    dest_dir.mkdir()
+    (dest_dir / "portal.db").write_bytes(b"untouched")
+
+    bogus = tmp_path / "not-a-backup.zip"
+    with zipfile.ZipFile(bogus, "w") as zf:
+        zf.writestr("something-else.txt", "not a backup")
+
+    with open(bogus, "rb") as fisier:
+        try:
+            backup.restore_backup(str(dest_dir), fisier)
+            assert False, "expected BackupError"
+        except backup.BackupError:
+            pass
+    assert (dest_dir / "portal.db").read_bytes() == b"untouched"

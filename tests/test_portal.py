@@ -1920,6 +1920,103 @@ def test_descarca_raspuns_anaf_returns_none_when_not_yet_available(app):
 
 # ---------- backup date productie ----------
 
+def test_restaureaza_backup_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/backup/restaureaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_restaureaza_backup_blocked_in_productie(app, monkeypatch):
+    monkeypatch.setattr(pl, "own_environment", lambda: "productie")
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c_master.post("/master/backup/restaureaza", data={"confirm": "da"},
+                      follow_redirects=True)
+    assert "dezactivata in productie".encode() in r.data
+
+
+def test_restaureaza_backup_requires_confirmation(app, monkeypatch):
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c_master.post("/master/backup/restaureaza", data={}, follow_redirects=True)
+    assert "confirmi explicit".encode() in r.data
+
+
+def test_restaureaza_backup_requires_file(app, monkeypatch):
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c_master.post("/master/backup/restaureaza", data={"confirm": "da"},
+                      follow_redirects=True)
+    assert "Alege un fisier".encode() in r.data
+
+
+def test_restaureaza_backup_rejects_invalid_zip(app, monkeypatch):
+    import io
+    import zipfile
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    bogus = io.BytesIO()
+    with zipfile.ZipFile(bogus, "w") as zf:
+        zf.writestr("not-a-backup.txt", "nope")
+    bogus.seek(0)
+
+    r = c_master.post("/master/backup/restaureaza", data={
+        "confirm": "da", "fisier": (bogus, "bogus.zip"),
+    }, content_type="multipart/form-data", follow_redirects=True)
+    assert "Restaurare esuata".encode() in r.data
+
+
+def test_restaureaza_backup_restores_older_state_and_closes_process_connections(app, monkeypatch):
+    import io
+    import sqlite3
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    c_master.post("/master/backup/creeaza")
+    nume_backup_vechi = app.portal_conn.execute(
+        "SELECT detalii FROM master_actions WHERE actiune='backup_creat' "
+        "ORDER BY id DESC LIMIT 1").fetchone()["detalii"]
+    zip_bytes = c_master.get(f"/master/backup/{nume_backup_vechi}/descarca").data
+
+    c = app.test_client()
+    inregistreaza(c, name="Firma Noua SRL", cui="RO222")
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM firms WHERE cui='RO222'").fetchone()["n"] == 1
+    # trebuie citit inaintea restaurarii - conexiunea aplicatiei se va inchide
+    db_path = dict(app.portal_conn.execute("PRAGMA database_list").fetchone())["file"]
+
+    r = c_master.post("/master/backup/restaureaza", data={
+        "confirm": "da", "fisier": (io.BytesIO(zip_bytes), "backup.zip"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert "Backup restaurat".encode() in r.data
+    assert "Reporneste manual serverul".encode() in r.data
+
+    fresh = sqlite3.connect(db_path)
+    fresh.row_factory = sqlite3.Row
+    n_pe_disc = fresh.execute(
+        "SELECT COUNT(*) AS n FROM firms WHERE cui='RO222'").fetchone()["n"]
+    fresh.close()
+    assert n_pe_disc == 0  # firma noua a disparut din fisierul de pe disc
+
+    # conexiunea procesului a fost inchisa explicit - nimic nu mai poate rula
+    # pana la restart, nu doar "date invechite"
+    with pytest.raises(sqlite3.ProgrammingError):
+        app.portal_conn.execute("SELECT 1")
+
 def test_master_backup_list_requires_master(app):
     c = app.test_client()
     r = c.get("/master/backup", follow_redirects=False)

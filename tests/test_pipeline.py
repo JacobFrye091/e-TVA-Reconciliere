@@ -144,6 +144,21 @@ def test_log_and_history_round_trip():
     assert rows[0]["promoted_by"] == "sef"
 
 
+def test_own_environment_matches_testare(envs, monkeypatch):
+    monkeypatch.setattr(pipeline, "_OWN_REPO", envs["testare"])
+    assert pipeline.own_environment() == "testare"
+
+
+def test_own_environment_matches_productie(envs, monkeypatch):
+    monkeypatch.setattr(pipeline, "_OWN_REPO", envs["productie"])
+    assert pipeline.own_environment() == "productie"
+
+
+def test_own_environment_none_when_unrecognized(envs, monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "_OWN_REPO", tmp_path / "some-throwaway-dir")
+    assert pipeline.own_environment() is None
+
+
 def test_capture_started_commit_handles_missing_git(monkeypatch):
     def _boom(*a, **kw):
         raise pipeline.PipelineError("git not found")

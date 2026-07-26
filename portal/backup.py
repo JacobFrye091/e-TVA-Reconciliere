@@ -8,8 +8,10 @@ secret.key. That same completeness is why a backup file is exactly as
 sensitive as the data_dir itself: whoever holds it can decrypt every firm's
 data, so it must never be emailed unencrypted or left on a shared drive.
 """
+import os
 import pathlib
 import re
+import tempfile
 import threading
 import time
 import traceback
@@ -22,6 +24,10 @@ RETRY_INTERVAL_SECONDS = 3600
 KEEP_BACKUPS = 20
 
 _NAME_RE = re.compile(r"^etva-backup-(\d{8}-\d{6})\.zip$")
+
+
+class BackupError(Exception):
+    pass
 
 
 def _backups_dir(data_dir: str) -> pathlib.Path:
@@ -48,6 +54,50 @@ def create_backup(data_dir: str) -> pathlib.Path:
                 continue
             zf.write(path, path.relative_to(src))
     return out_path
+
+
+def validate_backup_zip(fisier) -> None:
+    """Raises BackupError if `fisier` doesn't look like one of our own
+    backups (no portal.db inside). Only reads the zip's directory listing -
+    touches nothing on disk - so a caller can check this before deciding to
+    commit to a destructive restore (e.g. before closing the app's live
+    database connections, see restore_backup below). Rewinds `fisier` back
+    to the start afterwards so it can be read again."""
+    with zipfile.ZipFile(fisier) as zf:
+        if "portal.db" not in zf.namelist():
+            raise BackupError(
+                "Fisierul nu pare un backup valid - lipseste portal.db.")
+    fisier.seek(0)
+
+
+def restore_backup(data_dir: str, fisier) -> None:
+    """Overwrites data_dir's contents with a previously-downloaded backup
+    zip - the inverse of create_backup. `fisier` is any file-like object
+    zipfile can read (e.g. a Flask FileStorage from request.files).
+
+    Extracts into a temp directory on the *same* filesystem as data_dir,
+    then swaps each file into place with os.replace() - an atomic rename,
+    never a truncate-in-place (which could hand a live connection a
+    half-written page). This still requires portal.db and any firm_*.db
+    to be closed by the caller first: POSIX allows renaming over an open
+    file, but Windows' os.replace() raises PermissionError if the
+    destination is open by the same process - so the caller (the
+    /master/backup/restaureaza route) closes every connection before
+    calling this, making "restart the server" a hard requirement
+    everywhere, not a Windows-only workaround.
+    """
+    validate_backup_zip(fisier)
+    dest_root = pathlib.Path(data_dir)
+    with zipfile.ZipFile(fisier) as zf, \
+         tempfile.TemporaryDirectory(dir=str(dest_root)) as tmp:
+        tmp_path = pathlib.Path(tmp)
+        zf.extractall(tmp_path)
+        for extracted in tmp_path.rglob("*"):
+            if extracted.is_dir():
+                continue
+            dest = dest_root / extracted.relative_to(tmp_path)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(extracted, dest)
 
 
 def list_backups(data_dir: str) -> list[dict]:

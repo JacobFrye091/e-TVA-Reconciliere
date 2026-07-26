@@ -1329,6 +1329,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return redirect(url_for("login"))
         return render_template(
             "master_backup.html", user=user, backups=backup_mod.list_backups(data_dir),
+            mediu=pipeline.own_environment(),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/master/backup/creeaza")
@@ -1358,6 +1359,59 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         if path is None:
             return redirect(url_for("master_backup", eroare="Backup inexistent."))
         return send_file(path, as_attachment=True, download_name=path.name)
+
+    @app.post("/master/backup/restaureaza")
+    def restaureaza_backup():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() == "productie":
+            return redirect(url_for(
+                "master_backup",
+                eroare="Restaurarea e dezactivata in productie - ar suprascrie datele live."))
+        if request.form.get("confirm") != "da":
+            return redirect(url_for(
+                "master_backup", eroare="Trebuie sa confirmi explicit inainte de restaurare."))
+        fisier = request.files.get("fisier")
+        if fisier is None or not fisier.filename:
+            return redirect(url_for("master_backup", eroare="Alege un fisier de backup (.zip)."))
+        try:
+            backup_mod.validate_backup_zip(fisier)
+        except backup_mod.BackupError as e:
+            return redirect(url_for("master_backup", eroare=f"Restaurare esuata: {e}"))
+        try:
+            # Safety snapshot of this environment's current state first -
+            # already inside the per-request db_lock (see _acquire_db_lock).
+            backup_mod.create_backup(data_dir)
+            backup_mod.prune_old_backups(data_dir)
+        except OSError as e:
+            return redirect(url_for("master_backup", eroare=f"Backup de siguranta esuat: {e}"))
+        _log_master_action(user, "backup_restaurat", fisier.filename)
+
+        # Restoring overwrites portal.db/firm_*.db on disk, so every open
+        # connection this process holds must close first - os.replace()
+        # can't swap a file Windows still has open, and even on POSIX a
+        # connection left open would keep reading pre-restore content
+        # forever without ever really being "stale". Once closed, nothing
+        # in this process can touch the database again until it's
+        # restarted, so the rest of this response is deliberately a plain
+        # page instead of a redirect - a redirect's follow-up GET would
+        # hit current_user()'s now-closed connection and crash.
+        conn.close()
+        for fc in firm_conns.values():
+            fc.close()
+        firm_conns.clear()
+        try:
+            backup_mod.restore_backup(data_dir, fisier)
+        except (OSError, backup_mod.BackupError) as e:
+            return (f"<h1>Restaurare partial esuata</h1><p>{e}</p>"
+                   "<p>Conexiunile catre baza de date sunt deja inchise - "
+                   "<b>reporneste serverul acestui mediu</b> indiferent de rezultat.</p>", 500)
+        return ("<h1>Backup restaurat</h1>"
+               "<p>Fisierele au fost inlocuite pe disc. "
+               "<b>Reporneste manual serverul acestui mediu</b> ca sa aiba efect - "
+               "orice alta actiune in aceasta sesiune va esua pana atunci, pentru ca "
+               "aplicatia tine conexiunile catre bazele de date deja deschise.</p>", 200)
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

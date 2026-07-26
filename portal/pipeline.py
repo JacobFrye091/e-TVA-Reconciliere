@@ -96,6 +96,22 @@ def running_vs_current() -> dict:
     }
 
 
+def own_environment() -> str | None:
+    """Which of dev/testare/productie this running process's own worktree
+    is, by matching _OWN_REPO against the known paths - or None if it
+    doesn't resolve to any of them (e.g. a throwaway test/dev data dir).
+    Used to hard-block operations (like restoring a backup) that must
+    never run against productie, regardless of what the operator uploads."""
+    paths = _repo_paths()
+    for env, path in paths.items():
+        try:
+            if path.resolve() == _OWN_REPO.resolve():
+                return env
+        except OSError:
+            continue
+    return None
+
+
 def branch_info(env: str) -> dict:
     """Current commit/subject/date/path for one environment, plus whether
     its worktree exists on disk at all."""
