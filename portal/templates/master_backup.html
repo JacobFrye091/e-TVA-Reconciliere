@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block titlu %}Backup — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--accent); border:1px solid var(--border); border-radius:7px;
+  text-decoration:none; display:inline-block; }
+a.mic:hover { background:var(--paper); }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Backup date producție</h2>
+      <p class="sub">Un backup conține baza de date a platformei, baza de
+        date criptată a fiecărei firme și cheile care le fac descifrabile.
+        Se creează automat la fiecare 3 zile — poți porni oricând și unul
+        manual, mai jos.</p>
+      <p class="sub" style="color:var(--warn);margin-top:8px">Un fișier de
+        backup e suficient, singur, pentru a citi datele oricărei firme —
+        tratează-l ca pe cea mai sensibilă informație din platformă: nu-l
+        trimite necriptat prin email și nu-l lăsa pe un disc partajat.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+  {% if mesaj %}
+  <div class="card"><p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p></div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
+  <div class="card">
+    <form method="post" action="/master/backup/creeaza">
+      <button type="submit">Creează backup acum</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Backup-uri existente</h2>
+    <table>
+      <tr><th>Fișier</th><th>Creat la</th><th>Mărime</th><th></th></tr>
+      {% for b in backups %}
+      <tr>
+        <td class="cod">{{ b['nume'] }}</td>
+        <td>{{ b['creat_la'].strftime('%Y-%m-%d %H:%M UTC') }}</td>
+        <td>{{ b['marime_mb'] }} MB</td>
+        <td style="text-align:right">
+          <a class="mic" href="/master/backup/{{ b['nume'] }}/descarca">Descarcă</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--muted)">Niciun backup creat inca.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

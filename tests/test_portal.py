@@ -1916,3 +1916,58 @@ def test_descarca_raspuns_anaf_returns_none_when_not_yet_available(app):
 
     r = c_master.get(f"/master/facturi/{factura_id}/raspuns-anaf", follow_redirects=False)
     assert r.status_code == 302 and "/master/facturi" in r.headers["Location"]
+
+
+# ---------- backup date productie ----------
+
+def test_master_backup_list_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/backup", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_creeaza_backup_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/backup/creeaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_creeaza_backup_produces_downloadable_zip_and_logs_action(app):
+    import zipfile
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c_master.post("/master/backup/creeaza", follow_redirects=True)
+    assert "Backup creat".encode() in r.data
+
+    row = app.portal_conn.execute(
+        "SELECT actiune, detalii FROM master_actions "
+        "WHERE actiune='backup_creat' ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None and row["detalii"].endswith(".zip")
+
+    r_lista = c_master.get("/master/backup")
+    assert row["detalii"].encode() in r_lista.data
+
+    r_descarca = c_master.get(f"/master/backup/{row['detalii']}/descarca")
+    assert r_descarca.status_code == 200
+    import io
+    with zipfile.ZipFile(io.BytesIO(r_descarca.data)) as zf:
+        assert "portal.db" in zf.namelist()
+        assert "secret.key" in zf.namelist()
+
+
+def test_descarca_backup_rejects_unknown_names(app):
+    """Path-traversal rejection itself (e.g. "../secret.key") is covered at
+    the unit level in test_backup.py::test_backup_path_rejects_traversal_
+    and_bad_names - URL routing may mangle a raw ".." segment before it
+    ever reaches the view, so this only exercises names that reach
+    descarca_backup() unchanged: a real file outside the naming pattern,
+    and a validly-named backup that doesn't exist."""
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    for nume in ("portal.db", "etva-backup-20260101-000000.zip"):
+        r = c_master.get(f"/master/backup/{nume}/descarca", follow_redirects=False)
+        assert r.status_code == 302 and "/master/backup" in r.headers["Location"]

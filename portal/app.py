@@ -17,6 +17,7 @@ from portal import db as pdb
 from portal import security as psec
 from portal import pipeline
 from portal import invoicing
+from portal import backup as backup_mod
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
@@ -84,7 +85,7 @@ def _donut_segments(counts: list[tuple[str, int]]) -> list[dict]:
     return segments
 
 
-def create_app(data_dir: str) -> Flask:
+def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
     firms_dir = os.path.join(data_dir, "firms")
     upload_dir = os.path.join(data_dir, "uploads")
@@ -119,6 +120,9 @@ def create_app(data_dir: str) -> Flask:
     @app.teardown_request
     def _release_db_lock(exc=None):
         db_lock.release()
+
+    if enable_backup_scheduler:
+        backup_mod.start_scheduler(data_dir, db_lock)
 
     def firm_conn(firm_id: int):
         if firm_id not in firm_conns:
@@ -1316,6 +1320,44 @@ def create_app(data_dir: str) -> Flask:
         return Response(
             factura["anaf_raspuns"], mimetype="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    # ---------- master: backup date productie ----------
+    @app.get("/master/backup")
+    def master_backup():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        return render_template(
+            "master_backup.html", user=user, backups=backup_mod.list_backups(data_dir),
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/master/backup/creeaza")
+    def creeaza_backup():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        try:
+            # Already inside the per-request db_lock (see _acquire_db_lock),
+            # so portal.db and every open firm connection are quiet for the
+            # duration of the zip.
+            path = backup_mod.create_backup(data_dir)
+            backup_mod.prune_old_backups(data_dir)
+        except OSError as e:
+            return redirect(url_for("master_backup", eroare=f"Backup esuat: {e}"))
+        _log_master_action(user, "backup_creat", path.name)
+        marime = round(path.stat().st_size / 1_048_576, 2)
+        return redirect(url_for(
+            "master_backup", mesaj=f"Backup creat: {path.name} ({marime} MB)."))
+
+    @app.get("/master/backup/<nume>/descarca")
+    def descarca_backup(nume):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        path = backup_mod.backup_path(data_dir, nume)
+        if path is None:
+            return redirect(url_for("master_backup", eroare="Backup inexistent."))
+        return send_file(path, as_attachment=True, download_name=path.name)
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")
