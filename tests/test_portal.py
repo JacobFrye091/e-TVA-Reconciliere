@@ -2189,6 +2189,140 @@ def test_salveaza_plan_stores_choice(app):
     assert row["ciclu_facturare"] == "an"
 
 
+# ---------- plati abonament ----------
+
+def _apropie_trial_de_final(app, cui):
+    from datetime import datetime, timedelta, timezone
+    aproape = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
+    app.portal_conn.execute(
+        "UPDATE firms SET trial_expira_la=? WHERE cui=?", (aproape, cui))
+    app.portal_conn.commit()
+
+
+def test_alege_plan_hides_payment_button_early_in_trial(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO201")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    r = c.get("/panou/plan")
+    assert "Plătește acum".encode() not in r.data
+
+
+def test_alege_plan_shows_payment_button_near_trial_end(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO202")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO202")
+    r = c.get("/panou/plan")
+    assert "Plătește acum".encode() in r.data
+
+
+def test_creeaza_cerere_plata_requires_ciclu_ales(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO203")
+    _apropie_trial_de_final(app, "RO203")
+    r = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "Alege intai un ciclu".encode() in r.data
+
+
+def test_creeaza_cerere_plata_direct_firm(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO204", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO204")
+    r = c.post("/panou/plata", data={"recurent": "on"}, follow_redirects=True)
+    assert "Cererea de plata a fost inregistrata".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT p.* FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO204'").fetchone()
+    assert row["suma"] == 59  # pret lunar direct, un singur ciclu de o luna
+    assert row["recurent"] == 1
+    assert row["stare"] == "in_asteptare"
+
+
+def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
+    """O firma de contabilitate abia inregistrata n-are inca niciun client
+    - suma trebuie calculata ca pentru minim 1 client, nu 0 RON."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO205", tip="contabilitate")
+    c.post("/panou/plan", data={"ciclu": "an"})
+    _apropie_trial_de_final(app, "RO205")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO205'").fetchone()["id"]
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT suma FROM payments WHERE firm_id=?", (firm_id,)).fetchone()
+    assert row["suma"] == 15 * 12
+
+
+def test_master_plati_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/plati", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_valideaza_plata_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/plati/1/valideaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_valideaza_plata_creates_invoice_and_updates_state(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO206", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "6luni"})
+    _apropie_trial_de_final(app, "RO206")
+    c.post("/panou/plata", data={})
+    plata_id = app.portal_conn.execute(
+        "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO206'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza", follow_redirects=True)
+    assert "Incasarea a fost validata".encode() in r.data
+
+    row = app.portal_conn.execute(
+        "SELECT * FROM payments WHERE id=?", (plata_id,)).fetchone()
+    assert row["stare"] == "validata"
+    assert row["validat_de"] == "sef"
+    assert row["invoice_id"] is not None
+
+    factura = app.portal_conn.execute(
+        "SELECT * FROM invoices WHERE id=?", (row["invoice_id"],)).fetchone()
+    assert factura["valoare_neta"] == 49 * 6  # pret 6luni direct x 6 luni
+    assert "6 luni".encode() in factura["descriere"].encode()
+
+
+def test_valideaza_plata_rejects_already_validated(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO207", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO207")
+    c.post("/panou/plata", data={})
+    plata_id = app.portal_conn.execute(
+        "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO207'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/plati/{plata_id}/valideaza")
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza", follow_redirects=True)
+    assert "deja validata".encode() in r.data
+
+
+def test_alege_plan_shows_12_month_payment_history(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO208", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO208")
+    c.post("/panou/plata", data={})
+    r = c.get("/panou/plan")
+    assert "Istoricul pl".encode() in r.data
+    assert "59.00".encode() in r.data or "59.0".encode() in r.data
+
+
 def test_master_backup_list_requires_master(app):
     c = app.test_client()
     r = c.get("/master/backup", follow_redirects=False)

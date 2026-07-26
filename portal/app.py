@@ -345,6 +345,21 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         expira = datetime.fromisoformat(trial_expira_la)
         return max(0, (expira - datetime.now(timezone.utc)).days)
 
+    def _luni_pentru_ciclu(ciclu: str) -> int:
+        return {pdb.CICLU_LUNAR: 1, pdb.CICLU_6_LUNI: 6, pdb.CICLU_AN: 12}[ciclu]
+
+    def _calculeaza_suma_plata(firm, ciclu: str) -> float:
+        """Firma 'contabilitate' plateste per client gestionat (minim 1, ca
+        o firma abia inregistrata - fara clienti inca - sa nu ajunga la o
+        factura de 0 RON); firma 'direct' are tarif fix per firma."""
+        pret_lunar = pdb.PRETURI_LUNARE_RON[firm["tip"]][ciclu]
+        luni = _luni_pentru_ciclu(ciclu)
+        if firm["tip"] == pdb.FIRM_TIP_CONTABILITATE:
+            n_clienti = firm_conn(firm["id"]).execute(
+                "SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
+            return round(pret_lunar * luni * max(n_clienti, 1), 2)
+        return round(pret_lunar * luni, 2)
+
     def _slugify(text: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
         return slug or "firma"
@@ -649,10 +664,19 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return redirect(url_for("login"))
         firm = conn.execute("SELECT * FROM firms WHERE id=?",
                             (active_firm_id,)).fetchone()
+        zile_trial = _zile_trial_ramase(firm["trial_expira_la"])
+        de_un_an = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        plati = conn.execute(
+            "SELECT * FROM payments WHERE firm_id=? AND creat_la>=? "
+            "ORDER BY creat_la DESC", (active_firm_id, de_un_an)).fetchall()
+        suma_curenta = (_calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+                       if firm["ciclu_facturare"] else None)
         return render_template(
             "alege_plan.html", user=user, firm=firm,
             preturi=pdb.PRETURI_LUNARE_RON[firm["tip"]],
-            zile_trial=_zile_trial_ramase(firm["trial_expira_la"]),
+            zile_trial=zile_trial, suma_curenta=suma_curenta, plati=plati,
+            arata_plata=(firm["ciclu_facturare"] and zile_trial is not None
+                        and zile_trial <= 1),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/panou/plan")
@@ -670,6 +694,39 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                     (ciclu, active_firm_id))
         conn.commit()
         return redirect(url_for("panou", mesaj="Planul a fost salvat."))
+
+    @app.post("/panou/plata")
+    def creeaza_cerere_plata():
+        """Inregistreaza intentia de plata a firmei - nu proceseaza nimic
+        real inca (vezi TODO integrare FGO/Netopia in _calculeaza_suma_plata
+        si mai jos). Master valideaza manual incasarea din /master/plati
+        dupa ce o confirma pe alta cale, si abia atunci se emite factura."""
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (active_firm_id,)).fetchone()
+        if firm is None or not firm["ciclu_facturare"]:
+            return redirect(url_for(
+                "alege_plan", eroare="Alege intai un ciclu de facturare."))
+        suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+        recurent = 1 if request.form.get("recurent") else 0
+        # TODO integrare FGO: aici ar trebui creata factura+link de plata
+        # prin API-ul FGO (conectat la Netopia Payments) si redirectionat
+        # clientul catre acel link, in loc sa marcam direct in_asteptare.
+        # Ramane asa pana exista un cont FGO/Netopia real de integrat.
+        conn.execute(
+            "INSERT INTO payments(firm_id, ciclu_facturare, suma, recurent, "
+            "stare, creat_la) VALUES(?,?,?,?,?,?)",
+            (active_firm_id, firm["ciclu_facturare"], suma, recurent,
+             pdb.PLATA_IN_ASTEPTARE, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        return redirect(url_for(
+            "alege_plan",
+            mesaj="Cererea de plata a fost inregistrata - va fi procesata "
+                 "in curand."))
 
     @app.post("/panou/comutare-firma")
     def switch_firm():
@@ -1576,6 +1633,68 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                "<b>Reporneste manual serverul acestui mediu</b> ca sa aiba efect - "
                "orice alta actiune in aceasta sesiune va esua pana atunci, pentru ca "
                "aplicatia tine conexiunile catre bazele de date deja deschise.</p>", 200)
+
+    # ---------- master: validare incasari ----------
+    @app.get("/master/plati")
+    def master_plati():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        plati = conn.execute(
+            "SELECT p.*, f.name AS firm_name, f.cui AS firm_cui FROM payments p "
+            "JOIN firms f ON f.id = p.firm_id ORDER BY p.creat_la DESC").fetchall()
+        return render_template(
+            "master_plati.html", user=user, plati=plati,
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/master/plati/<int:plata_id>/valideaza")
+    def valideaza_plata(plata_id):
+        """Confirma manual o incasare (nu exista inca procesare automata -
+        vezi TODO FGO in creeaza_cerere_plata) si emite automat factura
+        aferenta, reutilizand exact acelasi tabel/numerotare ca facturile
+        create manual din /master/facturi."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        plata = conn.execute("SELECT * FROM payments WHERE id=?",
+                             (plata_id,)).fetchone()
+        if plata is None or plata["stare"] == pdb.PLATA_VALIDATA:
+            return redirect(url_for(
+                "master_plati", eroare="Plata nu exista sau e deja validata."))
+        firma = conn.execute("SELECT * FROM firms WHERE id=?",
+                             (plata["firm_id"],)).fetchone()
+        if firma is None:
+            return redirect(url_for("master_plati", eroare="Firma nu a fost gasita."))
+        eticheta_ciclu = {"lunar": "lunar", "6luni": "la 6 luni",
+                         "an": "anual"}[plata["ciclu_facturare"]]
+        numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
+        valoare_neta = plata["suma"]
+        cota_tva = 19.0
+        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
+        valoare_totala = round(valoare_neta + valoare_tva, 2)
+        acum = datetime.now()
+        cur = conn.execute(
+            "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
+            "descriere, data_emiterii, valoare_neta, cota_tva, valoare_tva, "
+            "valoare_totala, creat_de, creat_la) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pdb.FACTURA_SERIE, numar, firma["id"], firma["name"], firma["cui"],
+             f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
+             acum.isoformat(), valoare_neta, cota_tva, valoare_tva,
+             valoare_totala, user["username"], acum.isoformat()))
+        invoice_id = cur.lastrowid
+        conn.execute(
+            "UPDATE payments SET stare=?, validat_de=?, validat_la=?, "
+            "invoice_id=? WHERE id=?",
+            (pdb.PLATA_VALIDATA, user["username"], acum.isoformat(),
+             invoice_id, plata_id))
+        conn.commit()
+        _log_master_action(
+            user, "plata.validare",
+            f"{firma['name']} - {eticheta_ciclu} ({_suma_scurta(valoare_totala)} RON) "
+            f"-> factura {pdb.FACTURA_SERIE} {numar}")
+        return redirect(url_for(
+            "master_plati",
+            mesaj="Incasarea a fost validata si factura a fost emisa."))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

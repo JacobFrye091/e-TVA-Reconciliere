@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block titlu %}Plăți — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--accent); border:1px solid var(--border); border-radius:7px;
+  text-decoration:none; display:inline-block; }
+a.mic:hover { background:var(--paper); }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Plăți abonament</h2>
+      <p class="sub">Cererile de plată trimise de firme — validează manual
+        odată ce confirmi încasarea pe altă cale (nu există încă procesare
+        automată prin FGO/Netopia). Validarea emite automat factura
+        aferentă, disponibilă apoi în <a href="/master/facturi">Facturi</a>.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+  {% if mesaj %}
+  <div class="card"><p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p></div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
+  <div class="card">
+    <table>
+      <tr><th>Firma</th><th>Ciclu</th><th>Sumă</th><th>Recurentă</th><th>Creat la</th><th>Stare</th><th></th></tr>
+      {% for p in plati %}
+      <tr>
+        <td>{{ p['firm_name'] }}<br><span class="nota" style="margin:0">{{ p['firm_cui'] }}</span></td>
+        <td>{{ {'lunar': 'Lunar', '6luni': 'La 6 luni', 'an': 'Anual'}[p['ciclu_facturare']] }}</td>
+        <td>{{ '%.2f'|format(p['suma']) }} {{ p['moneda'] }}</td>
+        <td>{{ 'Da' if p['recurent'] else 'Nu' }}</td>
+        <td>{{ p['creat_la'][:10] }}</td>
+        <td>
+          {% if p['stare'] == 'validata' %}<span class="chip ok">Validată</span>
+          {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
+        </td>
+        <td style="text-align:right">
+          {% if p['stare'] != 'validata' %}
+          <form class="inline" method="post" action="/master/plati/{{ p['id'] }}/valideaza">
+            <button class="mic" type="submit">Validează încasarea</button>
+          </form>
+          {% elif p['invoice_id'] %}
+          <a class="mic" href="/master/facturi/{{ p['invoice_id'] }}/pdf">Factura (PDF)</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" style="color:var(--muted)">Nicio cerere de plată încă.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

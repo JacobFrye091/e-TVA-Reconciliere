@@ -52,9 +52,46 @@
       </div>
       <button class="btn-lat" type="submit">Salvează alegerea</button>
     </form>
-    <p class="nota">Plata efectivă nu e încă automatizată — alegerea de aici
-      ne ajută să pregătim facturarea; te contactăm separat pentru plată.</p>
     <p class="nota"><a href="/panou">&larr; Înapoi la panou</a></p>
   </div>
+
+  {% if arata_plata %}
+  <div class="card">
+    <h2>Plătește abonamentul</h2>
+    <p class="sub">Ciclul ales:
+      <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>
+      — <b>{{ suma_curenta }} RON</b>{{ ' (calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
+    <form method="post" action="/panou/plata">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+        <input type="checkbox" name="recurent" value="on" style="width:auto">
+        Plată recurentă — reînnoiește automat la final de ciclu
+      </label>
+      <button class="btn-lat" type="submit" style="margin-top:12px">Plătește acum</button>
+    </form>
+    <p class="nota">Procesarea efectivă a plății nu e încă automatizată —
+      cererea ta e înregistrată și confirmată manual în curând.</p>
+  </div>
+  {% endif %}
+
+  {% if plati %}
+  <div class="card">
+    <h2>Istoricul plăților (ultimele 12 luni)</h2>
+    <table>
+      <tr><th>Data</th><th>Ciclu</th><th>Sumă</th><th>Recurentă</th><th>Stare</th></tr>
+      {% for p in plati %}
+      <tr>
+        <td>{{ p['creat_la'][:10] }}</td>
+        <td>{{ {'lunar': 'Lunar', '6luni': 'La 6 luni', 'an': 'Anual'}[p['ciclu_facturare']] }}</td>
+        <td>{{ p['suma'] }} {{ p['moneda'] }}</td>
+        <td>{{ 'Da' if p['recurent'] else 'Nu' }}</td>
+        <td>
+          {% if p['stare'] == 'validata' %}<span class="chip ok">Validată</span>
+          {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
 </main>
 {% endblock %}

@@ -128,6 +128,16 @@ CREATE TABLE IF NOT EXISTS invoices(
   anaf_index_incarcare TEXT, anaf_stare TEXT NOT NULL DEFAULT 'netrimisa',
   anaf_id_descarcare TEXT, anaf_raspuns BLOB, anaf_trimis_la TEXT,
   UNIQUE(serie, numar));
+CREATE TABLE IF NOT EXISTS payments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  firm_id INTEGER NOT NULL REFERENCES firms(id),
+  ciclu_facturare TEXT NOT NULL,
+  suma REAL NOT NULL, moneda TEXT NOT NULL DEFAULT 'RON',
+  recurent INTEGER NOT NULL DEFAULT 0,
+  stare TEXT NOT NULL DEFAULT 'in_asteptare',
+  creat_la TEXT NOT NULL,
+  validat_de TEXT, validat_la TEXT,
+  invoice_id INTEGER REFERENCES invoices(id));
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
@@ -136,6 +146,13 @@ EFACTURA_NETRIMISA = "netrimisa"
 EFACTURA_IN_PROCESARE = "in_procesare"
 EFACTURA_ACCEPTATA = "acceptata"
 EFACTURA_RESPINSA = "respinsa"
+
+# O cerere de plata e auto-declarata de firma (fara procesator de plati
+# integrat inca - vezi TODO-ul din portal/app.py despre FGO/Netopia) si
+# ramane in_asteptare pana master o valideaza manual dupa ce confirma
+# incasarea pe alta cale.
+PLATA_IN_ASTEPTARE = "in_asteptare"
+PLATA_VALIDATA = "validata"
 
 # Seria unica de facturare a platformei - un singur emitent (VML EXPERT
 # ADVISOR SRL), deci o singura serie e suficienta; numerotarea e secventiala
