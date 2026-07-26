@@ -135,6 +135,30 @@ def test_migrate_adds_firms_verificare_trial_defaulting_to_already_verified(tmp_
     assert row["ciclu_facturare"] is None
 
 
+def test_migrate_seeds_planuri_facturare_on_first_run(tmp_path):
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = pdb.open_db(path)
+    preturi = pdb.get_preturi(conn)
+    assert preturi["direct"] == {"lunar": 59, "6luni": 49, "an": 39}
+    assert preturi["contabilitate"] == {"lunar": 25, "6luni": 20, "an": 15}
+
+
+def test_migrate_does_not_reseed_planuri_facturare_after_master_edit(tmp_path):
+    """Un master care a modificat deja un pret nu trebuie sa-l vada resetat
+    la valoarea istorica la urmatoarea pornire a serverului."""
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = pdb.open_db(path)
+    pdb.set_pret(conn, "direct", "lunar", 99, "sef")
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    assert pdb.get_preturi(reopened)["direct"]["lunar"] == 99
+
+
 def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
     """Reproduces the real crash: a firm gets soft-deleted (firms/user_firms
     rows removed, firm_keys kept on purpose so the encrypted database stays
@@ -2169,7 +2193,8 @@ def test_alege_plan_shows_prices_for_firm_tip(app):
     c = app.test_client()
     inregistreaza(c, cui="RO999", tip="contabilitate")
     r = c.get("/panou/plan")
-    assert str(pdb.PRETURI_LUNARE_RON["contabilitate"]["lunar"]).encode() in r.data
+    pret = pdb.get_preturi(app.portal_conn)["contabilitate"]["lunar"]
+    assert str(pret).encode() in r.data
 
 
 def test_salveaza_plan_rejects_invalid_cycle(app):
@@ -2321,6 +2346,85 @@ def test_alege_plan_shows_12_month_payment_history(app):
     r = c.get("/panou/plan")
     assert "Istoricul pl".encode() in r.data
     assert "59.00".encode() in r.data or "59.0".encode() in r.data
+
+
+def test_master_nomenclator_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/nomenclator", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_salveaza_nomenclator_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/nomenclator", data={}, follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_nomenclator_shows_current_prices(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/nomenclator")
+    assert b'value="59' in r.data  # pret lunar firma directa
+    assert b'value="25' in r.data  # pret lunar firma contabilitate
+
+
+def _preturi_form(**overrides):
+    valori = {"pret_direct_lunar": "59", "pret_direct_6luni": "49", "pret_direct_an": "39",
+             "pret_contabilitate_lunar": "25", "pret_contabilitate_6luni": "20",
+             "pret_contabilitate_an": "15"}
+    valori.update(overrides)
+    return valori
+
+
+def test_salveaza_nomenclator_rejects_invalid_price(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator",
+              data=_preturi_form(pret_direct_lunar="abc"), follow_redirects=True)
+    assert "numar pozitiv".encode() in r.data
+    from portal import db as pdb
+    assert pdb.get_preturi(app.portal_conn)["direct"]["lunar"] == 59  # neschimbat
+
+
+def test_salveaza_nomenclator_rejects_zero_or_negative_price(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator",
+              data=_preturi_form(pret_direct_lunar="0"), follow_redirects=True)
+    assert "numar pozitiv".encode() in r.data
+
+
+def test_salveaza_nomenclator_updates_prices(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator",
+              data=_preturi_form(pret_direct_lunar="99"), follow_redirects=True)
+    assert "Preturile au fost actualizate".encode() in r.data
+    from portal import db as pdb
+    assert pdb.get_preturi(app.portal_conn)["direct"]["lunar"] == 99
+
+
+def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
+    """Pretul modificat din nomenclator trebuie sa se reflecte imediat in
+    suma de plata calculata pentru firme, nu doar in pagina de nomenclator."""
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/nomenclator", data=_preturi_form(pret_direct_lunar="100"))
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO209", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO209")
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO209'").fetchone()
+    assert row["suma"] == 100
 
 
 def test_master_backup_list_requires_master(app):

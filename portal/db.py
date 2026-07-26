@@ -8,6 +8,7 @@ user, since the platform owner has no firm membership at all. App
 permissions per role come from etva.db so both sides stay in sync.
 """
 import sqlite3
+from datetime import datetime, timezone
 
 from etva.db import PERMISSIONS, DEFAULT_ROLES
 
@@ -138,6 +139,11 @@ CREATE TABLE IF NOT EXISTS payments(
   creat_la TEXT NOT NULL,
   validat_de TEXT, validat_la TEXT,
   invoice_id INTEGER REFERENCES invoices(id));
+CREATE TABLE IF NOT EXISTS planuri_facturare(
+  tip TEXT NOT NULL, ciclu_facturare TEXT NOT NULL,
+  pret_lunar_ron REAL NOT NULL,
+  actualizat_de TEXT, actualizat_la TEXT,
+  PRIMARY KEY (tip, ciclu_facturare));
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
@@ -171,10 +177,12 @@ CICLU_6_LUNI = "6luni"
 CICLU_AN = "an"
 CICLURI_FACTURARE = (CICLU_LUNAR, CICLU_6_LUNI, CICLU_AN)
 
-# Pretul de referinta afisat pe pagina de alegere a ciclului - RON, per luna
-# echivalenta. Pentru firma 'contabilitate' e per client gestionat, nu per
-# firma - vezi etva/clients.py pentru numarul de clienti ai unei firme.
-PRETURI_LUNARE_RON = {
+# Preturile initiale (RON, per luna echivalenta) folosite doar o singura
+# data, ca sa semene tabela planuri_facturare de mai jos la prima pornire -
+# vezi _migrate_seed_planuri_facturare. Dupa aceea, sursa de adevar e
+# tabela, editabila din /master/nomenclator (vezi get_preturi/set_pret);
+# acest dict nu mai e citit de nimeni altcineva.
+_PRETURI_INITIALE_RON = {
     FIRM_TIP_DIRECT: {CICLU_LUNAR: 59, CICLU_6_LUNI: 49, CICLU_AN: 39},
     FIRM_TIP_CONTABILITATE: {CICLU_LUNAR: 25, CICLU_6_LUNI: 20, CICLU_AN: 15},
 }
@@ -344,6 +352,46 @@ def _migrate_add_firms_verificare_trial(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
+    """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
+    erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
+    inca goala, ca un master care a modificat deja preturile sa nu le vada
+    resetate la valorile istorice la un restart."""
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM planuri_facturare").fetchone()["n"]
+    if n:
+        return
+    acum = datetime.now(timezone.utc).isoformat()
+    for tip, cicluri in _PRETURI_INITIALE_RON.items():
+        for ciclu, pret in cicluri.items():
+            conn.execute(
+                "INSERT INTO planuri_facturare(tip, ciclu_facturare, "
+                "pret_lunar_ron, actualizat_de, actualizat_la) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (tip, ciclu, pret, "sistem", acum))
+    conn.commit()
+
+
+def get_preturi(conn: sqlite3.Connection) -> dict:
+    """Preturile curente din nomenclator, in aceeasi forma ca fostul dict
+    hardcodat PRETURI_LUNARE_RON: {tip: {ciclu: pret_lunar_ron}}."""
+    preturi: dict = {tip: {} for tip in FIRM_TIPURI}
+    for row in conn.execute(
+            "SELECT tip, ciclu_facturare, pret_lunar_ron FROM planuri_facturare"):
+        preturi.setdefault(row["tip"], {})[row["ciclu_facturare"]] = row["pret_lunar_ron"]
+    return preturi
+
+
+def set_pret(conn: sqlite3.Connection, tip: str, ciclu: str,
+             pret_lunar_ron: float, actualizat_de: str) -> None:
+    conn.execute(
+        "UPDATE planuri_facturare SET pret_lunar_ron=?, actualizat_de=?, "
+        "actualizat_la=? WHERE tip=? AND ciclu_facturare=?",
+        (pret_lunar_ron, actualizat_de, datetime.now(timezone.utc).isoformat(),
+         tip, ciclu))
+    conn.commit()
+
+
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -355,5 +403,6 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_efactura_columns(conn)
     _migrate_add_users_email(conn)
     _migrate_add_firms_verificare_trial(conn)
+    _migrate_seed_planuri_facturare(conn)
     conn.commit()
     return conn

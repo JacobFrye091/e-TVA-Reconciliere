@@ -352,7 +352,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         """Firma 'contabilitate' plateste per client gestionat (minim 1, ca
         o firma abia inregistrata - fara clienti inca - sa nu ajunga la o
         factura de 0 RON); firma 'direct' are tarif fix per firma."""
-        pret_lunar = pdb.PRETURI_LUNARE_RON[firm["tip"]][ciclu]
+        pret_lunar = pdb.get_preturi(conn)[firm["tip"]][ciclu]
         luni = _luni_pentru_ciclu(ciclu)
         if firm["tip"] == pdb.FIRM_TIP_CONTABILITATE:
             n_clienti = firm_conn(firm["id"]).execute(
@@ -673,7 +673,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                        if firm["ciclu_facturare"] else None)
         return render_template(
             "alege_plan.html", user=user, firm=firm,
-            preturi=pdb.PRETURI_LUNARE_RON[firm["tip"]],
+            preturi=pdb.get_preturi(conn)[firm["tip"]],
             zile_trial=zile_trial, suma_curenta=suma_curenta, plati=plati,
             arata_plata=(firm["ciclu_facturare"] and zile_trial is not None
                         and zile_trial <= 1),
@@ -1695,6 +1695,48 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         return redirect(url_for(
             "master_plati",
             mesaj="Incasarea a fost validata si factura a fost emisa."))
+
+    @app.get("/master/nomenclator")
+    def master_nomenclator():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        return render_template(
+            "master_nomenclator.html", user=user, preturi=pdb.get_preturi(conn),
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/master/nomenclator")
+    def salveaza_nomenclator():
+        """Actualizeaza nomenclatorul de preturi - o singura pagina cu toate
+        combinatiile tip x ciclu, validate integral inainte de a scrie ceva
+        (ca o eroare la un camp sa nu lase restul preturilor pe jumatate
+        actualizate)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        valori = {}
+        for tip in pdb.FIRM_TIPURI:
+            for ciclu in pdb.CICLURI_FACTURARE:
+                camp = f"pret_{tip}_{ciclu}"
+                bruta = request.form.get(camp, "").strip().replace(",", ".")
+                try:
+                    pret = float(bruta)
+                except ValueError:
+                    pret = None
+                if pret is None or pret <= 0:
+                    return redirect(url_for(
+                        "master_nomenclator",
+                        eroare=f"Pretul pentru {tip}/{ciclu} trebuie sa fie "
+                              "un numar pozitiv."))
+                valori[(tip, ciclu)] = pret
+        for (tip, ciclu), pret in valori.items():
+            pdb.set_pret(conn, tip, ciclu, pret, user["username"])
+        _log_master_action(
+            user, "nomenclator.actualizare",
+            ", ".join(f"{tip}/{ciclu}={pret:g}"
+                     for (tip, ciclu), pret in valori.items()))
+        return redirect(url_for(
+            "master_nomenclator", mesaj="Preturile au fost actualizate."))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")
