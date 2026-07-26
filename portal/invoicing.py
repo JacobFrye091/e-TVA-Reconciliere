@@ -27,7 +27,7 @@ FURNIZOR = {
     "nume": "VML EXPERT ADVISOR SRL",
     "cui": "RO35070700",
     "reg_com": "J2015011944405",
-    "adresa": "Vânju Mare nr. 8, cod poștal 122620, Sector 1, București",
+    "adresa": "Vânju Mare nr. 8, cod poștal 012262, Sector 1, București",
     "email": "office@ereconciliere.ro",
 }
 
