@@ -204,6 +204,18 @@ section { padding: 84px 0; }
   border-radius: 3px; padding: 2px 7px; }
 .pret-nota { margin-top: 18px; font-size: 12.5px; color: var(--muted); font-family: var(--body); }
 
+/* FAQ */
+.faq-lista { max-width: 46em; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+.faq-item { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; }
+.faq-item summary { list-style: none; cursor: pointer; padding: 16px 20px;
+  font-family: var(--disp); font-weight: 600; font-size: 15px; color: var(--ink);
+  display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::after { content: "+"; font-size: 19px; color: var(--stamp);
+  flex-shrink: 0; transition: transform .15s; }
+.faq-item[open] summary::after { transform: rotate(45deg); }
+.faq-item p { margin: 0 20px 18px; color: var(--muted); font-size: 14.5px; font-family: var(--body); }
+
 /* Download CTA */
 .desc { text-align: center; }
 .desc h2 { font-size: clamp(24px, 3vw, 33px); font-weight: 600; margin-bottom: 14px; }
@@ -242,6 +254,7 @@ footer a:hover { color: #fff; }
       <a href="#cum">Cum funcționează</a>
       <a href="#securitate">Securitate</a>
       <a href="#preturi">Prețuri</a>
+      <a href="#faq">Întrebări</a>
       <a href="ghid.html">Ghid complet</a>
       <a href="contact.html">Contact</a>
       <a href="autentificare" data-auth="autentificare">Autentificare</a>
@@ -432,6 +445,56 @@ footer a:hover { color: #fff; }
     </div>
     <p class="pret-nota">Prețurile nu includ TVA. Poți schimba ciclul de facturare
       oricând din panoul contului.</p>
+  </div>
+</section>
+
+<section id="faq" class="desc">
+  <div class="inv reveal">
+    <h2>Întrebări frecvente</h2>
+  </div>
+  <div class="inv">
+    <div class="faq-lista">
+      <details class="faq-item reveal">
+        <summary>Ce se întâmplă după cele 30 de zile gratuite?</summary>
+        <p>Alegi un ciclu de facturare (lunar, la 6 luni sau anual) din panoul
+          contului. Te contactăm separat pentru confirmarea plății — nu
+          debităm automat niciun cont.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Am nevoie de certificat digital sau cont SPV ca să folosesc platforma?</summary>
+        <p>Nu, pentru reconcilierea de bază încarci direct fișierele (jurnalul
+          firmei și exportul de la ANAF) — nu ai nevoie de nimic în plus.
+          Doar funcțiile opționale de citire automată a decontului sau de
+          trimitere e-Factura necesită autorizare ANAF cu certificat digital
+          calificat.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Cum sunt protejate datele firmei mele?</summary>
+        <p>Fiecare firmă are propria bază de date, criptată separat — o
+          firmă nu poate descifra niciodată datele alteia. Detalii tehnice
+          în secțiunea Securitate de mai sus.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Pot să schimb ciclul de facturare oricând?</summary>
+        <p>Da, din panoul contului, oricând — inclusiv după ce ai ales deja unul.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Ce se întâmplă dacă gestionez mai mulți clienți?</summary>
+        <p>Dacă ești firmă de contabilitate, prețul se calculează per client
+          gestionat, nu per firmă — vezi secțiunea Prețuri de mai sus.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Pot să șterg contul și datele oricând?</summary>
+        <p>Da — poți solicita ștergerea definitivă a contului din panoul tău;
+          se procesează în cel mult 30 de zile, conform
+          <a href="confidentialitate.html">politicii de confidențialitate</a>.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Ce fac dacă am o problemă tehnică sau o întrebare?</summary>
+        <p>Ne poți scrie oricând din <a href="contact.html">pagina de Contact</a>
+          — răspundem cât mai repede.</p>
+      </details>
+    </div>
   </div>
 </section>
 
