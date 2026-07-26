@@ -30,11 +30,15 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 
 _AUTHORIZE_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
 _TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
 _DECONT_URL = "https://api.anaf.ro/decont/ws/v1/info"
+_FCTEL_UPLOAD_URL = "https://api.anaf.ro/{mediu}/FCTEL/rest/upload"
+_FCTEL_STARE_URL = "https://api.anaf.ro/{mediu}/FCTEL/rest/stareMesaj"
+_FCTEL_DESCARCARE_URL = "https://api.anaf.ro/{mediu}/FCTEL/rest/descarcare"
 _TIMEOUT = 15
 
 
@@ -148,3 +152,98 @@ def fetch_decont(access_token: str, cui: str, an: int, luna: int) -> dict:
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AnafOAuthError(f"Serviciul ANAF nu a putut fi contactat: {exc}") from exc
     return _extract_decont_json(raw)
+
+
+# ---------- RO e-Factura: upload / stareMesaj / descarcare ----------
+# Structura raspunsurilor (element radacina "header", cu atribute precum
+# ExecutionStatus/index_incarcare/stare/id_descarcare, plus copii <Errors
+# errorMessage="..."/> la esec) e documentata public si folosita de mai
+# multi integratori independenti (surse: iapp.ro, getmandato.dev), dar NU
+# a fost verificata direct impotriva unui raspuns real ANAF - mfinante.ro
+# (unde sta specificatia oficiala) nu a fost accesibil din acest mediu.
+# Verifica/ajusteaza cand avem primul raspuns real din sandbox.
+
+
+def _parse_header_response(raw: bytes) -> ET.Element:
+    try:
+        return ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise AnafOAuthError(
+            "Raspuns neasteptat (XML invalid) de la ANAF.") from exc
+
+
+def upload_invoice(access_token: str, cif: str, xml_bytes: bytes,
+                   mediu: str = "test") -> dict:
+    """Trimite XML-ul unei facturi la RO e-Factura. Intoarce
+    {'index_incarcare': ...} daca a fost primita pentru procesare -
+    ExecutionStatus=0 inseamna doar atat, NU ca factura e valida; starea
+    reala se afla ulterior prin check_upload_status. Ridica AnafOAuthError
+    daca upload-ul insusi a fost respins (XML invalid, CIF nepotrivit
+    certificatului folosit la autorizare etc.)."""
+    params = urllib.parse.urlencode({"cif": cif, "standard": "UBL"})
+    url = f"{_FCTEL_UPLOAD_URL.format(mediu=mediu)}?{params}"
+    req = urllib.request.Request(
+        url, data=xml_bytes, method="POST",
+        headers={"Authorization": f"Bearer {access_token}",
+                "Content-Type": "text/plain"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AnafOAuthError(
+            f"ANAF a refuzat incarcarea facturii ({exc.code}): "
+            f"{exc.read().decode('utf-8', 'replace')}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AnafOAuthError(f"Serviciul ANAF nu a putut fi contactat: {exc}") from exc
+    root = _parse_header_response(raw)
+    if root.attrib.get("ExecutionStatus") == "0":
+        return {"index_incarcare": root.attrib.get("index_incarcare")}
+    erori = [child.attrib.get("errorMessage", "") for child in root
+            if child.attrib.get("errorMessage")]
+    raise AnafOAuthError(
+        "ANAF a respins factura la incarcare: "
+        + ("; ".join(erori) if erori else "eroare necunoscuta"))
+
+
+def check_upload_status(access_token: str, id_incarcare: str,
+                        mediu: str = "test") -> dict:
+    """Intoarce {'stare': 'in prelucrare'|'ok'|'nok', 'id_descarcare': ...
+    (doar cand stare != 'in prelucrare')}."""
+    params = urllib.parse.urlencode({"id_incarcare": id_incarcare})
+    url = f"{_FCTEL_STARE_URL.format(mediu=mediu)}?{params}"
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AnafOAuthError(
+            f"ANAF a refuzat cererea de stare ({exc.code}): "
+            f"{exc.read().decode('utf-8', 'replace')}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AnafOAuthError(f"Serviciul ANAF nu a putut fi contactat: {exc}") from exc
+    root = _parse_header_response(raw)
+    return {"stare": root.attrib.get("stare"),
+           "id_descarcare": root.attrib.get("id_descarcare")}
+
+
+def download_response(access_token: str, id_descarcare: str,
+                      mediu: str = "test") -> bytes:
+    """Arhiva ZIP primita de la ANAF - contine XML-ul facturii semnat
+    (daca a fost acceptata) sau raportul de erori (daca a fost respinsa).
+    Odata acceptata, acest raspuns e originalul legal al facturii (poarta
+    sigiliul electronic al Ministerului Finantelor) si trebuie arhivat,
+    nu doar XML-ul nostru de dinainte de trimitere."""
+    params = urllib.parse.urlencode({"id": id_descarcare})
+    url = f"{_FCTEL_DESCARCARE_URL.format(mediu=mediu)}?{params}"
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise AnafOAuthError(
+            f"ANAF a refuzat descarcarea raspunsului ({exc.code}): "
+            f"{exc.read().decode('utf-8', 'replace')}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AnafOAuthError(f"Serviciul ANAF nu a putut fi contactat: {exc}") from exc

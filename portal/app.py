@@ -21,6 +21,7 @@ from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
 from etva import anaf_oauth
+from etva import efactura_xml
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
@@ -48,6 +49,11 @@ ANAF_OAUTH_CLIENT_SECRET = os.environ.get("ANAF_OAUTH_CLIENT_SECRET")
 ANAF_OAUTH_REDIRECT_URI = os.environ.get(
     "ANAF_OAUTH_REDIRECT_URI", "https://ereconciliere.ro/api/anaf/callback")
 ANAF_TOKEN_VALIDITY_ZILE = 90
+
+# "test" (implicit) foloseste sandbox-ul ANAF (api.anaf.ro/test/FCTEL) - nu
+# trimite nimic cu valoare legala. Se schimba explicit in "prod" abia dupa
+# ce un XML de test a fost validat cu adevarat impotriva sandbox-ului.
+ANAF_EFACTURA_MEDIU = os.environ.get("ANAF_EFACTURA_MEDIU", "test")
 
 FIRM_SUBROLES = ["manager", "contabil", "junior"]
 
@@ -1127,7 +1133,9 @@ def create_app(data_dir: str) -> Flask:
             "SELECT id, name, cui FROM firms WHERE active=1 ORDER BY name"
         ).fetchall()
         return render_template("master_facturi.html", user=user, facturi=facturi,
-                               firme=firme, eroare=request.args.get("eroare"))
+                               firme=firme, eroare=request.args.get("eroare"),
+                               mesaj=request.args.get("mesaj"),
+                               mediu_anaf=ANAF_EFACTURA_MEDIU)
 
     def _suma_scurta(valoare: float) -> str:
         return f"{valoare:.2f}"
@@ -1187,6 +1195,126 @@ def create_app(data_dir: str) -> Flask:
         nume_fisier = f"factura_{factura['serie']}{factura['numar']}.pdf"
         return Response(
             pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    @app.get("/master/facturi/<int:factura_id>/xml")
+    def descarca_factura_xml(factura_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None:
+            return redirect(url_for("master_facturi"))
+        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
+        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.xml"
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    def _vml_firm_id():
+        """Firma emitentului insusi (VML) trebuie sa fie inregistrata ca
+        firma in platforma si sa fi trecut prin /panou/anaf/autorizare cu
+        propriul ei certificat digital, la fel ca orice alta firma - nu
+        exista un mecanism separat de autorizare doar pentru emitere."""
+        row = conn.execute("SELECT id FROM firms WHERE cui=?",
+                           (invoicing.FURNIZOR["cui"],)).fetchone()
+        return row["id"] if row else None
+
+    @app.post("/master/facturi/<int:factura_id>/trimite-anaf")
+    def trimite_factura_anaf(factura_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None:
+            return redirect(url_for("master_facturi"))
+        vml_firm_id = _vml_firm_id()
+        access_token = get_valid_anaf_access_token(vml_firm_id) if vml_firm_id else None
+        if access_token is None:
+            return redirect(url_for(
+                "master_facturi",
+                eroare="Contul VML (emitentul) nu are acces ANAF autorizat inca "
+                      "- autorizeaza-l din panoul acelei firme, la fel ca la "
+                      "orice alta firma."))
+        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
+        cif = str(anaf_cui.normalize_cui(invoicing.FURNIZOR["cui"]))
+        try:
+            rezultat = anaf_oauth.upload_invoice(
+                access_token, cif, xml_bytes, mediu=ANAF_EFACTURA_MEDIU)
+        except anaf_oauth.AnafOAuthError as e:
+            return redirect(url_for("master_facturi", eroare=f"ANAF: {e}"))
+        conn.execute(
+            "UPDATE invoices SET anaf_index_incarcare=?, anaf_stare=?, "
+            "anaf_trimis_la=? WHERE id=?",
+            (rezultat["index_incarcare"], pdb.EFACTURA_IN_PROCESARE,
+             datetime.now().isoformat(), factura_id))
+        conn.commit()
+        _log_master_action(
+            user, "factura.trimitere_anaf",
+            f"{factura['serie']} {factura['numar']} -> index "
+            f"{rezultat['index_incarcare']} ({ANAF_EFACTURA_MEDIU})")
+        return redirect(url_for(
+            "master_facturi",
+            mesaj="Factura a fost trimisa la ANAF. Verifica starea peste "
+                  "cateva minute."))
+
+    @app.post("/master/facturi/<int:factura_id>/verifica-stare")
+    def verifica_stare_factura_anaf(factura_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None or not factura["anaf_index_incarcare"]:
+            return redirect(url_for("master_facturi"))
+        vml_firm_id = _vml_firm_id()
+        access_token = get_valid_anaf_access_token(vml_firm_id) if vml_firm_id else None
+        if access_token is None:
+            return redirect(url_for(
+                "master_facturi", eroare="Contul VML nu mai are acces ANAF autorizat."))
+        try:
+            stare = anaf_oauth.check_upload_status(
+                access_token, factura["anaf_index_incarcare"], mediu=ANAF_EFACTURA_MEDIU)
+        except anaf_oauth.AnafOAuthError as e:
+            return redirect(url_for("master_facturi", eroare=f"ANAF: {e}"))
+        if stare["stare"] == "in prelucrare":
+            return redirect(url_for(
+                "master_facturi", mesaj="Factura e inca in procesare la ANAF."))
+        noua_stare = (pdb.EFACTURA_ACCEPTATA if stare["stare"] == "ok"
+                     else pdb.EFACTURA_RESPINSA)
+        raspuns = None
+        if stare.get("id_descarcare"):
+            try:
+                raspuns = anaf_oauth.download_response(
+                    access_token, stare["id_descarcare"], mediu=ANAF_EFACTURA_MEDIU)
+            except anaf_oauth.AnafOAuthError:
+                raspuns = None
+        conn.execute(
+            "UPDATE invoices SET anaf_stare=?, anaf_id_descarcare=?, "
+            "anaf_raspuns=? WHERE id=?",
+            (noua_stare, stare.get("id_descarcare"), raspuns, factura_id))
+        conn.commit()
+        _log_master_action(
+            user, "factura.verificare_stare",
+            f"{factura['serie']} {factura['numar']} -> {noua_stare}")
+        mesaj = ("Factura a fost acceptata de ANAF." if noua_stare == pdb.EFACTURA_ACCEPTATA
+                else "Factura a fost respinsa de ANAF - vezi raspunsul descarcat.")
+        return redirect(url_for("master_facturi", mesaj=mesaj))
+
+    @app.get("/master/facturi/<int:factura_id>/raspuns-anaf")
+    def descarca_raspuns_anaf(factura_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None or not factura["anaf_raspuns"]:
+            return redirect(url_for("master_facturi"))
+        nume_fisier = f"raspuns_anaf_{factura['serie']}{factura['numar']}.zip"
+        return Response(
+            factura["anaf_raspuns"], mimetype="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
 
     # ---------- master: dev/testare/productie pipeline ----------

@@ -119,8 +119,17 @@ CREATE TABLE IF NOT EXISTS invoices(
   moneda TEXT NOT NULL DEFAULT 'RON',
   stare TEXT NOT NULL DEFAULT 'emisa',
   creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
+  anaf_index_incarcare TEXT, anaf_stare TEXT NOT NULL DEFAULT 'netrimisa',
+  anaf_id_descarcare TEXT, anaf_raspuns BLOB, anaf_trimis_la TEXT,
   UNIQUE(serie, numar));
 """
+
+# Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
+# etva/anaf_oauth.py (upload_invoice/check_upload_status/download_response).
+EFACTURA_NETRIMISA = "netrimisa"
+EFACTURA_IN_PROCESARE = "in_procesare"
+EFACTURA_ACCEPTATA = "acceptata"
+EFACTURA_RESPINSA = "respinsa"
 
 # Seria unica de facturare a platformei - un singur emitent (VML EXPERT
 # ADVISOR SRL), deci o singura serie e suficienta; numerotarea e secventiala
@@ -199,6 +208,26 @@ def _migrate_add_onboarding_flag(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_efactura_columns(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate the RO e-Factura submission columns on
+    invoices - add them, defaulting existing rows to 'netrimisa' (not yet
+    submitted), which is accurate since submission didn't exist before."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "invoices" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+    if "anaf_stare" in cols:
+        return
+    conn.executescript(
+        "ALTER TABLE invoices ADD COLUMN anaf_index_incarcare TEXT;"
+        "ALTER TABLE invoices ADD COLUMN anaf_stare TEXT NOT NULL DEFAULT 'netrimisa';"
+        "ALTER TABLE invoices ADD COLUMN anaf_id_descarcare TEXT;"
+        "ALTER TABLE invoices ADD COLUMN anaf_raspuns BLOB;"
+        "ALTER TABLE invoices ADD COLUMN anaf_trimis_la TEXT;")
+    conn.commit()
+
+
 def _migrate_firms_autoincrement(conn: sqlite3.Connection) -> None:
     """firms.id was a plain INTEGER PRIMARY KEY (no AUTOINCREMENT), so
     SQLite reuses the lowest deleted id for the next INSERT. A firm can be
@@ -246,5 +275,6 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_onboarding_flag(conn)
     conn.executescript(_SCHEMA)
     _migrate_firms_autoincrement(conn)
+    _migrate_add_efactura_columns(conn)
     conn.commit()
     return conn
