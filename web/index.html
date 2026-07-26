@@ -292,8 +292,14 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
           <input id="perioada" placeholder="ex: 2026-01"></div>
         <div class="field"><label for="fisierFirma">Jurnal firma (jurnal vanzari si/sau cumparari — xls / xlsx / csv)</label>
           <input id="fisierFirma" type="file" accept=".xlsx,.xls,.csv" multiple></div>
-        <div class="field"><label for="fisierAnaf">Decont precompletat RO e-TVA (PDF sau JSON de la ANAF) sau fisier ANAF (xlsx / csv)</label>
+        <div class="field" id="campFisierAnaf"><label for="fisierAnaf">Decont precompletat RO e-TVA (PDF sau JSON de la ANAF) sau fisier ANAF (xlsx / csv)</label>
           <input id="fisierAnaf" type="file" accept=".pdf,.json,.xlsx,.csv"></div>
+      </div>
+      <div class="field" id="campAnafAuto" style="display:none">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+          <input type="checkbox" id="anafAutoToggle" style="width:auto" onchange="comutaSursaAnaf()">
+          Preia automat decontul de la ANAF pentru perioada de mai sus (firma are acces autorizat)
+        </label>
       </div>
       <div class="field"><label for="mapareAnaf">Mapare coloane ANAF (JSON, optional — doar pentru fisiere ANAF xlsx/csv cu alte denumiri de coloane)</label>
         <textarea id="mapareAnaf" rows="2"
@@ -365,6 +371,12 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
 <script>
 let permisiuni = [], reconCurent = null, userCurent = '', firmaDirecta = false;
+let anafAutorizat = false;
+
+function comutaSursaAnaf() {
+  const auto = document.getElementById('anafAutoToggle').checked;
+  document.getElementById('campFisierAnaf').style.display = auto ? 'none' : '';
+}
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
                   admin: 'Alocari clienti', audit: 'Jurnal de audit' };
@@ -417,6 +429,8 @@ async function intraInAplicatie(ident) {
   permisiuni = ident.permissions;
   userCurent = ident.username;
   firmaDirecta = ident.firm_tip === 'direct';
+  anafAutorizat = !!ident.anaf_autorizat;
+  document.getElementById('campAnafAuto').style.display = anafAutorizat ? '' : 'none';
   numeUser.textContent = userCurent;
   document.querySelector('.user-rol').textContent =
     ident.firm_name || 'Sesiune activa';
@@ -654,7 +668,12 @@ async function ruleazaReconciliere() {
     if (!firmaDirecta) fd.append('client_id', selClient.value);
     fd.append('period', perioada.value);
     for (const f of fisierFirma.files) fd.append('company_file', f);
-    fd.append('anaf_file', fisierAnaf.files[0]);
+    const preiaAutomat = anafAutorizat && document.getElementById('anafAutoToggle').checked;
+    if (preiaAutomat) {
+      fd.append('anaf_sursa', 'auto');
+    } else {
+      fd.append('anaf_file', fisierAnaf.files[0]);
+    }
     if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
     if (codMapare.value.trim()) fd.append('cod_mapping', codMapare.value);
     const r = await api('/api/reconciliations', {method: 'POST', body: fd});

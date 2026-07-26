@@ -28,7 +28,8 @@ from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
 from etva.importer.saga import parse_saga_journal, NotSagaFormat
 from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
-from etva.importer.anaf_p300_json import parse_p300_json, NotAnafP300Json
+from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
+                                          NotAnafP300Json)
 from etva.d300 import classify_legend, expand_derived_lines
 from etva.engine import reconcile, reconcile_d300
 from etva.advisor import suggest_d300, suggest_d300_lines
@@ -167,7 +168,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         if active_firm_id is None:
             return None
         row = conn.execute(
-            "SELECT uf.role, f.id, f.name, f.tip FROM user_firms uf "
+            "SELECT uf.role, f.id, f.name, f.tip, f.cui FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
             "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1",
             (user["id"], active_firm_id)).fetchone()
@@ -175,7 +176,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return None
         return {"username": user["username"], "role": row["role"],
                 "firm_id": row["id"], "firm_name": row["name"],
-                "firm_tip": row["tip"],
+                "firm_tip": row["tip"], "firm_cui": row["cui"],
                 "onboarding_completat": bool(user["onboarding_completat"]),
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
@@ -1791,11 +1792,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     @app.get("/api/me")
     @require()
     def me(ident):
+        anaf_autorizat = conn.execute(
+            "SELECT 1 FROM anaf_oauth_tokens WHERE firm_id=?",
+            (ident["firm_id"],)).fetchone() is not None
         return jsonify({"username": ident["username"], "role": ident["role"],
                         "firm_name": ident["firm_name"],
                         "firm_tip": ident["firm_tip"],
                         "onboarding_completat": ident["onboarding_completat"],
-                        "permissions": sorted(ident["permissions"])})
+                        "permissions": sorted(ident["permissions"]),
+                        "anaf_autorizat": anaf_autorizat})
 
     @app.post("/api/onboarding/completat")
     @require()
@@ -1936,21 +1941,48 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         client_id = (None if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT
                     else int(request.form["client_id"]))
         period = request.form["period"]
-        anaf_file = request.files["anaf_file"]
         company_files = request.files.getlist("company_file")
         if not company_files:
             return jsonify({"errors": ["Lipseste jurnalul firmei."]}), 400
 
-        if anaf_file.filename.lower().endswith((".pdf", ".json")):
-            saved_anaf_path = _save_upload(anaf_file)
+        # Decontul ANAF poate veni fie dintr-un fisier incarcat manual (PDF/
+        # JSON/CSV/xlsx), fie preluat automat prin OAuth2 (anaf_sursa=auto) -
+        # vezi /panou/anaf/autorizare pentru cum obtine firma acel token.
+        anaf_sursa = request.form.get("anaf_sursa", "upload")
+        anaf_doc = None
+        anaf_file = None
+        if anaf_sursa == "auto":
+            token = get_valid_anaf_access_token(ident["firm_id"])
+            if token is None:
+                return jsonify({"errors": [
+                    "Firma nu are acces ANAF autorizat - autorizeaza din "
+                    "panoul contului sau incarca decontul manual."]}), 400
             try:
-                if anaf_file.filename.lower().endswith(".json"):
-                    anaf_doc = parse_p300_json(saved_anaf_path)
-                else:
-                    anaf_doc = parse_p300_pdf(saved_anaf_path)
-            except (NotAnafP300, NotAnafP300Json) as e:
+                an, luna = (int(x) for x in period.split("-"))
+            except ValueError:
+                return jsonify({"errors": [
+                    "Perioada trebuie sa fie in formatul AAAA-LL pentru "
+                    "preluarea automata din ANAF."]}), 400
+            try:
+                anaf_doc = parse_p300_json_data(anaf_oauth.fetch_decont(
+                    token, ident["firm_cui"], an, luna))
+            except anaf_oauth.AnafOAuthError as e:
+                return jsonify({"errors": [str(e)]}), 502
+            except NotAnafP300Json as e:
                 return jsonify({"errors": [str(e)]}), 400
+        else:
+            anaf_file = request.files["anaf_file"]
+            if anaf_file.filename.lower().endswith((".pdf", ".json")):
+                saved_anaf_path = _save_upload(anaf_file)
+                try:
+                    if anaf_file.filename.lower().endswith(".json"):
+                        anaf_doc = parse_p300_json(saved_anaf_path)
+                    else:
+                        anaf_doc = parse_p300_pdf(saved_anaf_path)
+                except (NotAnafP300, NotAnafP300Json) as e:
+                    return jsonify({"errors": [str(e)]}), 400
 
+        if anaf_doc is not None:
             cod_mapping = None
             if request.form.get("cod_mapping"):
                 cod_mapping = json.loads(request.form["cod_mapping"])

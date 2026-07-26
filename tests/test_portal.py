@@ -1645,6 +1645,125 @@ def test_get_valid_anaf_access_token_refreshes_when_expired(app, monkeypatch):
     assert row["autorizat_de"] == "firma-unu-srl"
 
 
+def test_reconciliation_auto_fetch_requires_anaf_authorization(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "anaf_sursa": "auto",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "nu are acces ANAF autorizat".encode() in r.data
+
+
+def test_reconciliation_auto_fetch_rejects_bad_period_format(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "iunie-2026", "anaf_sursa": "auto",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "formatul AAAA-LL".encode() in r.data
+
+
+def test_reconciliation_auto_fetch_uses_stored_anaf_token(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+
+    captura = {}
+    def _fake_fetch_decont(access_token, cui, an, luna):
+        captura["access_token"] = access_token
+        captura["cui"] = cui
+        captura["an"] = an
+        captura["luna"] = luna
+        return {"CIF": cui, "AN": an, "LUNA": luna,
+                "RD9_VAL": 1000.0, "RD9_TVA": 210.0}
+    monkeypatch.setattr(anaf_oauth, "fetch_decont", _fake_fetch_decont)
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "anaf_sursa": "auto",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["mode"] == "d300_lines"
+    assert body["totals_anaf"]["9"] == {"base": 1000.0, "vat": 210.0}
+    assert captura["access_token"] == "AAA"
+    assert captura["an"] == 2026 and captura["luna"] == 6
+
+
+def test_reconciliation_auto_fetch_surfaces_anaf_oauth_errors(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+
+    def _boom(*a, **kw):
+        raise anaf_oauth.AnafOAuthError("Serviciul ANAF nu a putut fi contactat: boom")
+    monkeypatch.setattr(anaf_oauth, "fetch_decont", _boom)
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "anaf_sursa": "auto",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 502
+    assert "boom".encode() in r.data
+
+
+def test_reconciliation_auto_fetch_rejects_malformed_decont(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    c = app.test_client()
+    inregistreaza(c)
+    _stare_anaf(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+    monkeypatch.setattr(anaf_oauth, "fetch_decont", lambda *a, **kw: {"nu": "e decont"})
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "anaf_sursa": "auto",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+
+
+def test_me_reports_anaf_autorizat_flag(app, monkeypatch):
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
+    c = app.test_client()
+    inregistreaza(c)
+    assert c.get("/api/me").get_json()["anaf_autorizat"] is False
+
+    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
+                        lambda *a, **kw: {"access_token": "AAA", "refresh_token": "BBB"})
+    _stare_anaf(c)
+    assert c.get("/api/me").get_json()["anaf_autorizat"] is True
+
+
 # ---------- facturare (master) ----------
 
 def test_master_facturi_requires_master(app):
