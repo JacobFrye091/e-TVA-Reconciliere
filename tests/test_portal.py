@@ -3101,6 +3101,27 @@ def test_descarca_contract_pdf_renders_romanian_diacritics(app):
         assert cuvant in text
 
 
+def test_genereaza_pdf_embeds_esemneaza_signature_tag(app):
+    """Confirmat empiric impotriva eSemneaza real (2026-07-27): un PDF cu
+    "{{s:1}}" in text, incarcat cu extractTags=True, produce singur un camp
+    de semnatura cu pozitie corecta - nu mai trebuie ghicite coordonate."""
+    import pdfplumber
+    from portal import contract as contract_mod
+    from datetime import datetime, timezone
+    beneficiar = {"denumire": "Firma Test SRL", "cui": "RO999",
+                 "adresa": "Adresa test"}
+    continut = contract_mod.genereaza_text(
+        1, beneficiar, "lunar", 59.0, datetime.now(timezone.utc))
+    pdf_bytes = contract_mod.genereaza_pdf(continut, tag_semnatura_esemneaza=True)
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        text = pdf.pages[-1].extract_text()
+    assert "{{s:1}}" in text
+    pdf_fara_tag = contract_mod.genereaza_pdf(continut)
+    with pdfplumber.open(io.BytesIO(pdf_fara_tag)) as pdf:
+        text_fara_tag = pdf.pages[-1].extract_text()
+    assert "{{s:1}}" not in text_fara_tag
+
+
 def test_descarca_contract_xml(app):
     c = app.test_client()
     inregistreaza(c, cui="RO315", tip="direct")

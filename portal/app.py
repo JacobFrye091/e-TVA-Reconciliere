@@ -1075,19 +1075,22 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             firm = conn.execute("SELECT * FROM firms WHERE id=?",
                                 (active_firm_id,)).fetchone()
             continut = contract_mod.genereaza_text_din_rand(contract)
-            pdf_bytes = contract_mod.genereaza_pdf(continut)
+            # tag_semnatura_esemneaza=True adauga "{{s:1}}" invizibil dupa
+            # BENEFICIAR - eSemneaza il detecteaza singur (extract_tags=True
+            # mai jos) si calculeaza pozitia reala a campului, fara sa
+            # ghicim noi coordonate fixe.
+            pdf_bytes = contract_mod.genereaza_pdf(
+                continut, tag_semnatura_esemneaza=True)
             try:
                 file_name = esemneaza.upload_document(
                     ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{contract['numar']}.pdf")
-                pagini = contract_mod.numar_pagini_pdf(pdf_bytes)
                 # Semnatura PRESTATORULUI (VML) e deja inclusa in textul
                 # contractului la generare (vezi contract.genereaza_text) -
                 # doar BENEFICIARUL semneaza efectiv prin eSemneaza.
                 rezultat = esemneaza.create_sign_request(
                     ESEMNEAZA_API_KEY, file_name,
-                    recipients=[{"email": admin["email"], "name": firm["name"],
-                                "field_page": pagini}],
-                    sender_name="e-TVA Reconciliere")
+                    recipients=[{"email": admin["email"], "name": firm["name"]}],
+                    sender_name="e-TVA Reconciliere", extract_tags=True)
             except esemneaza.EsemneazaError as e:
                 return redirect(url_for(
                     "vezi_contract",

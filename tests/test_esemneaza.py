@@ -86,6 +86,24 @@ def test_create_sign_request_sends_expected_body(monkeypatch):
     assert field["required"] is True
 
 
+def test_create_sign_request_with_extract_tags_omits_fields(monkeypatch):
+    captured = {}
+
+    def handler(req):
+        captured["body"] = json.loads(req.data)
+        return json.dumps({"id": "req-3"}).encode()
+
+    _install_fake_urlopen(monkeypatch, handler)
+    esemneaza.create_sign_request(
+        "key-123", "contract-3.pdf",
+        recipients=[{"email": "admin@exemplu.ro", "name": "Firma Exemplu SRL"}],
+        extract_tags=True)
+
+    body = captured["body"]
+    assert body["extractTags"] is True
+    assert "fields" not in body["recipients"][0]
+
+
 def test_create_sign_request_supports_multiple_recipients_with_custom_position(monkeypatch):
     captured = {}
 

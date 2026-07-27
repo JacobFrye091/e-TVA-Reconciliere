@@ -104,7 +104,8 @@ def upload_document(api_key: str, pdf_bytes: bytes, filename: str) -> str:
 
 def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
                         sender_name: "str | None" = None,
-                        sign_in_order: bool = False) -> dict:
+                        sign_in_order: bool = False,
+                        extract_tags: bool = False) -> dict:
     """Creeaza cererea de semnare. `recipients` e o lista (desi contractul
     acestei platforme are in practica un singur semnatar real prin
     eSemneaza - BENEFICIARUL/firma client; semnatura PRESTATORULUI (VML) e
@@ -112,25 +113,34 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
     contract.genereaza_text, nu trece prin eSemneaza) - lasata generica in
     caz ca apare vreodata nevoia unui al doilea semnatar real.
 
-    Fiecare element din `recipients` e un dict cu email/name/field_page si
-    optional field_x/field_y (implicit colt jos-dreapta). Un camp de
-    semnatura e obligatoriu ca destinatarul sa primeasca un link functional
-    (confirmat empiric: fara niciun camp, sigUrl ramane gol si nu se
-    intampla nimic util)."""
+    extract_tags=True (folosit de portal/app.py::semneaza_contract): PDF-ul
+    are deja tag-ul invizibil `{{s:1}}` incorporat (vezi
+    contract.genereaza_pdf tag_semnatura_esemneaza) - eSemneaza il detecteaza
+    singur si calculeaza pozitia campului de semnatura, deci `recipients` nu
+    mai are nevoie de field_page/field_x/field_y deloc. Confirmat empiric
+    (2026-07-27) impotriva serviciului real: un PDF de test cu "{{s:1}}" in
+    text, plus extractTags:true aici, a produs un camp SIGNATURE real cu
+    x/y/pageNum calculate corect de eSemneaza, fara nimic ghicit de noi.
+
+    Fara extract_tags, fiecare element din `recipients` trebuie sa aiba
+    field_page (si optional field_x/field_y, implicit colt jos-dreapta) - un
+    camp de semnatura e obligatoriu ca destinatarul sa primeasca un link
+    functional (confirmat empiric: fara niciun camp, sigUrl ramane gol si nu
+    se intampla nimic util)."""
     body_recipients = []
     for r in recipients:
-        body_recipients.append({
-            "type": "EMAIL",
-            "email": r["email"],
-            "name": r["name"],
-            "fields": [{
+        recipient = {"type": "EMAIL", "email": r["email"], "name": r["name"]}
+        if not extract_tags:
+            recipient["fields"] = [{
                 "x": r.get("field_x", 300), "y": r.get("field_y", 60),
                 "width": 180, "height": 50, "pageNum": r["field_page"],
                 "type": "SIGNATURE", "required": True,
-            }],
-        })
+            }]
+        body_recipients.append(recipient)
     body = {"fileName": file_name, "recipients": body_recipients,
            "signInOrder": sign_in_order}
+    if extract_tags:
+        body["extractTags"] = True
     if sender_name:
         body["senderName"] = sender_name
     req = urllib.request.Request(

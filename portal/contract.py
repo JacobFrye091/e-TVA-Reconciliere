@@ -21,7 +21,6 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
-import pdfplumber
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -241,13 +240,22 @@ def nota_verificare_certificat(semnatura_detalii: dict, semnat_la: str) -> str:
 
 
 def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
-                  nota_semnatura: str | None = None) -> bytes:
+                  nota_semnatura: str | None = None,
+                  tag_semnatura_esemneaza: bool = False) -> bytes:
     """PDF-ul contractului, generat la cerere din text - textul in sine nu
     se stocheaza (vezi docstring-ul modulului). Pentru semnatura cu
     mouse-ul, semnatura_img e PNG-ul desenat, stampilat la final. Pentru
     semnatura cu certificat, nu mai exista PDF-ul original incarcat de
     beneficiar - nota_semnatura (vezi nota_verificare_certificat) descrie
-    in schimb rezultatul verificarii facute la momentul semnarii."""
+    in schimb rezultatul verificarii facute la momentul semnarii.
+
+    tag_semnatura_esemneaza=True adauga tag-ul `{{s:1}}` (font alb, invizibil
+    pentru cititor) imediat dupa BENEFICIAR - eSemneaza il detecteaza automat
+    cu extractTags=True (vezi etva/esemneaza.py:create_sign_request) si
+    genereaza singur campul de semnatura, cu pozitia exacta calculata din
+    locul tag-ului in text - confirmat empiric (2026-07-27) impotriva
+    serviciului real, nu ghicit: fara acest tag, pozitia campului trebuia
+    aproximata manual (x/y fixe, fara legatura cu continutul real)."""
     pdf_fonts.asigura_fonturi()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -278,6 +286,8 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
             # pentru aliniere si arata urat, in loc sa pastreze cele doua
             # blocuri separate vizual).
             stanga, dreapta = re.split(r"\s{2,}", bloc, maxsplit=1)
+            if tag_semnatura_esemneaza:
+                dreapta += ' <font color="white">{{s:1}}</font>'
             latime_coloana = (doc.width) / 2
             elems.append(Spacer(1, 4 * mm))
             elems.append(Table(
@@ -302,12 +312,3 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
 
     doc.build(elems)
     return buf.getvalue()
-
-
-def numar_pagini_pdf(pdf_bytes: bytes) -> int:
-    """Numarul real de pagini al unui PDF deja generat - folosit pentru a
-    plasa campul de semnatura eSemneaza pe ultima pagina (vezi
-    etva/esemneaza.py:create_sign_request), fara sa presupunem un numar
-    fix - lungimea contractului variaza usor cu ciclul de facturare ales."""
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        return len(pdf.pages)
