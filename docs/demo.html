@@ -5,47 +5,50 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Demonstratie — e-TVA Reconciliere</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  --ink: #121d33;
-  --ink-2: #1c2a47;
-  --ink-3: #2a3b5e;
-  --bg: #f2f4f8;
+  --ink: #132922;
+  --ink-2: #1c3a30;
+  --ink-3: #25493c;
+  --bg: #eef3ef;
   --surface: #ffffff;
-  --border: #dde3ec;
-  --text: #1b2430;
-  --muted: #68738a;
-  --accent: #0d5c63;
-  --accent-hover: #0a4a50;
-  --accent-soft: #e3efee;
-  --danger: #b3261e;
-  --danger-bg: #fdf0ef;
-  --warn: #9a6700;
-  --warn-bg: #fff6e0;
-  --ok: #1a7f4b;
-  --ok-bg: #e9f5ee;
+  --border: #dbe7e0;
+  --text: #182922;
+  --muted: #5c6f66;
+  --accent: #1f7a5c;
+  --accent-hover: #155f47;
+  --accent-soft: #e1f0e8;
+  --danger: #c23a32;
+  --danger-bg: #fdeeed;
+  --warn: #b8862e;
+  --warn-bg: #f7ecd6;
+  --ok: #1f7a5c;
+  --ok-bg: #e6f3ec;
   --radius: 8px;
   --shadow: 0 1px 2px rgba(18, 29, 51, .06), 0 4px 16px rgba(18, 29, 51, .07);
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-num: "Cascadia Mono", Consolas, monospace;
+  --font: "Public Sans", system-ui, sans-serif;
+  --font-num: "JetBrains Mono", Consolas, monospace;
 }
 * { box-sizing: border-box; }
 body {
   font-family: var(--font); margin: 0; background: var(--bg);
   color: var(--text); font-size: 14px; line-height: 1.45;
 }
-h1, h2, h3 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+h1, h2, h3 { font-family: "Space Grotesk", system-ui, sans-serif; }
 a { color: inherit; }
 
 .banda-demo {
-  background: var(--warn-bg); color: #6b4d00; border-bottom: 1px solid #f0dca3;
+  background: var(--warn-bg); color: #7a5a1a; border-bottom: 1px solid #e8d4a8;
   font-size: 13px; padding: 9px 20px; text-align: center; font-weight: 600;
 }
 .banda-demo a { text-decoration: underline; color: inherit; }
 
 .shell { display: flex; min-height: calc(100vh - 38px); }
 aside {
-  width: 228px; flex: none; background: var(--ink); color: #cbd4e4;
+  width: 228px; flex: none; background: var(--ink); color: #c9d9d0;
   display: flex; flex-direction: column; padding: 18px 12px;
 }
 aside .brand { display: flex; align-items: center; gap: 12px; margin: 4px 6px 26px; }
@@ -55,12 +58,12 @@ aside .brand { display: flex; align-items: center; gap: 12px; margin: 4px 6px 26
   font-weight: 700; font-size: 13px; letter-spacing: .02em; flex: none;
 }
 .brand-name { font-weight: 650; font-size: 16px; color: #fff; }
-.brand-sub { color: #7d8aa5; font-size: 12px; margin-top: 1px; }
+.brand-sub { color: #8ba39a; font-size: 12px; margin-top: 1px; }
 .nav-grup { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
-  color: #6d7b99; margin: 14px 10px 6px; }
+  color: #7b9187; margin: 14px 10px 6px; }
 .nav-btn {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-  background: none; color: #cbd4e4; font-weight: 500; padding: 9px 10px; border-radius: 6px;
+  background: none; color: #c9d9d0; font-weight: 500; padding: 9px 10px; border-radius: 6px;
   margin-bottom: 2px; border: 0; cursor: pointer; font: inherit;
 }
 .nav-btn:hover { background: var(--ink-2); color: #fff; }
@@ -73,7 +76,7 @@ aside .jos { margin-top: auto; border-top: 1px solid var(--ink-3); padding-top: 
   display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex: none;
 }
 .user-nume { font-size: 13px; color: #fff; font-weight: 600; }
-.user-rol { font-size: 11px; color: #7d8aa5; }
+.user-rol { font-size: 11px; color: #8ba39a; }
 
 .continut { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bara-sus {
@@ -123,7 +126,7 @@ td.num, th.num { text-align: right; font-family: var(--font-num); font-size: 13p
   font-variant-numeric: tabular-nums; }
 td.cod { font-family: var(--font-num); font-size: 13px; }
 tr.sever td { background: var(--danger-bg); box-shadow: inset 3px 0 0 var(--danger); }
-tr.sever:hover td { background: #fbe6e4; }
+tr.sever:hover td { background: #f7e8e6; }
 td.delta-neg { color: var(--danger); font-weight: 600; }
 td.delta-poz { color: var(--warn); font-weight: 600; }
 .gol { color: var(--muted); text-align: center; padding: 28px 22px !important; }

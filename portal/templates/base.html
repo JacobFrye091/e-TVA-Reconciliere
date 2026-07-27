@@ -6,51 +6,56 @@
 <title>{% block titlu %}e-TVA Reconciliere{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root { --ink:#0e1626; --ink-2:#16233c; --paper:#f7f9fb; --surface:#fff;
-  --border:#e1e7ef; --text:#1b2430; --muted:#64718a; --muted-inv:#93a1bd;
-  --accent:#0d5c63; --accent-2:#12777f; --danger:#c23a32; --danger-bg:#fdeeed;
-  --ok:#1a7f4b; --ok-bg:#e7f5ec; --warn:#9a6700; --warn-bg:#fff4dd;
-  --mono:"Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace; }
+:root { --ink:#132922; --paper:#f5f8f5; --surface:#fff;
+  --border:#dde7e1; --text:#182922; --muted:#5c6f66; --muted-inv:#a9c4b7;
+  --accent:#1f7a5c; --accent-2:#155f47; --danger:#c23a32; --danger-bg:#fdeeed;
+  --ok:#1f7a5c; --ok-bg:#e6f3ec; --warn:#a9761f; --warn-bg:#faf1de;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace; }
 * { box-sizing:border-box; margin:0; }
-body { font-family:Inter,system-ui,sans-serif; background:var(--paper);
-  color:var(--text); font-size:15px; line-height:1.55; min-height:100vh; }
-h1,h2,h3 { font-family:Archivo,system-ui,sans-serif; }
-.topbar { background:var(--ink); }
-.topbar .inv { max-width:1040px; margin:auto; padding:0 24px; height:60px;
+body { font-family:"Public Sans",system-ui,sans-serif; background:var(--paper);
+  color:var(--text); font-size:15px; line-height:1.6; min-height:100vh; }
+h1,h2,h3 { font-family:"Space Grotesk",system-ui,sans-serif; letter-spacing:-0.01em; }
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); }
+.topbar .inv { max-width:1040px; margin:auto; padding:0 24px; height:64px;
   display:flex; align-items:center; justify-content:space-between; }
 .brand { display:flex; align-items:center; gap:10px; text-decoration:none; }
 .brand img { width:32px; height:32px; }
-.brand b { color:#fff; font-family:Archivo,sans-serif; font-size:15px; }
-.topbar a.iesire { color:var(--muted-inv); font-size:13.5px; text-decoration:none; }
-.topbar a.iesire:hover { color:#fff; }
+.brand b { color:var(--ink); font-family:"Space Grotesk",sans-serif; font-size:15px; font-weight:700; }
+.topbar a.iesire { color:var(--muted); font-size:13.5px; text-decoration:none; font-weight:600; }
+.topbar a.iesire:hover { color:var(--accent); }
 main { max-width:1040px; margin:0 auto; padding:36px 24px 60px; }
 main.ingust { max-width:460px; padding-top:56px; }
 .card { background:var(--surface); border:1px solid var(--border);
-  border-radius:12px; padding:28px; margin-bottom:18px; }
-.card h2 { font-size:19px; margin-bottom:4px; }
+  border-radius:16px; padding:28px; margin-bottom:18px;
+  box-shadow:0 1px 2px rgba(19,41,34,.05); }
+.card h2 { font-size:19px; margin-bottom:4px; font-weight:700; }
 .card .sub { color:var(--muted); font-size:13.5px; margin-bottom:18px; }
 label { display:block; font-size:12.5px; font-weight:600; color:var(--muted);
   margin:12px 0 5px; }
-input, select { width:100%; padding:9px 11px; border:1px solid var(--border);
-  border-radius:6px; font:inherit; }
-input:focus, select:focus { outline:2px solid var(--accent); border-color:var(--accent); }
-button, .btn { font:inherit; font-family:Archivo,sans-serif; font-weight:700;
-  border:0; border-radius:7px; cursor:pointer; padding:10px 18px;
-  background:var(--accent); color:#fff; text-decoration:none; display:inline-block; }
+input, select { width:100%; padding:10px 12px; border:1px solid var(--border);
+  border-radius:8px; font:inherit; background:var(--surface); color:var(--text); }
+input:focus, select:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+input[type="checkbox"], input[type="radio"] { accent-color:var(--accent); }
+button, .btn { font:inherit; font-family:"Space Grotesk",sans-serif; font-weight:700;
+  border:0; border-radius:9px; cursor:pointer; padding:10px 18px;
+  background:var(--accent); color:#fff; text-decoration:none; display:inline-block;
+  transition:background .15s ease; }
 button:hover, .btn:hover { background:var(--accent-2); }
+button:focus-visible, .btn:focus-visible, a:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
 .btn-lat { width:100%; margin-top:18px; }
 .eroare { color:var(--danger); font-size:13.5px; margin-top:12px; }
 .nota { color:var(--muted); font-size:13px; margin-top:16px; }
 .nota a { color:var(--accent); }
 table { border-collapse:collapse; width:100%; }
-th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--border);
+th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border);
   font-size:14px; }
 th { font-size:11px; text-transform:uppercase; letter-spacing:.07em;
-  color:var(--muted); }
+  color:var(--muted); font-family:"Space Grotesk",sans-serif; font-weight:600; }
 tr:last-child td { border-bottom:0; }
-.chip { display:inline-block; font-size:12px; font-weight:600; padding:2px 10px;
+.chip { display:inline-block; font-size:12px; font-weight:700; padding:3px 11px;
   border-radius:999px; }
 .chip.ok { color:var(--ok); background:var(--ok-bg); }
 .chip.oprit { color:var(--muted); background:var(--paper); }
@@ -59,15 +64,17 @@ tr:last-child td { border-bottom:0; }
 .rand button { margin-bottom:1px; }
 form.inline { display:inline; }
 button.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
-  color:var(--danger); border:1px solid var(--border); }
+  color:var(--danger); border:1px solid var(--border); font-weight:600; }
 button.mic:hover { background:var(--danger-bg); }
 .tip-firma { display:flex; flex-direction:column; gap:8px; }
 .optiune-tip { display:flex; align-items:flex-start; gap:10px;
-  padding:11px 13px; border:1px solid var(--border); border-radius:8px;
+  padding:12px 14px; border:1px solid var(--border); border-radius:10px;
   cursor:pointer; font-size:14px; font-weight:400; color:var(--text);
-  margin:0; text-transform:none; letter-spacing:normal; }
+  margin:0; text-transform:none; letter-spacing:normal;
+  transition:border-color .15s ease, background .15s ease; }
 .optiune-tip:has(input:checked) { border-color:var(--accent); background:var(--ok-bg); }
 .optiune-tip input { width:auto; margin-top:3px; }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 </style>
 {% block estilo %}{% endblock %}
 </head>

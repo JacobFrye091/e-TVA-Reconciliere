@@ -8,17 +8,17 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  --ink: #17203a; --ink-2: #212b4a; --ink-3: #303c5f;
-  --paper: #e9ecf2; --surface: #ffffff; --border: #d2d7e0;
-  --text: #1b2338; --muted: #5b6478; --muted-inv: #a7b0c4;
-  --accent: #9c3327; --accent-2: #b84433; --accent-soft: #f4e3df;
-  --danger: #c23a32; --danger-bg: #fdeeed; --warn: #9a6700; --warn-bg: #fff4dd;
-  --ok: #1a7f4b; --ok-bg: #e7f5ec;
-  --disp: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace; --body: "IBM Plex Sans", system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  --ink: #132922; --ink-2: #1c3a30; --ink-3: #25493c;
+  --paper: #eef3ef; --surface: #ffffff; --border: #dbe7e0;
+  --text: #182922; --muted: #5c6f66; --muted-inv: #a9c4b7;
+  --accent: #1f7a5c; --accent-2: #155f47; --accent-soft: #e1f0e8;
+  --danger: #c23a32; --danger-bg: #fdeeed; --warn: #b8862e; --warn-bg: #f7ecd6;
+  --ok: #1f7a5c; --ok-bg: #e6f3ec;
+  --disp: "Space Grotesk", ui-monospace, "Cascadia Mono", monospace; --body: "Public Sans", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
 }
 * { box-sizing: border-box; margin: 0; }
 html { scroll-behavior: smooth; }
@@ -45,13 +45,13 @@ a { color: inherit; }
 .nav .btn { padding: 8px 16px; font-size: 14px; }
 @media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
 
-.page-header { background: linear-gradient(170deg, var(--ink) 0%, #10162a 60%, #0b0f1e 100%);
+.page-header { background: linear-gradient(170deg, var(--ink) 0%, #0e1f19 60%, #081410 100%);
   color: #fff; padding: 56px 0 44px; }
 .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--disp); font-size: 12px; font-weight: 600;
-  letter-spacing: .06em; color: #e7a89d; background: rgba(156, 51, 39, .18);
-  border: 1px solid rgba(184, 68, 51, .55); border-radius: 3px; padding: 6px 12px; margin-bottom: 20px;
+  letter-spacing: .06em; color: #e6c988; background: rgba(184, 134, 46, .18);
+  border: 1px solid rgba(184, 134, 46, .55); border-radius: 3px; padding: 6px 12px; margin-bottom: 20px;
   text-transform: uppercase; }
-.eyebrow::before { content: ""; width: 6px; height: 6px; background: #b84433; }
+.eyebrow::before { content: ""; width: 6px; height: 6px; background: #155f47; }
 .page-header h1 { font-size: clamp(26px, 3.6vw, 36px); font-weight: 800; margin-bottom: 10px; max-width: 22em; }
 .page-header p.sub { font-size: 15.5px; color: var(--muted-inv); max-width: 42em; }
 
@@ -88,7 +88,7 @@ footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-it
 @media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
 footer a { color: var(--muted-inv); }
 footer a:hover { color: #fff; }
-footer .placeholder-legal { color: #e7a89d; }
+footer .placeholder-legal { color: #e6c988; }
 </style>
 </head>
 <body>
