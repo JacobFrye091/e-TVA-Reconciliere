@@ -270,6 +270,28 @@ def test_migrate_does_not_reseed_planuri_facturare_after_master_edit(tmp_path):
     assert pdb.get_preturi(reopened)["direct"]["lunar"] == 99
 
 
+def test_migrate_seeds_cota_tva_on_first_run(tmp_path):
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = pdb.open_db(path)
+    assert pdb.get_cota_tva(conn) == 21
+
+
+def test_migrate_does_not_reseed_cota_tva_after_master_edit(tmp_path):
+    """Un master care a corectat deja cota de TVA (ex: dupa o schimbare de
+    lege) nu trebuie sa o vada resetata la valoarea initiala la restart."""
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = pdb.open_db(path)
+    pdb.set_cota_tva(conn, 23, "sef")
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    assert pdb.get_cota_tva(reopened) == 23
+
+
 def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
     """Reproduces the real crash: a firm gets soft-deleted (firms/user_firms
     rows removed, firm_keys kept on purpose so the encrypted database stays
@@ -2498,6 +2520,14 @@ def test_creeaza_cerere_plata_requires_ciclu_ales(app):
     assert "Alege intai un ciclu".encode() in r.data
 
 
+def _multiplicator_tva(app):
+    """1 + cota_tva/100, citita din setari_tva - nu hardcodata in teste, la
+    fel cum nu mai e hardcodata in cod (cota s-a schimbat deja o data,
+    19% -> 21%, in timpul acestui proiect)."""
+    from portal import db as pdb
+    return 1 + pdb.get_cota_tva(app.portal_conn) / 100
+
+
 def test_creeaza_cerere_plata_direct_firm(app):
     c = app.test_client()
     inregistreaza(c, cui="RO204", tip="direct")
@@ -2509,7 +2539,9 @@ def test_creeaza_cerere_plata_direct_firm(app):
     row = app.portal_conn.execute(
         "SELECT p.* FROM payments p JOIN firms f ON f.id=p.firm_id "
         "WHERE f.cui='RO204'").fetchone()
-    assert row["suma"] == 59  # pret lunar direct, un singur ciclu de o luna
+    # pret lunar direct (59, exclusiv TVA) x un singur ciclu de o luna,
+    # apoi +TVA - payments.suma e suma efectiv ceruta clientului
+    assert row["suma"] == round(59 * _multiplicator_tva(app), 2)
     assert row["recurent"] == 1
     assert row["stare"] == "in_asteptare"
 
@@ -2527,7 +2559,7 @@ def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT suma FROM payments WHERE firm_id=?", (firm_id,)).fetchone()
-    assert row["suma"] == 15 * 12
+    assert row["suma"] == round(15 * 12 * _multiplicator_tva(app), 2)
 
 
 def test_master_plati_requires_master(app):
@@ -2569,6 +2601,12 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
         "SELECT * FROM invoices WHERE id=?", (row["invoice_id"],)).fetchone()
     assert factura["valoare_neta"] == 49 * 6  # pret 6luni direct x 6 luni
     assert "6 luni".encode() in factura["descriere"].encode()
+    # payments.suma (ce a fost cerut/incasat de la client) trebuie sa
+    # coincida exact cu valoare_totala din factura - fara aceasta corectie,
+    # clientul platea doar pretul de baza in timp ce factura declara un
+    # total mai mare (cu TVA), niciodata incasat integral.
+    assert row["suma"] == factura["valoare_totala"]
+    assert row["suma"] == round(49 * 6 * _multiplicator_tva(app), 2)
 
 
 def test_valideaza_plata_rejects_already_validated(app):
@@ -2679,7 +2717,56 @@ def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
         "WHERE f.cui='RO209'").fetchone()
-    assert row["suma"] == 100
+    assert row["suma"] == round(100 * _multiplicator_tva(app), 2)
+
+
+def test_salveaza_cota_tva_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/nomenclator/tva", data={"cota_tva": "21"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_salveaza_cota_tva_updates_value(app):
+    from portal import db as pdb
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator/tva", data={"cota_tva": "22"}, follow_redirects=True)
+    assert "Cota de TVA a fost actualizata".encode() in r.data
+    assert pdb.get_cota_tva(app.portal_conn) == 22
+
+
+def test_salveaza_cota_tva_rejects_invalid_value(app):
+    from portal import db as pdb
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    cota_initiala = pdb.get_cota_tva(app.portal_conn)
+    r = c.post("/master/nomenclator/tva", data={"cota_tva": "0"}, follow_redirects=True)
+    assert "numar intre 0 si 100".encode() in r.data
+    assert pdb.get_cota_tva(app.portal_conn) == cota_initiala
+
+
+def test_updated_cota_tva_is_used_by_payment_calculation(app):
+    """Cota de TVA modificata din nomenclator trebuie sa se reflecte imediat
+    in suma de plata calculata pentru firme, la fel ca preturile."""
+    from portal import db as pdb
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post("/master/nomenclator/tva", data={"cota_tva": "22"})
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO210", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO210")
+    _semneaza_contract_mouse(c)
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO210'").fetchone()
+    assert row["suma"] == round(59 * 1.22, 2)
 
 
 def test_master_backup_list_requires_master(app):

@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS invoices(
   descriere TEXT NOT NULL,
   perioada_inceput TEXT, perioada_sfarsit TEXT,
   data_emiterii TEXT NOT NULL, data_scadentei TEXT,
-  valoare_neta REAL NOT NULL, cota_tva REAL NOT NULL DEFAULT 19,
+  valoare_neta REAL NOT NULL, cota_tva REAL NOT NULL DEFAULT 21,
   valoare_tva REAL NOT NULL, valoare_totala REAL NOT NULL,
   moneda TEXT NOT NULL DEFAULT 'RON',
   stare TEXT NOT NULL DEFAULT 'emisa',
@@ -177,6 +177,10 @@ CREATE TABLE IF NOT EXISTS login_lockouts(
   incercari INTEGER NOT NULL DEFAULT 0,
   ultima_incercare TEXT,
   blocat_pana TEXT);
+CREATE TABLE IF NOT EXISTS setari_tva(
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  cota_procent REAL NOT NULL,
+  actualizat_de TEXT, actualizat_la TEXT);
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
@@ -225,6 +229,22 @@ CICLU_LUNAR = "lunar"
 CICLU_6_LUNI = "6luni"
 CICLU_AN = "an"
 CICLURI_FACTURARE = (CICLU_LUNAR, CICLU_6_LUNI, CICLU_AN)
+
+# Cota de TVA (Romania) NU e hardcodata - legea s-a schimbat deja o data in
+# timpul acestui proiect (19% pana la 31.07.2025, 21% de la 01.08.2025), asa
+# ca valoarea curenta e in tabela setari_tva, editabila din
+# /master/nomenclator (vezi get_cota_tva/set_cota_tva) - un master poate
+# corecta cota chiar in ziua in care legea se schimba, fara sa astepte o
+# livrare de cod. _COTA_TVA_INITIALA e folosita o singura data, ca sa
+# semene tabela la prima pornire - vezi _migrate_seed_cota_tva. Dupa aceea,
+# sursa de adevar e tabela, la fel ca la planuri_facturare/get_preturi.
+#
+# planuri_facturare.pret_lunar_ron (si deci contracts.suma - vezi
+# contract.py, care afiseaza explicit "exclusiv TVA") raman pretul de baza,
+# fara TVA. Suma efectiv ceruta/incasata de la client (payments.suma)
+# include TVA-ul curent adaugat peste pretul de baza - vezi _suma_cu_tva in
+# portal/app.py.
+_COTA_TVA_INITIALA = 21
 
 # Pragurile (zile ramase din trial) la care se trimite un email de avertizare
 # firmelor care nu si-au ales inca un ciclu de facturare - in ordine
@@ -508,6 +528,34 @@ def _migrate_contracts_fara_pdf(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_seed_cota_tva(conn: sqlite3.Connection) -> None:
+    """Semeaza cota de TVA la prima pornire, cu valoarea curenta la data
+    scrierii acestui cod (_COTA_TVA_INITIALA) - doar daca tabela e inca
+    goala, ca un master care a corectat-o deja sa nu o vada resetata la un
+    restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
+    n = conn.execute("SELECT COUNT(*) AS n FROM setari_tva").fetchone()["n"]
+    if n:
+        return
+    conn.execute(
+        "INSERT INTO setari_tva(id, cota_procent, actualizat_de, actualizat_la) "
+        "VALUES (1, ?, ?, ?)",
+        (_COTA_TVA_INITIALA, "sistem", datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def get_cota_tva(conn: sqlite3.Connection) -> float:
+    return conn.execute(
+        "SELECT cota_procent FROM setari_tva WHERE id=1").fetchone()["cota_procent"]
+
+
+def set_cota_tva(conn: sqlite3.Connection, procent: float, actualizat_de: str) -> None:
+    conn.execute(
+        "UPDATE setari_tva SET cota_procent=?, actualizat_de=?, actualizat_la=? "
+        "WHERE id=1",
+        (procent, actualizat_de, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
 def get_preturi(conn: sqlite3.Connection) -> dict:
     """Preturile curente din nomenclator, in aceeasi forma ca fostul dict
     hardcodat PRETURI_LUNARE_RON: {tip: {ciclu: pret_lunar_ron}}."""
@@ -542,5 +590,6 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firms_trial_reminder(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
+    _migrate_seed_cota_tva(conn)
     conn.commit()
     return conn

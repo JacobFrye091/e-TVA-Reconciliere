@@ -49,5 +49,20 @@
     <p class="nota">Prețurile de pe pagina publică (index.html, secțiunea „Prețuri") nu se
       actualizează automat de aici — sunt statice și trebuie ținute manual în sincron.</p>
   </div>
+
+  <div class="card">
+    <h2>Cota de TVA</h2>
+    <p class="sub">Folosită la calculul sumei cerute firmelor la plată și la
+      facturile emise — <b>nu e fixată în cod</b>, ca să poată fi corectată
+      imediat ce legea se schimbă (ultima schimbare: 19% → 21%, 01.08.2025),
+      fără să aștepți o livrare de cod.</p>
+    <form method="post" action="/master/nomenclator/tva" style="display:flex;gap:10px;align-items:center">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="number" step="0.01" min="0.01" max="99.99" name="cota_tva"
+             value="{{ cota_tva }}" required style="max-width:120px">
+      <span>%</span>
+      <button class="btn-lat" type="submit" style="margin:0">Salvează cota</button>
+    </form>
+  </div>
 </main>
 {% endblock %}

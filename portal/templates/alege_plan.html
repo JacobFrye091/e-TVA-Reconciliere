@@ -61,7 +61,12 @@
     <h2>Plătește abonamentul</h2>
     <p class="sub">Ciclul ales:
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>
-      — <b>{{ suma_curenta }} RON</b>{{ ' (calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
+      {{ '(calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
+    <table style="margin:10px 0">
+      <tr><td>Preț fără TVA</td><td style="text-align:right">{{ suma_neta_curenta }} RON</td></tr>
+      <tr><td>TVA ({{ cota_tva }}%)</td><td style="text-align:right">{{ suma_tva_curenta }} RON</td></tr>
+      <tr><td><b>Total de plată</b></td><td style="text-align:right"><b>{{ suma_curenta }} RON</b></td></tr>
+    </table>
     <form method="post" action="/panou/plata">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
@@ -79,7 +84,7 @@
   <div class="card">
     <h2>Istoricul plăților (ultimele 12 luni)</h2>
     <table>
-      <tr><th>Data</th><th>Ciclu</th><th>Sumă</th><th>Recurentă</th><th>Stare</th></tr>
+      <tr><th>Data</th><th>Ciclu</th><th>Sumă (cu TVA)</th><th>Recurentă</th><th>Stare</th></tr>
       {% for p in plati %}
       <tr>
         <td>{{ p['creat_la'][:10] }}</td>

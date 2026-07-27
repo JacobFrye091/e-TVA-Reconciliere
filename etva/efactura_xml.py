@@ -83,7 +83,11 @@ def build_invoice_xml(invoice: dict, furnizor: dict) -> bytes:
     neta = round(float(invoice["valoare_neta"]), 2)
     tva = round(float(invoice["valoare_tva"]), 2)
     totala = round(float(invoice["valoare_totala"]), 2)
-    cota = invoice.get("cota_tva", 19)
+    # Fallback defensiv, niciodata folosit in practica - cota_tva e mereu
+    # setata explicit la crearea facturii (vezi portal/db.py::invoices,
+    # NOT NULL). Cota curenta e in setari_tva/get_cota_tva, editabila din
+    # /master/nomenclator - vezi comentariul din portal/db.py.
+    cota = invoice.get("cota_tva", 21)
 
     tax_total = ET.SubElement(root, _cac("TaxTotal"))
     amt = ET.SubElement(tax_total, _cbc("TaxAmount"))

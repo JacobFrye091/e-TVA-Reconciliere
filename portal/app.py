@@ -373,9 +373,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return {pdb.CICLU_LUNAR: 1, pdb.CICLU_6_LUNI: 6, pdb.CICLU_AN: 12}[ciclu]
 
     def _calculeaza_suma_plata(firm, ciclu: str) -> float:
-        """Firma 'contabilitate' plateste per client gestionat (minim 1, ca
-        o firma abia inregistrata - fara clienti inca - sa nu ajunga la o
-        factura de 0 RON); firma 'direct' are tarif fix per firma."""
+        """Pretul de baza, fara TVA - firma 'contabilitate' plateste per
+        client gestionat (minim 1, ca o firma abia inregistrata - fara
+        clienti inca - sa nu ajunga la o factura de 0 RON); firma 'direct'
+        are tarif fix per firma. Folosit ca atare pentru contracts.suma
+        (contractul afiseaza explicit "exclusiv TVA" langa aceasta suma) -
+        suma efectiv ceruta clientului la plata trece prin _suma_cu_tva."""
         pret_lunar = pdb.get_preturi(conn)[firm["tip"]][ciclu]
         luni = _luni_pentru_ciclu(ciclu)
         if firm["tip"] == pdb.FIRM_TIP_CONTABILITATE:
@@ -383,6 +386,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
             return round(pret_lunar * luni * max(n_clienti, 1), 2)
         return round(pret_lunar * luni, 2)
+
+    def _suma_cu_tva(suma_neta: float) -> float:
+        """Suma efectiv ceruta/incasata de la client - pretul de baza
+        (exclusiv TVA, vezi _calculeaza_suma_plata) plus cota de TVA curenta
+        (pdb.get_cota_tva - editabila din /master/nomenclator, nu hardcodata,
+        ca sa poata fi corectata instant cand legea se schimba). Rezultatul e
+        cel stocat in payments.suma, ca sa coincida exact cu valoare_totala
+        din factura emisa la valideaza_plata - fara aceasta corectie,
+        clientul era rugat sa plateasca doar pretul de baza, in timp ce
+        factura declara automat un total mai mare (cu TVA), nefiind
+        niciodata incasat integral."""
+        return round(suma_neta * (1 + pdb.get_cota_tva(conn) / 100), 2)
 
     def _slugify(text: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
@@ -748,12 +763,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         plati = conn.execute(
             "SELECT * FROM payments WHERE firm_id=? AND creat_la>=? "
             "ORDER BY creat_la DESC", (active_firm_id, de_un_an)).fetchall()
-        suma_curenta = (_calculeaza_suma_plata(firm, firm["ciclu_facturare"])
-                       if firm["ciclu_facturare"] else None)
+        suma_neta_curenta = (_calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+                            if firm["ciclu_facturare"] else None)
+        suma_curenta = (_suma_cu_tva(suma_neta_curenta)
+                       if suma_neta_curenta is not None else None)
+        suma_tva_curenta = (round(suma_curenta - suma_neta_curenta, 2)
+                           if suma_curenta is not None else None)
         return render_template(
             "alege_plan.html", user=user, firm=firm,
             preturi=pdb.get_preturi(conn)[firm["tip"]],
-            zile_trial=zile_trial, suma_curenta=suma_curenta, plati=plati,
+            zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
+            suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
+            cota_tva=pdb.get_cota_tva(conn), plati=plati,
             arata_plata=(firm["ciclu_facturare"] and zile_trial is not None
                         and zile_trial <= 1),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
@@ -800,7 +821,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "vezi_contract",
                 eroare="Trebuie sa semnezi contractul de prestari servicii "
                       "inainte de a trimite o cerere de plata."))
-        suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+        suma = _suma_cu_tva(_calculeaza_suma_plata(firm, firm["ciclu_facturare"]))
         recurent = 1 if request.form.get("recurent") else 0
         # TODO integrare FGO: aici ar trebui creata factura+link de plata
         # prin API-ul FGO (conectat la Netopia Payments) si redirectionat
@@ -2053,10 +2074,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         eticheta_ciclu = {"lunar": "lunar", "6luni": "la 6 luni",
                          "an": "anual"}[plata["ciclu_facturare"]]
         numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
-        valoare_neta = plata["suma"]
-        cota_tva = 19.0
-        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
-        valoare_totala = round(valoare_neta + valoare_tva, 2)
+        # payments.suma e deja suma cu TVA inclus (vezi _suma_cu_tva) - cea
+        # chiar ceruta/incasata de la client - asa ca aici desprindem
+        # baza/TVA din ea, nu mai adaugam TVA peste, ca sa nu-l numaram de
+        # doua ori si valoare_totala sa coincida exact cu ce s-a incasat.
+        # Foloseste cota curenta din setari_tva, nu una hardcodata - vezi
+        # _suma_cu_tva pentru acelasi motiv.
+        cota_tva = pdb.get_cota_tva(conn)
+        valoare_totala = plata["suma"]
+        valoare_neta = round(valoare_totala / (1 + cota_tva / 100), 2)
+        valoare_tva = round(valoare_totala - valoare_neta, 2)
         acum = datetime.now()
         cur = conn.execute(
             "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
@@ -2166,6 +2193,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("login"))
         return render_template(
             "master_nomenclator.html", user=user, preturi=pdb.get_preturi(conn),
+            cota_tva=pdb.get_cota_tva(conn),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/master/nomenclator")
@@ -2200,6 +2228,29 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                      for (tip, ciclu), pret in valori.items()))
         return redirect(url_for(
             "master_nomenclator", mesaj="Preturile au fost actualizate."))
+
+    @app.post("/master/nomenclator/tva")
+    def salveaza_cota_tva():
+        """Cota de TVA nu e hardcodata in cod - legea s-a schimbat deja o
+        data in timpul acestui proiect (19% -> 21% din 01.08.2025), asa ca
+        un master trebuie sa o poata corecta chiar in ziua schimbarii, fara
+        sa astepte o livrare de cod (vezi pdb.get_cota_tva/set_cota_tva)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        bruta = request.form.get("cota_tva", "").strip().replace(",", ".")
+        try:
+            procent = float(bruta)
+        except ValueError:
+            procent = None
+        if procent is None or procent <= 0 or procent >= 100:
+            return redirect(url_for(
+                "master_nomenclator",
+                eroare="Cota de TVA trebuie sa fie un numar intre 0 si 100."))
+        pdb.set_cota_tva(conn, procent, user["username"])
+        _log_master_action(user, "nomenclator.cota_tva", f"{procent:g}%")
+        return redirect(url_for(
+            "master_nomenclator", mesaj="Cota de TVA a fost actualizata."))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

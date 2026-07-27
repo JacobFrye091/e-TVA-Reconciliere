@@ -30,7 +30,7 @@ a.mic:hover { background:var(--paper); }
 
   <div class="card">
     <table>
-      <tr><th>Firma</th><th>Ciclu</th><th>Sumă</th><th>Recurentă</th><th>Creat la</th><th>Stare</th><th></th></tr>
+      <tr><th>Firma</th><th>Ciclu</th><th>Sumă (cu TVA)</th><th>Recurentă</th><th>Creat la</th><th>Stare</th><th></th></tr>
       {% for p in plati %}
       <tr>
         <td>{{ p['firm_name'] }}<br><span class="nota" style="margin:0">{{ p['firm_cui'] }}</span></td>
