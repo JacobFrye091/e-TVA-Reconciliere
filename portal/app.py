@@ -752,6 +752,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
             (firm_id,)).fetchone()
 
+    def _regenereaza_pdf_contract(contract) -> bytes:
+        """PDF-ul contractului, regenerat de fiecare data din datele
+        stocate - nu se mai pastreaza niciun PDF in baza de date. Pentru
+        semnatura cu mouse-ul re-embedam PNG-ul desenat; pentru semnatura cu
+        certificat nu mai exista fisierul original incarcat, asa ca atasam
+        in schimb rezultatul verificarii facute la momentul semnarii."""
+        continut = contract_mod.genereaza_text_din_rand(contract)
+        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_MOUSE:
+            semnatura_img = (bytes(contract["semnatura_mouse_img"])
+                             if contract["semnatura_mouse_img"] else None)
+            return contract_mod.genereaza_pdf(continut, semnatura_img=semnatura_img)
+        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_CERTIFICAT:
+            detalii = json.loads(contract["semnatura_detalii"] or "{}")
+            nota = contract_mod.nota_verificare_certificat(
+                detalii, contract["semnat_la"])
+            return contract_mod.genereaza_pdf(continut, nota_semnatura=nota)
+        return contract_mod.genereaza_pdf(continut)
+
     def _genereaza_contract(firm) -> "tuple[object, str | None]":
         """Contractul curent al firmei, generat din nou daca nu exista inca
         unul sau daca firma si-a schimbat ciclul de facturare de atunci.
@@ -767,12 +785,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return existent, str(e)
         suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
         numar = contract_mod.next_contract_number(conn)
-        continut = contract_mod.genereaza_text(
-            numar, beneficiar, firm["ciclu_facturare"], suma)
         cur = conn.execute(
             "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
-            "continut, stare, creat_la) VALUES(?,?,?,?,?,?,?)",
-            (firm["id"], numar, firm["ciclu_facturare"], suma, continut,
+            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
+            "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
+            (firm["id"], numar, firm["ciclu_facturare"], suma,
+             beneficiar["denumire"], beneficiar["cui"], beneficiar["adresa"],
              pdb.CONTRACT_STARE_IN_ASTEPTARE,
              datetime.now(timezone.utc).isoformat()))
         conn.commit()
@@ -792,8 +810,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
         contract, eroare_generare = _genereaza_contract(firm)
+        continut = (contract_mod.genereaza_text_din_rand(contract)
+                   if contract is not None else None)
         return render_template(
             "contract_semneaza.html", user=user, firm=firm, contract=contract,
+            continut=continut,
             eroare=eroare_generare or request.args.get("eroare"),
             mesaj=request.args.get("mesaj"))
 
@@ -807,14 +828,27 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         contract = _contract_curent(active_firm_id)
         if contract is None:
             return redirect(url_for("vezi_contract"))
-        if contract["pdf_semnat"]:
-            pdf_bytes = bytes(contract["pdf_semnat"])
-        else:
-            pdf_bytes = contract_mod.genereaza_pdf(contract["continut"])
+        pdf_bytes = _regenereaza_pdf_contract(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
                     f"inline; filename=contract-{contract['numar']}.pdf"})
+
+    @app.get("/panou/contract/xml")
+    def descarca_contract_xml():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        contract = _contract_curent(active_firm_id)
+        if contract is None:
+            return redirect(url_for("vezi_contract"))
+        xml_bytes = contract_mod.date_contract_xml(contract)
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition":
+                    f'attachment; filename="contract-{contract["numar"]}.xml"'})
 
     @app.post("/panou/contract/semneaza")
     def semneaza_contract():
@@ -842,14 +876,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             except (ValueError, TypeError):
                 return redirect(url_for(
                     "vezi_contract", eroare="Semnatura trimisa este invalida."))
-            pdf_semnat = contract_mod.genereaza_pdf(
-                contract["continut"], semnatura_img=semnatura_png)
             conn.execute(
                 "UPDATE contracts SET stare=?, metoda_semnatura=?, "
-                "pdf_semnat=?, semnatura_verificata=0, semnatura_detalii=?, "
-                "semnat_la=? WHERE id=?",
+                "semnatura_mouse_img=?, semnatura_verificata=0, "
+                "semnatura_detalii=?, semnat_la=? WHERE id=?",
                 (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_MOUSE,
-                 pdf_semnat, json.dumps({
+                 semnatura_png, json.dumps({
                      "metoda": "mouse",
                      "nota": "Semnatura electronica simpla - fara verificare criptografica."}),
                  acum, contract["id"]))
@@ -870,10 +902,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                     eroare=f"Semnatura nu a putut fi validata: {verificare['eroare']}"))
             conn.execute(
                 "UPDATE contracts SET stare=?, metoda_semnatura=?, "
-                "pdf_semnat=?, semnatura_verificata=?, semnatura_detalii=?, "
+                "semnatura_verificata=?, semnatura_detalii=?, "
                 "semnat_la=? WHERE id=?",
                 (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_CERTIFICAT,
-                 pdf_bytes, 1 if verificare["trusted"] else 0,
+                 1 if verificare["trusted"] else 0,
                  json.dumps(verificare), acum, contract["id"]))
             conn.commit()
         else:
@@ -1899,14 +1931,26 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                                 (contract_id,)).fetchone()
         if contract is None:
             return redirect(url_for("master_contracte"))
-        if contract["pdf_semnat"]:
-            pdf_bytes = bytes(contract["pdf_semnat"])
-        else:
-            pdf_bytes = contract_mod.genereaza_pdf(contract["continut"])
+        pdf_bytes = _regenereaza_pdf_contract(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
                     f"inline; filename=contract-{contract['numar']}.pdf"})
+
+    @app.get("/master/contracte/<int:contract_id>/xml")
+    def descarca_contract_xml_master(contract_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        if contract is None:
+            return redirect(url_for("master_contracte"))
+        xml_bytes = contract_mod.date_contract_xml(contract)
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition":
+                    f'attachment; filename="contract-{contract["numar"]}.xml"'})
 
     @app.post("/master/contracte/<int:contract_id>/reziliaza")
     def finalizeaza_reziliere_contract(contract_id):

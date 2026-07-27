@@ -31,8 +31,9 @@
     <p class="sub">Contract nr. <b>{{ contract['numar'] }}</b>, ciclu de facturare
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[contract['ciclu_facturare']] }}</b>,
       {{ '%.2f'|format(contract['suma']) }} RON.
-      <a href="/panou/contract/pdf" target="_blank">Descarcă PDF</a></p>
-    <div class="contract-text">{{ contract['continut'] }}</div>
+      <a href="/panou/contract/pdf" target="_blank">Descarcă PDF</a> ·
+      <a href="/panou/contract/xml">Descarcă XML</a></p>
+    <div class="contract-text">{{ continut }}</div>
   </div>
 
   {% if contract['stare'] == 'in_asteptare' %}

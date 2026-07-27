@@ -135,6 +135,49 @@ def test_migrate_adds_firms_verificare_trial_defaulting_to_already_verified(tmp_
     assert row["ciclu_facturare"] is None
 
 
+def test_migrate_contracts_drops_pdf_columns_and_backfills_beneficiar_from_firms(tmp_path):
+    """Randuri dintr-o forma veche (cu continut/pdf_semnat, inainte ca
+    aceste coloane sa fie eliminate - fisiere mari, inutile cand pot fi
+    regenerate din date) trebuie migrate fara sa piarda identitatea
+    beneficiarului - denumire/cui vin din firms (nu mai exista in randul
+    vechi separat de textul inghetat), adresa nu poate fi reconstituita si
+    e marcata explicit ca atare."""
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE firms(id INTEGER PRIMARY KEY, name TEXT, "
+                "cui TEXT UNIQUE, tip TEXT DEFAULT 'contabilitate', active INTEGER DEFAULT 1)")
+    conn.execute(
+        "INSERT INTO firms(id, name, cui) VALUES(1, 'Firma Veche Contract SRL', 'RO999')")
+    conn.execute(
+        "CREATE TABLE contracts(id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "firm_id INTEGER NOT NULL, numar INTEGER NOT NULL UNIQUE, "
+        "ciclu_facturare TEXT NOT NULL, suma REAL NOT NULL, "
+        "continut TEXT NOT NULL, stare TEXT NOT NULL DEFAULT 'in_asteptare', "
+        "creat_la TEXT NOT NULL, metoda_semnatura TEXT, pdf_semnat BLOB, "
+        "semnatura_verificata INTEGER NOT NULL DEFAULT 0, "
+        "semnatura_detalii TEXT, semnat_la TEXT, "
+        "reziliere_solicitata_la TEXT, reziliat_la TEXT, reziliat_de TEXT, "
+        "ramburs_procent REAL)")
+    conn.execute(
+        "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
+        "continut, stare, creat_la) VALUES(1, 1, 'lunar', 59.0, "
+        "'text vechi inghetat', 'semnat', '2026-01-01T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    cols = {r["name"] for r in reopened.execute("PRAGMA table_info(contracts)")}
+    assert "continut" not in cols and "pdf_semnat" not in cols
+    row = reopened.execute("SELECT * FROM contracts WHERE numar=1").fetchone()
+    assert row["beneficiar_denumire"] == "Firma Veche Contract SRL"
+    assert row["beneficiar_cui"] == "RO999"
+    assert "nepastrata" in row["beneficiar_adresa"]
+    assert row["stare"] == "semnat"  # restul datelor supravietuiesc neschimbate
+
+
 def test_migrate_seeds_planuri_facturare_on_first_run(tmp_path):
     from portal import db as pdb
 
@@ -2764,6 +2807,46 @@ def test_descarca_contract_pdf_renders_romanian_diacritics(app):
         assert cuvant in text
 
 
+def test_descarca_contract_xml(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO315", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    r = c.get("/panou/contract/xml")
+    assert r.status_code == 200
+    assert r.mimetype == "application/xml"
+    # beneficiar_cui e stocat asa cum vine de la ANAF (normalizat, fara "RO" -
+    # vezi anaf_cui.normalize_cui), nu forma afisata in text.
+    assert b"<cui>315</cui>" in r.data
+    assert b"Firma Test" in r.data  # denumirea mock-uita de _mock_anaf_cui
+
+
+def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(
+        app, _semnatura_certificat):
+    """Fara pdf_semnat stocat, descarcarea trebuie sa regenereze PDF-ul din
+    date si sa arate rezultatul verificarii facute la semnare, nu fisierul
+    brut incarcat de beneficiar (care nu mai e pastrat)."""
+    import pdfplumber
+    pdf_semnat, _root_pem = _semnatura_certificat
+    c = app.test_client()
+    inregistreaza(c, cui="RO316", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    c.post("/panou/contract/semneaza", data={
+        "metoda": "certificat",
+        "semnatura_fisier": (io.BytesIO(pdf_semnat), "contract_semnat.pdf"),
+    }, content_type="multipart/form-data")
+
+    r = c.get("/panou/contract/pdf")
+    assert r.status_code == 200
+    assert r.data[:4] == b"%PDF"
+    with pdfplumber.open(io.BytesIO(r.data)) as pdf:
+        text = " ".join((p.extract_text() or "").replace("\n", " ")
+                        for p in pdf.pages)
+    assert "certificat digital calificat" in text
+    assert "nu este păstrat pe server" in text
+
+
 def test_semneaza_contract_mouse(app):
     c = app.test_client()
     inregistreaza(c, cui="RO304", tip="direct")
@@ -2775,7 +2858,7 @@ def test_semneaza_contract_mouse(app):
     assert row["stare"] == "semnat"
     assert row["metoda_semnatura"] == "mouse"
     assert row["semnatura_verificata"] == 0
-    assert row["pdf_semnat"] is not None
+    assert row["semnatura_mouse_img"] is not None
     assert row["semnat_la"] is not None
 
 

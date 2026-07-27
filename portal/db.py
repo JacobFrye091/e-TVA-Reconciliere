@@ -150,11 +150,13 @@ CREATE TABLE IF NOT EXISTS contracts(
   numar INTEGER NOT NULL UNIQUE,
   ciclu_facturare TEXT NOT NULL,
   suma REAL NOT NULL,
-  continut TEXT NOT NULL,
+  beneficiar_denumire TEXT NOT NULL,
+  beneficiar_cui TEXT NOT NULL,
+  beneficiar_adresa TEXT NOT NULL,
   stare TEXT NOT NULL DEFAULT 'in_asteptare',
   creat_la TEXT NOT NULL,
   metoda_semnatura TEXT,
-  pdf_semnat BLOB,
+  semnatura_mouse_img BLOB,
   semnatura_verificata INTEGER NOT NULL DEFAULT 0,
   semnatura_detalii TEXT,
   semnat_la TEXT,
@@ -406,6 +408,69 @@ def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_contracts_fara_pdf(conn: sqlite3.Connection) -> None:
+    """Contractele nu mai stocheaza textul inghetat (continut) sau PDF-uri
+    (pdf_semnat) - sunt fisiere mari, inutile cand pot fi regenerate oricand
+    din datele structurate (vezi portal/contract.py:genereaza_text_din_rand).
+    In loc, contracts pastreaza doar snapshotul ANAF al beneficiarului
+    (beneficiar_denumire/cui/adresa) si, pentru semnatura cu mouse-ul, doar
+    PNG-ul brut al semnaturii (semnatura_mouse_img) - mic, spre deosebire de
+    un PDF intreg. Pentru semnatura cu certificat, fisierul PDF incarcat de
+    utilizator nu mai e pastrat deloc - doar semnatura_detalii (JSON cu
+    semnatar/valabilitate/incredere) ramane ca proba de audit."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "contracts" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(contracts)")}
+    if "beneficiar_denumire" in cols:
+        return
+    conn.execute("ALTER TABLE contracts RENAME TO contracts_old")
+    conn.executescript(
+        "CREATE TABLE contracts("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  firm_id INTEGER NOT NULL REFERENCES firms(id),"
+        "  numar INTEGER NOT NULL UNIQUE,"
+        "  ciclu_facturare TEXT NOT NULL,"
+        "  suma REAL NOT NULL,"
+        "  beneficiar_denumire TEXT NOT NULL,"
+        "  beneficiar_cui TEXT NOT NULL,"
+        "  beneficiar_adresa TEXT NOT NULL,"
+        "  stare TEXT NOT NULL DEFAULT 'in_asteptare',"
+        "  creat_la TEXT NOT NULL,"
+        "  metoda_semnatura TEXT,"
+        "  semnatura_mouse_img BLOB,"
+        "  semnatura_verificata INTEGER NOT NULL DEFAULT 0,"
+        "  semnatura_detalii TEXT,"
+        "  semnat_la TEXT,"
+        "  reziliere_solicitata_la TEXT,"
+        "  reziliat_la TEXT,"
+        "  reziliat_de TEXT,"
+        "  ramburs_procent REAL);")
+    if "continut" in cols:
+        # Randuri dintr-o forma veche (inainte de aceasta migrare) - nu mai
+        # avem de unde reconstitui adresa beneficiarului (nu era stocata
+        # separat, doar inghetata in textul PDF-ului), asa ca marcam explicit
+        # ca informatia nu a fost pastrata, in loc sa inventam o valoare.
+        conn.execute(
+            "INSERT INTO contracts(id, firm_id, numar, ciclu_facturare, suma, "
+            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
+            "creat_la, metoda_semnatura, semnatura_verificata, "
+            "semnatura_detalii, semnat_la, reziliere_solicitata_la, "
+            "reziliat_la, reziliat_de, ramburs_procent) "
+            "SELECT co.id, co.firm_id, co.numar, co.ciclu_facturare, co.suma, "
+            "f.name, f.cui, "
+            "'(adresa nepastrata - contract creat inainte de stocarea "
+            "structurata a datelor beneficiarului)', "
+            "co.stare, co.creat_la, co.metoda_semnatura, "
+            "co.semnatura_verificata, co.semnatura_detalii, co.semnat_la, "
+            "co.reziliere_solicitata_la, co.reziliat_la, co.reziliat_de, "
+            "co.ramburs_procent "
+            "FROM contracts_old co JOIN firms f ON f.id = co.firm_id")
+    conn.execute("DROP TABLE contracts_old")
+    conn.commit()
+
+
 def get_preturi(conn: sqlite3.Connection) -> dict:
     """Preturile curente din nomenclator, in aceeasi forma ca fostul dict
     hardcodat PRETURI_LUNARE_RON: {tip: {ciclu: pret_lunar_ron}}."""
@@ -438,5 +503,6 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_users_email(conn)
     _migrate_add_firms_verificare_trial(conn)
     _migrate_seed_planuri_facturare(conn)
+    _migrate_contracts_fara_pdf(conn)
     conn.commit()
     return conn

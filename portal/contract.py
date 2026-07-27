@@ -8,12 +8,16 @@ majora / litigii / clauze finale), cu o clauza de reziliere specifica
 ceruta explicit: rambursul la retragere inainte de finalul perioadei
 platite nu poate depasi CONTRACT_RAMBURS_MAX_PROCENT.
 
-Textul generat e inghetat in coloana contracts.continut la momentul
-crearii - nu se regenereaza automat daca se schimba ulterior pretul din
-nomenclator sau datele ANAF ale vreuneia dintre parti; un contract nou
-trebuie generat explicit daca firma isi schimba ciclul de facturare.
+Nici textul si nici PDF-ul contractului nu se stocheaza - sunt fisiere
+mari, inutile cand pot fi regenerate oricand din datele structurate
+pastrate in contracts (beneficiar_denumire/cui/adresa, ciclu, suma,
+creat_la). genereaza_text_din_rand() reconstruieste exact acelasi text de
+fiecare data (data din antet vine din creat_la, nu din "azi", ca sa nu se
+schimbe la fiecare vizualizare); un contract nou trebuie generat explicit
+daca firma isi schimba ciclul de facturare, la fel ca inainte.
 """
 import io
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -59,9 +63,12 @@ def date_beneficiar(cui: str) -> dict:
 
 
 def genereaza_text(numar: int, beneficiar_anaf: dict, ciclu: str,
-                   suma: float) -> str:
-    """Textul integral al contractului, gata de afisat sau tiparit."""
-    azi = datetime.now().strftime("%d.%m.%Y")
+                   suma: float, data_creare: datetime) -> str:
+    """Textul integral al contractului, gata de afisat sau tiparit.
+    data_creare vine din contracts.creat_la, nu din "acum" - contractul
+    trebuie sa arate aceeasi data de fiecare data cand e regenerat pentru
+    afisare/descarcare, nu data curenta a cererii."""
+    azi = data_creare.strftime("%d.%m.%Y")
     eticheta_ciclu = _ETICHETE_CICLU.get(ciclu, ciclu)
     cui_beneficiar = str(beneficiar_anaf["cui"])
     if not cui_beneficiar.upper().startswith("RO"):
@@ -156,11 +163,88 @@ PRESTATOR: {FURNIZOR['nume']}                BENEFICIAR: {beneficiar_anaf['denum
 """
 
 
-def genereaza_pdf(continut: str, semnatura_img: bytes | None = None) -> bytes:
-    """PDF-ul contractului - textul inghetat, cu semnatura desenata cu
-    mouse-ul (daca a fost folosita aceasta metoda) stampilata la final.
-    Pentru semnatura prin certificat, documentul semnat e cel incarcat de
-    utilizator (nu acesta) - vezi contracts.pdf_semnat."""
+def genereaza_text_din_rand(row) -> str:
+    """Reconstruieste textul contractului din datele stocate (un rand din
+    contracts) - foloseste asta oriunde e nevoie de textul contractului
+    dupa creare (afisare, descarcare PDF), in loc de a-l citi dintr-o
+    coloana; nu mai exista una."""
+    beneficiar = {
+        "denumire": row["beneficiar_denumire"],
+        "cui": row["beneficiar_cui"],
+        "adresa": row["beneficiar_adresa"],
+    }
+    data_creare = datetime.fromisoformat(row["creat_la"])
+    return genereaza_text(row["numar"], beneficiar, row["ciclu_facturare"],
+                          row["suma"], data_creare)
+
+
+def date_contract_xml(row) -> bytes:
+    """Datele inghetate ale contractului, ca XML - format portabil din care
+    se poate regenera oricand textul/PDF-ul printr-un alt template, fara sa
+    depinda de un fisier stocat. Aceleasi conventii ca celelalte exporturi
+    XML din aplicatie (vezi portal/app.py:_istoric_la_xml)."""
+    radacina = ET.Element("contract", numar=str(row["numar"]))
+    ET.SubElement(radacina, "data_creare").text = row["creat_la"]
+    ET.SubElement(radacina, "stare").text = row["stare"]
+    ET.SubElement(radacina, "ciclu_facturare").text = row["ciclu_facturare"]
+    ET.SubElement(radacina, "suma_ron").text = f"{row['suma']:.2f}"
+
+    prestator = ET.SubElement(radacina, "prestator")
+    ET.SubElement(prestator, "nume").text = FURNIZOR["nume"]
+    ET.SubElement(prestator, "cui").text = FURNIZOR["cui"]
+    ET.SubElement(prestator, "reg_com").text = FURNIZOR["reg_com"]
+    ET.SubElement(prestator, "adresa").text = FURNIZOR["adresa"]
+
+    beneficiar = ET.SubElement(radacina, "beneficiar")
+    ET.SubElement(beneficiar, "denumire").text = row["beneficiar_denumire"]
+    ET.SubElement(beneficiar, "cui").text = row["beneficiar_cui"]
+    ET.SubElement(beneficiar, "adresa").text = row["beneficiar_adresa"]
+
+    semnatura = ET.SubElement(radacina, "semnatura")
+    ET.SubElement(semnatura, "metoda").text = row["metoda_semnatura"] or ""
+    ET.SubElement(semnatura, "verificata").text = (
+        "true" if row["semnatura_verificata"] else "false")
+    ET.SubElement(semnatura, "semnat_la").text = row["semnat_la"] or ""
+    if row["semnatura_detalii"]:
+        ET.SubElement(semnatura, "detalii").text = row["semnatura_detalii"]
+
+    if row["reziliat_la"]:
+        reziliere = ET.SubElement(radacina, "reziliere")
+        ET.SubElement(reziliere, "solicitata_la").text = (
+            row["reziliere_solicitata_la"] or "")
+        ET.SubElement(reziliere, "finalizata_la").text = row["reziliat_la"]
+        ET.SubElement(reziliere, "de").text = row["reziliat_de"] or ""
+        ET.SubElement(reziliere, "ramburs_procent").text = (
+            f"{row['ramburs_procent']:.2f}"
+            if row["ramburs_procent"] is not None else "")
+
+    return ET.tostring(radacina, encoding="utf-8", xml_declaration=True)
+
+
+def nota_verificare_certificat(semnatura_detalii: dict, semnat_la: str) -> str:
+    """Text care inlocuieste, in PDF-ul regenerat, fisierul semnat original
+    incarcat de beneficiar - acela nu mai e pastrat pe server (fisier mare,
+    inutil de stocat), asa ca aratam explicit rezultatul verificarii facute
+    la momentul semnarii, nu pretindem ca returnam fisierul brut."""
+    semnatar = semnatura_detalii.get("semnatar") or "necunoscut"
+    incredere = "confirmat" if semnatura_detalii.get("trusted") else "neconfirmat"
+    data_afisata = semnat_la[:10] if semnat_la else "-"
+    return (
+        f"Document semnat cu certificat digital calificat de {semnatar} la "
+        f"{data_afisata}. Lanțul de încredere al certificatului: {incredere}. "
+        f"Fișierul PDF original încărcat de beneficiar nu este păstrat pe "
+        f"server - acesta este un document regenerat din datele "
+        f"contractului, cu rezultatul verificării semnăturii de mai sus.")
+
+
+def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
+                  nota_semnatura: str | None = None) -> bytes:
+    """PDF-ul contractului, generat la cerere din text - textul in sine nu
+    se stocheaza (vezi docstring-ul modulului). Pentru semnatura cu
+    mouse-ul, semnatura_img e PNG-ul desenat, stampilat la final. Pentru
+    semnatura cu certificat, nu mai exista PDF-ul original incarcat de
+    beneficiar - nota_semnatura (vezi nota_verificare_certificat) descrie
+    in schimb rezultatul verificarii facute la momentul semnarii."""
     pdf_fonts.asigura_fonturi()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -193,6 +277,9 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None) -> bytes:
         elems.append(Spacer(1, 4 * mm))
         elems.append(Paragraph("Semnătură BENEFICIAR (desenată electronic):", body))
         elems.append(Image(io.BytesIO(semnatura_img), width=60 * mm, height=25 * mm))
+    if nota_semnatura:
+        elems.append(Spacer(1, 4 * mm))
+        elems.append(Paragraph(nota_semnatura, body))
 
     doc.build(elems)
     return buf.getvalue()

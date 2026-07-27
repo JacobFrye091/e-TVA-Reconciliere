@@ -51,6 +51,7 @@ a.mic:hover { background:var(--paper); }
         </td>
         <td style="text-align:right;white-space:nowrap">
           <a class="mic" href="/master/contracte/{{ c['id'] }}/pdf">PDF</a>
+          <a class="mic" href="/master/contracte/{{ c['id'] }}/xml">XML</a>
           {% if c['stare'] in ('semnat', 'reziliere_solicitata') %}
           <form class="inline" method="post" action="/master/contracte/{{ c['id'] }}/reziliaza"
                 onsubmit="return confirm('Reziliezi acest contract? Introdu procentul de ramburs (max {{ 50 }}%).');" style="display:inline">
