@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block titlu %}Statistici — e-TVA Reconciliere{% endblock %}
+{% block estilo %}
+<style>
+:root { --chart-2:#c98a3e; --chart-2-bg:#faf1e4; }
+.ms-head { display:flex; justify-content:space-between; align-items:flex-start;
+  gap:18px; flex-wrap:wrap; }
+.ms-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px;
+  margin-bottom:18px; }
+.ms-kpi { background:var(--surface); border:1px solid var(--border);
+  border-top:3px solid var(--accent); border-radius:10px; padding:16px 18px; }
+.ms-kpi .et { font-size:10.5px; font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); }
+.ms-kpi .val { font-family:Archivo,sans-serif; font-size:25px; font-weight:800;
+  margin-top:5px; font-variant-numeric:tabular-nums; }
+@media (max-width:760px) { .ms-kpis { grid-template-columns:repeat(2,1fr); } }
+
+.ms-donuts { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+@media (max-width:760px) { .ms-donuts { grid-template-columns:1fr; } }
+.ms-donut-wrap { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+.ms-donut { width:126px; height:126px; flex:none; }
+.ms-donut circle.bg { fill:none; stroke:var(--paper); stroke-width:4; }
+.ms-donut circle.seg { fill:none; stroke-width:4; }
+.ms-legend { display:flex; flex-direction:column; gap:11px; font-size:13.5px; }
+.ms-legend .dot { width:10px; height:10px; border-radius:3px;
+  display:inline-block; margin-right:8px; vertical-align:-1px; }
+.ms-legend b { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+.ms-rank-row { display:grid; grid-template-columns:50px 1fr 26px;
+  align-items:center; gap:10px; margin-bottom:8px; }
+.ms-rank-row .eticheta { font-family:var(--mono); font-size:12px; color:var(--muted); }
+.ms-rank-track { background:var(--paper); border-radius:5px; height:9px;
+  overflow:hidden; }
+.ms-rank-fill { background:var(--accent); height:100%; border-radius:5px; }
+.ms-rank-row .val { font-family:var(--mono); font-size:12.5px; color:var(--muted);
+  text-align:right; font-variant-numeric:tabular-nums; }
+</style>
+{% endblock %}
+{% block continut %}
+<main>
+  <div class="card ms-head">
+    <div>
+      <h2>Statistici</h2>
+      <p class="sub">O privire de ansamblu asupra platformei - cate firme
+        sunt active, cate platesc deja, un MRR estimat din nomenclatorul
+        curent de preturi si incasarile validate real pana acum.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+
+  <div class="ms-kpis">
+    <div class="ms-kpi"><div class="et">Firme totale</div><div class="val">{{ n_total }}</div></div>
+    <div class="ms-kpi"><div class="et">Firme active</div><div class="val">{{ n_active }}</div></div>
+    <div class="ms-kpi"><div class="et">Platitoare (ciclu ales)</div><div class="val">{{ n_cu_ciclu }}</div></div>
+    <div class="ms-kpi"><div class="et">In perioada de proba</div><div class="val">{{ n_in_proba }}</div></div>
+    <div class="ms-kpi"><div class="et">MRR estimat</div><div class="val">{{ '%.2f'|format(mrr) }}</div></div>
+    <div class="ms-kpi"><div class="et">Incasari validate</div><div class="val">{{ '%.2f'|format(incasari_totale) }}</div></div>
+  </div>
+  <p class="sub" style="margin:-8px 0 18px">MRR estimat = preturile din
+    nomenclator aplicate firmelor active cu ciclu ales acum, normalizate
+    lunar - nu incasari reale (nu exista inca procesator de plati automat).
+    Incasarile validate sunt sumele confirmate manual la <a href="/master/plati">/master/plati</a>.</p>
+
+  <div class="ms-donuts">
+    <div class="card">
+      <h2 style="font-size:15px">Firme dupa tip</h2>
+      <p class="sub" style="margin-bottom:14px">Contabilitate vs. firma/PFA directa.</p>
+      <div class="ms-donut-wrap">
+        <svg class="ms-donut" viewBox="0 0 36 36">
+          <circle class="bg" cx="18" cy="18" r="15.9155"/>
+          {% for seg in firm_tip_dist %}
+          {% if seg.n > 0 %}
+          <circle class="seg" cx="18" cy="18" r="15.9155"
+            stroke="{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"
+            stroke-dasharray="{{ seg.dasharray }}"
+            stroke-dashoffset="{{ seg.dashoffset }}"/>
+          {% endif %}
+          {% endfor %}
+        </svg>
+        <div class="ms-legend">
+          {% for seg in firm_tip_dist %}
+          <div><span class="dot" style="background:{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"></span>
+            {{ seg.label }} — <b>{{ seg.n }}</b> ({{ seg.pct }}%)</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:15px">Proba vs. platitoare</h2>
+      <p class="sub" style="margin-bottom:14px">Firme cu ciclu de facturare
+        ales vs. inca in cele 30 de zile gratuite.</p>
+      <div class="ms-donut-wrap">
+        <svg class="ms-donut" viewBox="0 0 36 36">
+          <circle class="bg" cx="18" cy="18" r="15.9155"/>
+          {% for seg in stare_dist %}
+          {% if seg.n > 0 %}
+          <circle class="seg" cx="18" cy="18" r="15.9155"
+            stroke="{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"
+            stroke-dasharray="{{ seg.dasharray }}"
+            stroke-dashoffset="{{ seg.dashoffset }}"/>
+          {% endif %}
+          {% endfor %}
+        </svg>
+        <div class="ms-legend">
+          {% for seg in stare_dist %}
+          <div><span class="dot" style="background:{{ 'var(--accent)' if loop.index0 == 0 else 'var(--chart-2)' }}"></span>
+            {{ seg.label }} — <b>{{ seg.n }}</b> ({{ seg.pct }}%)</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:15px">Inscrieri pe saptamana</h2>
+    <p class="sub" style="margin-bottom:14px">Ultimele 12 saptamani, dupa data
+      crearii contului firmei.</p>
+    {% for s in saptamani %}
+    <div class="ms-rank-row">
+      <div class="eticheta">{{ s.eticheta }}</div>
+      <div class="ms-rank-track"><div class="ms-rank-fill" style="width:{{ s.bar_pct }}%"></div></div>
+      <div class="val">{{ s.n }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

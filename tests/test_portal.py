@@ -3126,3 +3126,51 @@ def test_csrf_exempt_contact_endpoint_works_without_token(app):
         "nume": "Test", "email": "test@exemplu.ro", "tip": "general",
         "mesaj": "Un mesaj de test."})
     assert r.status_code == 200 and r.get_json()["ok"] is True
+
+
+# ---------- statistici de business (master) ----------
+
+def test_master_statistici_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/statistici", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_statistici_counts_and_mrr(app):
+    _seed_master(app)
+    c1 = app.test_client()
+    inregistreaza(c1, cui="RO401", tip="direct")
+    c1.post("/panou/plan", data={"ciclu": "lunar"})  # 59 RON/luna
+
+    c2 = app.test_client()
+    inregistreaza(c2, cui="RO402", tip="contabilitate")
+    c2.post("/panou/plan", data={"ciclu": "lunar"})  # 25 RON/luna/client
+    c2.post("/api/clients", json={"cui": "RO4021", "name": "Client Unu"})
+    c2.post("/api/clients", json={"cui": "RO4022", "name": "Client Doi"})
+
+    c3 = app.test_client()
+    inregistreaza(c3, cui="RO403", tip="direct")  # inca in proba, fara ciclu
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.get("/master/statistici")
+    assert r.status_code == 200
+    # 59 (RO401) + 25*2 (RO402, 2 clienti) = 109
+    assert "109.00".encode() in r.data
+
+
+def test_master_statistici_excludes_inactive_firms_from_mrr(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO404", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO404'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/firma/{firm_id}/comutare")  # dezactiveaza firma
+
+    r = c_master.get("/master/statistici")
+    assert "0.00".encode() in r.data
+    assert "59.00".encode() not in r.data

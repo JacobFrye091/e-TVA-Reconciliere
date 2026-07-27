@@ -1155,6 +1155,74 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                                f"{firma['name']} (CUI {firma['cui']}) -> {stare_noua}")
         return redirect(url_for("master"))
 
+    @app.get("/master/statistici")
+    def master_statistici():
+        """Vedere de business peste toate firmele - cate sunt active, cate
+        platesc deja vs. inca in proba, un MRR estimat (nu real - nu exista
+        inca procesator de plati, e doar preturile din nomenclator aplicate
+        firmelor active cu ciclu ales) si incasarile validate real pana
+        acum, plus inscrieri saptamanale ca semnal de crestere."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        firms_all = conn.execute("SELECT * FROM firms").fetchall()
+        n_total = len(firms_all)
+        n_active = sum(1 for f in firms_all if f["active"])
+        n_cu_ciclu = sum(1 for f in firms_all if f["ciclu_facturare"])
+
+        preturi = pdb.get_preturi(conn)
+        mrr = 0.0
+        for f in firms_all:
+            if not f["active"] or not f["ciclu_facturare"]:
+                continue
+            pret_lunar = preturi[f["tip"]][f["ciclu_facturare"]]
+            if f["tip"] == pdb.FIRM_TIP_CONTABILITATE:
+                n_clienti = firm_conn(f["id"]).execute(
+                    "SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
+                mrr += pret_lunar * max(n_clienti, 1)
+            else:
+                mrr += pret_lunar
+        mrr = round(mrr, 2)
+
+        incasari_totale = conn.execute(
+            "SELECT COALESCE(SUM(suma), 0) AS s FROM payments WHERE stare=?",
+            (pdb.PLATA_VALIDATA,)).fetchone()["s"]
+
+        firm_tip_dist = _donut_segments([
+            ("Contabilitate", sum(1 for f in firms_all
+                                  if f["tip"] == pdb.FIRM_TIP_CONTABILITATE)),
+            ("Direct", sum(1 for f in firms_all
+                           if f["tip"] == pdb.FIRM_TIP_DIRECT)),
+        ])
+        stare_dist = _donut_segments([
+            ("Platitoare (ciclu ales)", n_cu_ciclu),
+            ("In perioada de proba", n_total - n_cu_ciclu),
+        ])
+
+        # Inscrieri pe saptamana, ultimele 12 saptamani - firmele fara
+        # creat_la (inregistrate inainte ca aceasta coloana sa existe) nu
+        # pot fi plasate pe axa timpului, deci sunt omise, nu ghicite.
+        acum = datetime.now(timezone.utc)
+        saptamani = []
+        for i in range(11, -1, -1):
+            inceput = (acum - timedelta(weeks=i + 1)).isoformat()
+            sfarsit = (acum - timedelta(weeks=i)).isoformat()
+            n = sum(1 for f in firms_all
+                   if f["creat_la"] and inceput <= f["creat_la"] < sfarsit)
+            saptamani.append({
+                "eticheta": (acum - timedelta(weeks=i)).strftime("%d.%m"), "n": n})
+        max_saptamana = max((s["n"] for s in saptamani), default=0)
+        for s in saptamani:
+            s["bar_pct"] = _bar_pct(s["n"], max_saptamana)
+
+        return render_template(
+            "master_statistici.html", user=user,
+            n_total=n_total, n_active=n_active, n_inactive=n_total - n_active,
+            n_cu_ciclu=n_cu_ciclu, n_in_proba=n_total - n_cu_ciclu,
+            mrr=mrr, incasari_totale=incasari_totale,
+            firm_tip_dist=firm_tip_dist, stare_dist=stare_dist,
+            saptamani=saptamani)
+
     @app.get("/master/utilizatori")
     def master_users():
         """Everything about every account in one page: which firms they
