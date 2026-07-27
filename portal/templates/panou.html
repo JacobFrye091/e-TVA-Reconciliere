@@ -4,17 +4,20 @@
 <style>
 .banner-anunt { padding: 12px 18px; border-radius: 8px; margin-bottom: 18px;
   font-size: 13.5px; border: 1px solid; display: flex; gap: 10px; align-items: baseline; }
-.banner-anunt b { font-family: Archivo, sans-serif; }
+.banner-anunt b { font-family: "Space Grotesk", sans-serif; }
 .banner-anunt.tip-mentenanta { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
 .banner-anunt.tip-incident { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 .banner-anunt.tip-lansare { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
-.banner-anunt.tip-informativ { background: #e0efee; color: var(--accent); border-color: var(--accent); }
+.banner-anunt.tip-informativ { background: var(--ok-bg); color: var(--accent); border-color: var(--accent); }
 textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--border);
   border-radius: 6px; font: inherit; resize: vertical; min-height: 90px; }
 textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 .stare-contact { font-size: 13.5px; margin-top: 10px; }
 .stare-contact.ok { color: var(--ok); }
 .stare-contact.eroare { color: var(--danger); }
+.comutare-rapida { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.comutare-rapida label { margin: 0; white-space: nowrap; }
+.comutare-rapida select { width: auto; min-width: 240px; max-width: 100%; }
 </style>
 {% endblock %}
 {% block continut %}
@@ -30,7 +33,14 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
       folosi aplicația — <a href="/asteapta-verificare-email">vezi detalii</a>.</span>
   </div>
   {% endif %}
-  {% if plan_activ and not plan_activ['ciclu_facturare'] %}
+  {% if plan_activ and plan_activ['arhivata_la'] %}
+  <div class="banner-anunt tip-incident">
+    <b>Cont arhivat</b><span>Perioada de probă s-a încheiat fără să alegi un
+      ciclu de facturare, așa că accesul la aplicație e blocat — datele tale
+      rămân intacte, nu au fost șterse. <a href="/panou/plan">Alege un ciclu
+      de facturare</a> și plătește ca să reactivezi contul.</span>
+  </div>
+  {% elif plan_activ and not plan_activ['ciclu_facturare'] %}
   <div class="banner-anunt {{ 'tip-incident' if zile_trial == 0 else 'tip-informativ' }}">
     {% if zile_trial and zile_trial > 0 %}
     <b>Perioadă de probă</b><span>Mai ai {{ zile_trial }} zile gratuite —
@@ -47,6 +57,18 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
       — CUI-ul firmei active acum: <b>{{ active['cui'] }}</b>{% endif %}.
       Poti avea una sau mai multe firme (SRL/PFA) legate de acelasi cont —
       alege cu care lucrezi.</p>
+    {% if firms|length > 1 %}
+    <form method="post" action="/panou/comutare-firma" class="comutare-rapida">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="fSchimbaFirma">Comută rapid</label>
+      <select id="fSchimbaFirma" name="firm_id" onchange="this.form.requestSubmit()">
+        {% for f in firms %}
+        <option value="{{ f['id'] }}" {{ 'selected' if active and f['id'] == active['id'] }}>
+          {{ f['name'] }} · {{ f['cui'] }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% endif %}
     {% if firms %}
     <table>
       <tr><th>Firma</th><th>CUI</th><th>Tip</th><th>Rolul tau</th><th></th></tr>

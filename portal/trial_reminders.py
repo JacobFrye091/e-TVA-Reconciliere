@@ -1,12 +1,15 @@
 """Emailuri de avertizare pentru firmele a caror perioada de proba (vezi
 TRIAL_ZILE in portal/db.py) se apropie de expirare fara sa fi ales inca un
-ciclu de facturare.
+ciclu de facturare, plus arhivarea automata a celor care ajung la capatul
+perioadei tot fara sa fi ales un ciclu.
 
 Rulat fie in proces (fir de fundal, vezi start_scheduler - pornit doar din
 run.py, la fel ca portal/backup.py), fie manual din panoul master
-(/master/remindere-trial/trimite), fie ambele - verifica_si_trimite e
-idempotenta prin firms.trial_reminder_ultim_prag, deci a rula de mai multe
-ori in aceeasi zi nu retrimite acelasi email.
+(/master/remindere-trial/trimite si /arhiveaza), fie ambele -
+verifica_si_trimite e idempotenta prin firms.trial_reminder_ultim_prag, iar
+arhiveaza_firme_neplatitoare prin firms.arhivata_la, deci a rula de mai
+multe ori in aceeasi zi nu retrimite acelasi email si nu incearca sa
+re-arhiveze o firma deja arhivata.
 """
 import threading
 import time
@@ -100,17 +103,43 @@ def verifica_si_trimite(conn, trimite_email_fn) -> int:
     return n_trimise
 
 
+def arhiveaza_firme_neplatitoare(conn) -> int:
+    """Arhiveaza firmele a caror perioada de proba s-a incheiat complet
+    (zile_ramase_trial == 0) fara sa fi ales un ciclu de facturare - adica
+    firma nu a decis sa continue. Nu e o stergere: datele raman intacte,
+    doar accesul la aplicatia de reconciliere se blocheaza (vezi
+    current_identity in portal/app.py) pana firma alege un ciclu si master
+    valideaza o plata, moment in care valideaza_plata sterge arhivata_la.
+    Idempotenta prin arhivata_la IS NULL in filtru - o firma deja arhivata
+    nu mai e reprocesata. Returneaza numarul de firme arhivate."""
+    acum = datetime.now(timezone.utc).isoformat()
+    firme = conn.execute(
+        "SELECT id, trial_expira_la FROM firms WHERE active=1 "
+        "AND ciclu_facturare IS NULL AND arhivata_la IS NULL "
+        "AND trial_expira_la IS NOT NULL").fetchall()
+    n_arhivate = 0
+    for firma in firme:
+        if zile_ramase_trial(firma["trial_expira_la"]) > 0:
+            continue
+        conn.execute(
+            "UPDATE firms SET arhivata_la=? WHERE id=?", (acum, firma["id"]))
+        conn.commit()
+        n_arhivate += 1
+    return n_arhivate
+
+
 def start_scheduler(conn, lock, trimite_email_fn) -> None:
     """Fir de fundal care verifica periodic firmele in proba, la fel ca
     portal/backup.py - reutilizeaza conexiunea si lock-ul deja partajate de
     toate cererile Flask (nu deschide o a doua conexiune la portal.db).
-    Verifica imediat la pornire (recupereaza remindere ratate cat serverul a
-    fost oprit), apoi la fiecare CHECK_INTERVAL_SECONDS."""
+    Verifica imediat la pornire (recupereaza remindere/arhivari ratate cat
+    serverul a fost oprit), apoi la fiecare CHECK_INTERVAL_SECONDS."""
     def _loop():
         while True:
             try:
                 with lock:
                     verifica_si_trimite(conn, trimite_email_fn)
+                    arhiveaza_firme_neplatitoare(conn)
                 time.sleep(CHECK_INTERVAL_SECONDS)
             except Exception:
                 traceback.print_exc()

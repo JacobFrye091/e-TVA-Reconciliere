@@ -3514,3 +3514,168 @@ def test_trimite_remindere_trial_route_sends_and_updates_db(app):
     row = app.portal_conn.execute(
         "SELECT trial_reminder_ultim_prag FROM firms WHERE cui='RO507'").fetchone()
     assert row["trial_reminder_ultim_prag"] == 7
+
+
+# ---------- arhivare automata a firmelor neplatitoare ----------
+
+def test_arhiveaza_firme_neplatitoare_archives_expired_trial_no_cycle(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO601")
+    _seteaza_trial_zile_ramase(app, "RO601", 0)
+    n = remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn)
+    assert n == 1
+    row = app.portal_conn.execute(
+        "SELECT arhivata_la FROM firms WHERE cui='RO601'").fetchone()
+    assert row["arhivata_la"] is not None
+
+
+def test_arhiveaza_firme_neplatitoare_leaves_active_trial_untouched(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO602")
+    _seteaza_trial_zile_ramase(app, "RO602", 5)
+    n = remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn)
+    assert n == 0
+    row = app.portal_conn.execute(
+        "SELECT arhivata_la FROM firms WHERE cui='RO602'").fetchone()
+    assert row["arhivata_la"] is None
+
+
+def test_arhiveaza_firme_neplatitoare_excludes_firms_with_ciclu_ales(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO603")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _seteaza_trial_zile_ramase(app, "RO603", 0)
+    n = remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn)
+    assert n == 0
+    row = app.portal_conn.execute(
+        "SELECT arhivata_la FROM firms WHERE cui='RO603'").fetchone()
+    assert row["arhivata_la"] is None
+
+
+def test_arhiveaza_firme_neplatitoare_excludes_inactive_firms(app):
+    from portal import trial_reminders as remind_mod
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO604")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO604'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/firma/{firm_id}/comutare")  # dezactiveaza firma
+    _seteaza_trial_zile_ramase(app, "RO604", 0)
+    n = remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn)
+    assert n == 0
+
+
+def test_arhiveaza_firme_neplatitoare_is_idempotent(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO605")
+    _seteaza_trial_zile_ramase(app, "RO605", 0)
+    assert remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn) == 1
+    assert remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn) == 0
+
+
+def test_arhiveaza_firme_trial_route_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/remindere-trial/arhiveaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_arhiveaza_firme_trial_route_archives_and_reports_count(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO606")
+    _seteaza_trial_zile_ramase(app, "RO606", 0)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post("/master/remindere-trial/arhiveaza", follow_redirects=True)
+    assert r.status_code == 200
+    assert "1 firma arhivata".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT arhivata_la FROM firms WHERE cui='RO606'").fetchone()
+    assert row["arhivata_la"] is not None
+
+
+def test_app_redirects_to_panou_when_firm_archived(app):
+    from datetime import datetime, timezone
+    c = app.test_client()
+    inregistreaza(c, cui="RO607")
+    app.portal_conn.execute(
+        "UPDATE firms SET arhivata_la=? WHERE cui='RO607'",
+        (datetime.now(timezone.utc).isoformat(),))
+    app.portal_conn.commit()
+    r = c.get("/app", follow_redirects=False)
+    assert r.status_code == 302 and "/panou" in r.headers["Location"]
+    r = c.get(r.headers["Location"])
+    assert "Contul acestei firme e arhivat".encode() in r.data
+
+
+def test_api_blocked_when_firm_archived(app):
+    from datetime import datetime, timezone
+    c = app.test_client()
+    inregistreaza(c, cui="RO608")
+    assert c.get("/api/me").status_code == 200
+    app.portal_conn.execute(
+        "UPDATE firms SET arhivata_la=? WHERE cui='RO608'",
+        (datetime.now(timezone.utc).isoformat(),))
+    app.portal_conn.commit()
+    assert c.get("/api/me").status_code == 401
+
+
+def test_panou_shows_archived_banner(app):
+    from datetime import datetime, timezone
+    c = app.test_client()
+    inregistreaza(c, cui="RO609")
+    app.portal_conn.execute(
+        "UPDATE firms SET arhivata_la=? WHERE cui='RO609'",
+        (datetime.now(timezone.utc).isoformat(),))
+    app.portal_conn.commit()
+    r = c.get("/panou")
+    assert "Cont arhivat".encode() in r.data
+
+
+def test_valideaza_plata_reactivates_archived_firm(app):
+    from datetime import datetime, timezone
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO610", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO610")
+    _semneaza_contract_mouse(c)
+    c.post("/panou/plata", data={})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO610'").fetchone()["id"]
+    app.portal_conn.execute(
+        "UPDATE firms SET arhivata_la=? WHERE id=?",
+        (datetime.now(timezone.utc).isoformat(), firm_id))
+    app.portal_conn.commit()
+
+    plata_id = app.portal_conn.execute(
+        "SELECT id FROM payments WHERE firm_id=?", (firm_id,)).fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/plati/{plata_id}/valideaza")
+
+    row = app.portal_conn.execute(
+        "SELECT arhivata_la FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert row["arhivata_la"] is None
+    r = c.get("/app", follow_redirects=False)
+    assert r.status_code != 302 or "/panou" not in r.headers.get("Location", "")
+
+
+# ---------- comutare rapida intre firme ----------
+
+def test_switch_firm_shows_confirmation_message(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO611")
+    c.post("/panou/firme",
+          data={"name": "Firma Doisprezece PFA", "cui": "RO612", "tip": "direct"})
+    firm1_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO611'").fetchone()["id"]
+    r = c.post("/panou/comutare-firma", data={"firm_id": str(firm1_id)},
+               follow_redirects=True)
+    assert "Acum lucrezi cu Firma Unu SRL".encode() in r.data

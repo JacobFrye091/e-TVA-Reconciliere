@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS firms(
   creat_la TEXT,
   trial_expira_la TEXT,
   ciclu_facturare TEXT,
-  trial_reminder_ultim_prag INTEGER);
+  trial_reminder_ultim_prag INTEGER,
+  arhivata_la TEXT);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
@@ -455,6 +456,22 @@ def _migrate_add_firms_trial_reminder(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_firms_arhivare(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate account archiving - add the column that
+    marks when a firm was archived (trial expirat, fara ciclu de facturare
+    ales - vezi portal/trial_reminders.py::arhiveaza_firme_neplatitoare).
+    NULL inseamna firma nu e arhivata."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "arhivata_la" in cols:
+        return
+    conn.execute("ALTER TABLE firms ADD COLUMN arhivata_la TEXT;")
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -661,6 +678,7 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_users_email(conn)
     _migrate_add_firms_verificare_trial(conn)
     _migrate_add_firms_trial_reminder(conn)
+    _migrate_add_firms_arhivare(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     _migrate_seed_cota_tva(conn)

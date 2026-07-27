@@ -193,7 +193,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         row = conn.execute(
             "SELECT uf.role, f.id, f.name, f.tip, f.cui FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
-            "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1",
+            "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1 "
+            "AND f.arhivata_la IS NULL",
             (user["id"], active_firm_id)).fetchone()
         if row is None:
             return None
@@ -659,6 +660,21 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     # ---------- the product (SPA) ----------
     @app.get("/app")
     def aplicatie():
+        # Verificat inaintea current_identity() - o firma arhivata are un
+        # motiv specific si actionabil (alege un ciclu si plateste), diferit
+        # de "neautentificat", pe care current_identity() l-ar fi intors
+        # oricum (interogarea ei exclude firmele arhivate din alt motiv).
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if user is not None and not user["is_master"] and active_firm_id is not None:
+            firma = conn.execute(
+                "SELECT arhivata_la FROM firms WHERE id=?",
+                (active_firm_id,)).fetchone()
+            if firma is not None and firma["arhivata_la"]:
+                return redirect(url_for(
+                    "panou",
+                    eroare="Contul acestei firme e arhivat - alege un ciclu de "
+                          "facturare si plateste ca sa il reactivezi."))
         ident = current_identity()
         if ident is None:
             return redirect(url_for("login"))
@@ -707,8 +723,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "SELECT * FROM anaf_oauth_tokens WHERE firm_id=?",
                 (active["id"],)).fetchone()
             plan_activ = conn.execute(
-                "SELECT email_verificat, trial_expira_la, ciclu_facturare "
-                "FROM firms WHERE id=?", (active["id"],)).fetchone()
+                "SELECT email_verificat, trial_expira_la, ciclu_facturare, "
+                "arhivata_la FROM firms WHERE id=?", (active["id"],)).fetchone()
             zile_trial = _zile_trial_ramase(plan_activ["trial_expira_la"])
             contract_activ = conn.execute(
                 "SELECT * FROM contracts WHERE firm_id=? "
@@ -1040,9 +1056,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if user is None or user["is_master"]:
             return redirect(url_for("login"))
         firm_id = request.form.get("firm_id", type=int)
-        if firm_id is not None and _role_in_firm(user["id"], firm_id):
-            session["active_firm_id"] = firm_id
-        return redirect(url_for("panou"))
+        if firm_id is None or not _role_in_firm(user["id"], firm_id):
+            return redirect(url_for("panou"))
+        session["active_firm_id"] = firm_id
+        # Confirmare explicita, nu doar un reload tacut - utila mai ales cand
+        # schimbarea vine din dropdown-ul rapid, departe de tabelul cu
+        # detalii, unde altfel n-ar fi evident ca s-a schimbat ceva.
+        firma = conn.execute(
+            "SELECT name FROM firms WHERE id=?", (firm_id,)).fetchone()
+        mesaj = f"Acum lucrezi cu {firma['name']}." if firma else None
+        return redirect(url_for("panou", mesaj=mesaj))
 
     @app.post("/panou/utilizatori")
     def add_member():
@@ -2019,8 +2042,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         firme_brute = conn.execute(
-            "SELECT id, name, cui, trial_expira_la, trial_reminder_ultim_prag "
-            "FROM firms WHERE active=1 AND ciclu_facturare IS NULL "
+            "SELECT id, name, cui, trial_expira_la, trial_reminder_ultim_prag, "
+            "arhivata_la FROM firms WHERE active=1 AND ciclu_facturare IS NULL "
             "AND trial_expira_la IS NOT NULL ORDER BY trial_expira_la").fetchall()
         firme = [dict(f, zile_ramase=remind_mod.zile_ramase_trial(f["trial_expira_la"]))
                 for f in firme_brute]
@@ -2039,6 +2062,21 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return redirect(url_for(
             "master_remindere_trial",
             mesaj=f"{n} {'reminder trimis' if n == 1 else 'remindere trimise'}."))
+
+    @app.post("/master/remindere-trial/arhiveaza")
+    def arhiveaza_firme_trial():
+        """Declanseaza manual arhivarea firmelor al caror trial s-a incheiat
+        fara ciclu de facturare ales - acelasi lucru pe care il face oricum
+        fir-ul de fundal periodic (vezi start_scheduler), util pentru
+        testare/verificare imediata din panoul master."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        n = remind_mod.arhiveaza_firme_neplatitoare(conn)
+        _log_master_action(user, "firme_arhivate", str(n))
+        return redirect(url_for(
+            "master_remindere_trial",
+            mesaj=f"{n} {'firma arhivata' if n == 1 else 'firme arhivate'}."))
 
     # ---------- master: validare incasari ----------
     @app.get("/master/plati")
@@ -2099,6 +2137,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "invoice_id=? WHERE id=?",
             (pdb.PLATA_VALIDATA, user["username"], acum.isoformat(),
              invoice_id, plata_id))
+        # O plata validata e exact "revenirea prin plata" care reactiveaza o
+        # firma arhivata (vezi trial_reminders.arhiveaza_firme_neplatitoare) -
+        # UPDATE-ul e un no-op sigur daca firma nu era arhivata.
+        conn.execute(
+            "UPDATE firms SET arhivata_la=NULL WHERE id=?", (firma["id"],))
         conn.commit()
         _log_master_action(
             user, "plata.validare",

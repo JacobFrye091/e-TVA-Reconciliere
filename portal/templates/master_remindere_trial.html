@@ -8,8 +8,10 @@
       <p class="sub">Firmele active, inca in perioada de proba (fara ciclu de
         facturare ales), primesc automat cate un email de avertizare cand mai
         au {{ praguri|join(', ') }} zile ramase — fiecare prag o singura
-        data. Verificarea automata ruleaza pe server la fiecare cateva ore;
-        poti oricand porni una manual mai jos.</p>
+        data. Cele care ajung la finalul perioadei tot fara ciclu ales sunt
+        arhivate automat (nu sterse) — reactivarea se face cand aleg un ciclu
+        si master valideaza o plata. Verificarea automata ruleaza pe server
+        la fiecare cateva ore; poti oricand porni una manual mai jos.</p>
     </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
@@ -21,17 +23,21 @@
   <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
   {% endif %}
 
-  <div class="card">
+  <div class="card" style="display:flex;gap:10px;flex-wrap:wrap">
     <form method="post" action="/master/remindere-trial/trimite">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">Verifica si trimite remindere acum</button>
+    </form>
+    <form method="post" action="/master/remindere-trial/arhiveaza">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" style="background:var(--warn);color:#fff">Arhiveaza firmele expirate acum</button>
     </form>
   </div>
 
   <div class="card">
     <h2>Firme in perioada de proba</h2>
     <table>
-      <tr><th>Firma</th><th>CUI</th><th>Zile ramase</th><th>Ultimul reminder trimis</th></tr>
+      <tr><th>Firma</th><th>CUI</th><th>Zile ramase</th><th>Ultimul reminder trimis</th><th>Stare</th></tr>
       {% for f in firme %}
       <tr>
         <td>{{ f['name'] }}</td>
@@ -46,9 +52,13 @@
           {{ f['trial_reminder_ultim_prag'] }} zile ramase
           {% endif %}
         </td>
+        <td>
+          {% if f['arhivata_la'] %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">Arhivata</span>
+          {% else %}<span class="chip ok">Activa</span>{% endif %}
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="4" style="color:var(--muted)">Nicio firma in perioada de proba momentan.</td></tr>
+      <tr><td colspan="5" style="color:var(--muted)">Nicio firma in perioada de proba momentan.</td></tr>
       {% endfor %}
     </table>
   </div>
