@@ -50,6 +50,7 @@
           <button type="button" class="secundar" onclick="stergeSemnatura()">Șterge</button>
         </div>
         <form method="post" action="/panou/contract/semneaza" id="formMouse" style="margin-top:10px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="metoda" value="mouse">
           <input type="hidden" name="semnatura_mouse" id="semnaturaMouseInput">
           <button class="btn-lat" type="submit" onclick="return trimiteSemnaturaMouse()">Semnează cu semnătura desenată</button>
@@ -60,6 +61,7 @@
         <p class="nota" style="margin:0 0 8px">Încarcă documentul PDF deja semnat cu propriul
           certificat calificat — verificăm semnătura încorporată.</p>
         <form method="post" action="/panou/contract/semneaza" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="metoda" value="certificat">
           <input type="file" name="semnatura_fisier" accept=".pdf" required>
           <button class="btn-lat" type="submit" style="margin-top:10px">Încarcă documentul semnat</button>
@@ -73,6 +75,7 @@
       ({{ 'certificat digital' if contract['metoda_semnatura'] == 'certificat' else 'semnătură desenată' }}).</p>
     <form method="post" action="/panou/contract/reziliaza"
           onsubmit="return confirm('Sigur vrei să soliciți rezilierea contractului?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="secundar" type="submit">Solicită rezilierea</button>
     </form>
     <p class="nota">Dacă te retragi înainte de finalul perioadei de facturare deja plătite,

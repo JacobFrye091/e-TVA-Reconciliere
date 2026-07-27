@@ -53,6 +53,13 @@ DELETION_STARE_IN_ASTEPTARE = "in_asteptare"
 DELETION_STARE_FINALIZATA = "finalizata"
 DELETION_STARE_ANULATA = "anulata"
 
+# Protectie brute-force la /autentificare - dupa LOGIN_MAX_INCERCARI esecuri
+# consecutive pe acelasi identificator (CUI sau username master), acel
+# identificator e blocat LOGIN_BLOCARE_MINUTE minute, indiferent de parola
+# incercata (vezi login_lockouts, portal/app.py).
+LOGIN_MAX_INCERCARI = 5
+LOGIN_BLOCARE_MINUTE = 15
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS firms(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cui TEXT UNIQUE NOT NULL,
@@ -164,6 +171,11 @@ CREATE TABLE IF NOT EXISTS contracts(
   reziliat_la TEXT,
   reziliat_de TEXT,
   ramburs_procent REAL);
+CREATE TABLE IF NOT EXISTS login_lockouts(
+  identificator TEXT PRIMARY KEY,
+  incercari INTEGER NOT NULL DEFAULT 0,
+  ultima_incercare TEXT,
+  blocat_pana TEXT);
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi

@@ -8,6 +8,7 @@
       plata acum. Din acest cont iti vei administra echipa si vei folosi
       aplicatia desktop.</p>
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Ce fel de firma este?</label>
       <div class="tip-firma">
         <label class="optiune-tip">

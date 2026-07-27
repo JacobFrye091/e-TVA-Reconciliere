@@ -45,6 +45,7 @@ a.mic:hover { background:var(--paper); }
         <td style="text-align:right">
           {% if p['stare'] != 'validata' %}
           <form class="inline" method="post" action="/master/plati/{{ p['id'] }}/valideaza">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Validează încasarea</button>
           </form>
           {% elif p['invoice_id'] %}

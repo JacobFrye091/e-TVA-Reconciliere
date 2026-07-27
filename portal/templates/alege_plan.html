@@ -30,6 +30,7 @@
     {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
 
     <form method="post" action="/panou/plan">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="plan-optiuni">
         <div class="plan-card">
           <span class="nota" style="margin:0">LUNAR</span><br>
@@ -62,6 +63,7 @@
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>
       — <b>{{ suma_curenta }} RON</b>{{ ' (calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
     <form method="post" action="/panou/plata">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
         <input type="checkbox" name="recurent" value="on" style="width:auto">
         Plată recurentă — reînnoiește automat la final de ciclu

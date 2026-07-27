@@ -55,6 +55,7 @@ a.mic:hover { background:var(--paper); }
           {% if c['stare'] in ('semnat', 'reziliere_solicitata') %}
           <form class="inline" method="post" action="/master/contracte/{{ c['id'] }}/reziliaza"
                 onsubmit="return confirm('Reziliezi acest contract? Introdu procentul de ramburs (max {{ 50 }}%).');" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="number" name="ramburs_procent" min="0" max="50" step="0.1" style="width:64px;display:inline-block" placeholder="%" required>
             <button class="mic" type="submit">Reziliază</button>
           </form>

@@ -130,6 +130,7 @@ a.mic:hover { background:var(--paper); }
           <a class="mic" style="text-decoration:none;margin-right:6px;display:inline-block"
              href="/master/firme/{{ f['id'] }}/istoric.xml">Istoric XML</a>
           <form class="inline" method="post" action="/master/firma/{{ f['id'] }}/comutare">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">
               {% if f['active'] %}Dezactiveaza{% else %}Reactiveaza{% endif %}</button>
           </form>

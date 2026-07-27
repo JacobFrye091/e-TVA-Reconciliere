@@ -22,6 +22,7 @@
 
   <div class="card">
     <form method="post" action="/master/nomenclator">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <table>
         <tr><th>Tip firmă</th><th>Lunar (RON)</th><th>La 6 luni (RON)</th><th>Anual (RON)</th></tr>
         <tr>

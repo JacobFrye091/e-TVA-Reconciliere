@@ -44,9 +44,11 @@ tr.intarziata { background: var(--danger-bg); }
         <td style="text-align:right">
           {% if c['stare'] == 'in_asteptare' %}
           <form class="inline" method="post" action="/master/cereri-stergere/{{ c['id'] }}/finalizare">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Finalizeaza (sterge)</button>
           </form>
           <form class="inline" method="post" action="/master/cereri-stergere/{{ c['id'] }}/anulare">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Anuleaza</button>
           </form>
           {% endif %}

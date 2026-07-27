@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (Flask, request, session, redirect, url_for, jsonify,
-                   render_template, send_file, Response)
+                   render_template, send_file, Response, g)
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 
 from portal import db as pdb
 from portal import security as psec
@@ -111,6 +112,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     # key on every start would silently invalidate every open session.
     app.secret_key = psec.load_secret(os.path.join(data_dir, "flask_secret.key"))
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # Ramane False pana serverul ruleaza real sub HTTPS (deploy pe VPS inca
+    # blocat pe acces root) - altfel cookie-ul de sesiune nu s-ar mai trimite
+    # deloc peste conexiunea locala HTTP folosita azi de toate cele trei
+    # medii, ceea ce ar rupe login-ul complet. De activat prin variabila de
+    # mediu, nu prin schimbare de cod, cand exista TLS real.
+    app.config["SESSION_COOKIE_SECURE"] = (
+        os.environ.get("SESSION_COOKIE_SECURE", "0") == "1")
+    csrf = CSRFProtect(app)
 
     firm_conns = {}
 
@@ -127,10 +138,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     @app.before_request
     def _acquire_db_lock():
         db_lock.acquire()
+        g.db_lock_acquired = True
 
     @app.teardown_request
     def _release_db_lock(exc=None):
-        db_lock.release()
+        # teardown_request ruleaza mereu, chiar daca before_request-ul de
+        # mai sus n-a apucat sa ruleze (ex: CSRFProtect isi inregistreaza
+        # propriul before_request, care poate respinge cererea cu 400
+        # inainte ca acesta sa apuce lock-ul) - fara verificarea de mai jos,
+        # eliberarea unui lock neachizitionat de cererea curenta arunca
+        # RuntimeError.
+        if g.pop("db_lock_acquired", False):
+            db_lock.release()
 
     if enable_backup_scheduler:
         backup_mod.start_scheduler(data_dir, db_lock)
@@ -515,6 +534,50 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         return redirect(url_for(
             "asteapta_verificare_email", mesaj="Email retrimis."))
 
+    def _login_blocat(identificator: str) -> "str | None":
+        """Mesajul de blocare daca identificatorul (CUI sau username master)
+        a esuat de prea multe ori recent, altfel None. Verificat inaintea
+        oricarei comparatii de parola - un identificator blocat nu ajunge
+        deloc la bcrypt, ca sa nu incurajam brute-force-ul sa continue."""
+        row = conn.execute(
+            "SELECT blocat_pana FROM login_lockouts WHERE identificator=?",
+            (identificator,)).fetchone()
+        if row is None or row["blocat_pana"] is None:
+            return None
+        blocat_pana = datetime.fromisoformat(row["blocat_pana"])
+        acum = datetime.now(timezone.utc)
+        if acum >= blocat_pana:
+            return None
+        minute = int((blocat_pana - acum).total_seconds() // 60) + 1
+        return (f"Prea multe incercari esuate. Incearca din nou peste "
+                f"{minute} minute.")
+
+    def _inregistreaza_login_esuat(identificator: str) -> None:
+        acum = datetime.now(timezone.utc)
+        row = conn.execute(
+            "SELECT incercari FROM login_lockouts WHERE identificator=?",
+            (identificator,)).fetchone()
+        incercari = (row["incercari"] if row else 0) + 1
+        blocat_pana = (
+            (acum + timedelta(minutes=pdb.LOGIN_BLOCARE_MINUTE)).isoformat()
+            if incercari >= pdb.LOGIN_MAX_INCERCARI else None)
+        if row is None:
+            conn.execute(
+                "INSERT INTO login_lockouts(identificator, incercari, "
+                "ultima_incercare, blocat_pana) VALUES(?,?,?,?)",
+                (identificator, incercari, acum.isoformat(), blocat_pana))
+        else:
+            conn.execute(
+                "UPDATE login_lockouts SET incercari=?, ultima_incercare=?, "
+                "blocat_pana=? WHERE identificator=?",
+                (incercari, acum.isoformat(), blocat_pana, identificator))
+        conn.commit()
+
+    def _reseteaza_login_esuat(identificator: str) -> None:
+        conn.execute("DELETE FROM login_lockouts WHERE identificator=?",
+                    (identificator,))
+        conn.commit()
+
     @app.route("/autentificare", methods=["GET", "POST"])
     def login():
         if request.method == "GET":
@@ -524,6 +587,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         identificator = request.form.get("cui", "").strip()
         password = request.form.get("password", "")
         eroare_autentificare = "CUI sau parola incorecta."
+
+        mesaj_blocare = _login_blocat(identificator)
+        if mesaj_blocare:
+            return render_template("autentificare.html", eroare=mesaj_blocare)
 
         # Master nu apartine niciunei firme (nu are CUI), asa ca ramane
         # singurul cont care se autentifica prin numele lui de utilizator.
@@ -544,8 +611,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             row = next((r for r in candidati
                        if psec.verify_password(r["pw_hash"], password)), None)
         if row is None or not row["active"]:
+            _inregistreaza_login_esuat(identificator)
             return render_template("autentificare.html",
                                    eroare=eroare_autentificare)
+        _reseteaza_login_esuat(identificator)
         session.permanent = True
         session["user_id"] = row["id"]
         if row["is_master"]:
@@ -1446,10 +1515,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
             f"poti ignora acest mesaj.")
 
     @app.post("/api/contact")
+    @csrf.exempt
     def trimite_contact():
         """Disponibil atat pentru vizitatori anonimi (pagina publica de
         contact), cat si pentru conturi autentificate (panoul contului) -
-        acelasi endpoint, acelasi tabel, aceeasi retransmitere prin email."""
+        acelasi endpoint, acelasi tabel, aceeasi retransmitere prin email.
+        Exceptat de la CSRF: docs/contact.html e servit static (send_file),
+        fara acces la un token randat de Jinja - vizitatorul anonim nu are
+        cum sa primeasca unul."""
         date = request.get_json(silent=True) or request.form
         nume = (date.get("nume") or "").strip()
         email = (date.get("email") or "").strip()
@@ -2080,6 +2153,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
         return redirect(url_for("pipeline_dashboard", eroare=eroare))
 
     # ---------- product API (session-based) ----------
+    @app.get("/api/csrf-token")
+    @require()
+    def csrf_token_pentru_spa(ident):
+        """web/index.html e servit prin send_file, nu render_template - nu
+        poate primi tokenul direct in pagina ca formularele randate de
+        Jinja. SPA-ul cere tokenul o singura data si il ataseaza ca header
+        X-CSRFToken pe orice apel POST/PUT/DELETE catre /api/*."""
+        return jsonify({"csrf_token": generate_csrf()})
+
     @app.get("/api/me")
     @require()
     def me(ident):

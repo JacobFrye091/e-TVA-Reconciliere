@@ -33,6 +33,7 @@ a.mic:hover { background:var(--paper); }
   <div class="card">
     <h2>Emite factură nouă</h2>
     <form method="post" action="/master/facturi">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="rand">
         <div><label for="fFirma">Firma</label>
           <select id="fFirma" name="firm_id" required>
@@ -83,10 +84,12 @@ a.mic:hover { background:var(--paper); }
           <a class="mic" href="/master/facturi/{{ f['id'] }}/xml">XML</a>
           {% if f['anaf_stare'] == 'netrimisa' %}
           <form class="inline" method="post" action="/master/facturi/{{ f['id'] }}/trimite-anaf">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Trimite la ANAF</button>
           </form>
           {% elif f['anaf_stare'] == 'in_procesare' %}
           <form class="inline" method="post" action="/master/facturi/{{ f['id'] }}/verifica-stare">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Verifică starea</button>
           </form>
           {% endif %}

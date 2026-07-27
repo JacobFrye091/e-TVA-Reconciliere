@@ -8,6 +8,7 @@
       care ți-ai creat contul. Deschide-l ca să poți folosi platforma.</p>
     {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
     <form method="post" action="/retrimite-verificare-email">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn-lat" type="submit">Retrimite emailul</button>
     </form>
     <p class="nota"><a href="/iesire">Ieși din cont</a>.</p>

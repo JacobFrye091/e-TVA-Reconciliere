@@ -34,6 +34,7 @@ a.mic:hover { background:var(--paper); }
 
   <div class="card">
     <form method="post" action="/master/backup/creeaza">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">Creează backup acum</button>
     </form>
   </div>
@@ -52,6 +53,7 @@ a.mic:hover { background:var(--paper); }
       dacă vrei să revii. După restaurare, <b>repornește manual serverul</b>
       acestui mediu ca să aibă efect.</p>
     <form method="post" action="/master/backup/restaureaza" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="fFisier">Fișier de backup (.zip)</label>
       <input id="fFisier" name="fisier" type="file" accept=".zip" required>
       <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:normal">

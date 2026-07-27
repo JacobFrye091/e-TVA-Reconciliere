@@ -415,7 +415,24 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.location = '/autentificare';
 });
 
+let _csrfToken = null;
+async function _obtineCsrfToken() {
+  // Pagina asta e servita static (send_file), nu prin Jinja - nu poate primi
+  // tokenul direct in HTML ca formularele randate de server. Il cerem o
+  // singura data si il pastram cat traieste pagina.
+  if (!_csrfToken) {
+    const r = await fetch('/api/csrf-token');
+    _csrfToken = (await r.json()).csrf_token;
+  }
+  return _csrfToken;
+}
+
 async function api(url, opts = {}) {
+  const metoda = (opts.method || 'GET').toUpperCase();
+  if (metoda !== 'GET' && metoda !== 'HEAD') {
+    opts = {...opts, headers: {...(opts.headers || {}),
+                               'X-CSRFToken': await _obtineCsrfToken()}};
+  }
   const r = await fetch(url, opts);
   if (r.status === 401) {
     window.location = '/autentificare';
@@ -474,7 +491,7 @@ async function verificaAnunt() {
 }
 
 async function logout() {
-  await fetch('/api/logout', {method: 'POST'});
+  await api('/api/logout', {method: 'POST'});
   window.location = '/';
 }
 

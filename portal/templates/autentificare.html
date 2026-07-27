@@ -6,6 +6,7 @@
     <h2>Autentificare</h2>
     <p class="sub">Intra in contul firmei tale cu CUI-ul ei si parola ta.</p>
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="cui">CUI</label>
       <input id="cui" name="cui" required autofocus placeholder="ex: RO12345678">
       <label for="password">Parola</label>

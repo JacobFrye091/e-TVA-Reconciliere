@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from portal.app import create_app
 from portal import security as psec
@@ -8,6 +10,12 @@ from etva import anaf_cui
 def app(tmp_path):
     a = create_app(str(tmp_path))
     a.config["TESTING"] = True
+    # Practica standard flask-wtf pentru teste: restul suitei posteaza
+    # formulare fara sa obtina intai un token dintr-un GET, ca sa nu
+    # trebuiasca rescrise sute de teste existente. Protectia CSRF reala e
+    # verificata separat, cu WTF_CSRF_ENABLED=True explicit - vezi
+    # test_csrf_*.
+    a.config["WTF_CSRF_ENABLED"] = False
     return a
 
 
@@ -51,6 +59,66 @@ def test_login_wrong_password(app):
     r = c.post("/autentificare",
                data={"cui": "RO111", "password": "gresit"})
     assert "incorecta".encode() in r.data
+
+
+def test_login_locks_out_after_max_failed_attempts(app):
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO120")
+    c.get("/iesire")
+    for _ in range(pdb.LOGIN_MAX_INCERCARI):
+        c.post("/autentificare", data={"cui": "RO120", "password": "gresit"})
+    r = c.post("/autentificare",
+              data={"cui": "RO120", "password": "ParolaLunga123!"},
+              follow_redirects=False)
+    # parola corecta, dar contul e blocat - nu trebuie sa se autentifice
+    assert "Prea multe incercari".encode() in r.data
+    assert r.status_code == 200
+
+
+def test_login_failed_attempts_below_threshold_still_allow_correct_password(app):
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO121")
+    c.get("/iesire")
+    for _ in range(pdb.LOGIN_MAX_INCERCARI - 1):
+        c.post("/autentificare", data={"cui": "RO121", "password": "gresit"})
+    r = c.post("/autentificare",
+              data={"cui": "RO121", "password": "ParolaLunga123!"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/app" in r.headers["Location"]
+
+
+def test_login_success_resets_failed_attempt_counter(app):
+    """Un login reusit chiar sub pragul de blocare trebuie sa reseteze
+    contorul - altfel un singur esec ulterior s-ar aduna peste incercarile
+    vechi si ar bloca prematur un cont folosit normal."""
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO122")
+    c.get("/iesire")
+    for _ in range(pdb.LOGIN_MAX_INCERCARI - 1):
+        c.post("/autentificare", data={"cui": "RO122", "password": "gresit"})
+    c.post("/autentificare", data={"cui": "RO122", "password": "ParolaLunga123!"})
+    c.get("/iesire")
+    c.post("/autentificare", data={"cui": "RO122", "password": "gresit"})
+    r = c.post("/autentificare",
+              data={"cui": "RO122", "password": "ParolaLunga123!"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/app" in r.headers["Location"]
+
+
+def test_login_lockout_is_per_identifier(app):
+    from portal import db as pdb
+    c1 = app.test_client()
+    inregistreaza(c1, cui="RO123")
+    c1.get("/iesire")
+    for _ in range(pdb.LOGIN_MAX_INCERCARI):
+        c1.post("/autentificare", data={"cui": "RO123", "password": "gresit"})
+
+    c2 = app.test_client()
+    r = inregistreaza(c2, cui="RO124")
+    assert r.status_code == 302 and "/app" in r.headers["Location"]
 
 
 def test_api_me_returns_identity(app):
@@ -448,6 +516,7 @@ def test_direct_firm_reconciles_without_a_client(app):
 def test_firm_key_persists_across_app_restart(tmp_path):
     data_dir = str(tmp_path)
     app1 = create_app(data_dir)
+    app1.config["WTF_CSRF_ENABLED"] = False
     c1 = app1.test_client()
     inregistreaza(c1)
     cid = c1.post("/api/clients",
@@ -455,6 +524,7 @@ def test_firm_key_persists_across_app_restart(tmp_path):
     assert cid
 
     app2 = create_app(data_dir)  # simulates a server restart
+    app2.config["WTF_CSRF_ENABLED"] = False
     c2 = app2.test_client()
     c2.post("/autentificare", data={"cui": "RO111",
                                     "password": "ParolaLunga123!"})
@@ -484,11 +554,13 @@ def test_login_session_survives_a_server_restart(tmp_path):
     only opening a different browser (no cookie at all) should re-prompt."""
     data_dir = str(tmp_path)
     app1 = create_app(data_dir)
+    app1.config["WTF_CSRF_ENABLED"] = False
     c1 = app1.test_client()
     r = inregistreaza(c1)
     session_cookie = r.headers["Set-Cookie"].split("session=")[1].split(";")[0]
 
     app2 = create_app(data_dir)  # simulates a server restart
+    app2.config["WTF_CSRF_ENABLED"] = False
     c2 = app2.test_client()
     c2.set_cookie("session", session_cookie)
     r2 = c2.get("/api/me")
@@ -3010,3 +3082,47 @@ def test_finalizeaza_reziliere_rejects_ramburs_peste_maxim(app):
     row = app.portal_conn.execute(
         "SELECT stare FROM contracts WHERE id=?", (contract_id,)).fetchone()
     assert row["stare"] == "semnat"
+
+
+# ---------- CSRF ----------
+# Restul suitei ruleaza cu WTF_CSRF_ENABLED=False (vezi fixture-ul app) ca
+# sa nu trebuiasca rescrise sutele de teste care posteaza formulare fara sa
+# obtina intai un token - practica standard flask-wtf pentru teste. Aceste
+# cateva teste reactiveaza explicit protectia, ca sa confirme ca ea chiar
+# functioneaza cand e activa in productie.
+
+def test_csrf_rejects_post_without_token(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO900")
+    c.get("/iesire")
+    app.config["WTF_CSRF_ENABLED"] = True
+    r = c.post("/autentificare",
+              data={"cui": "RO900", "password": "ParolaLunga123!"})
+    assert r.status_code == 400
+
+
+def test_csrf_accepts_post_with_valid_token_from_rendered_form(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO901")
+    c.get("/iesire")
+    app.config["WTF_CSRF_ENABLED"] = True
+    pagina = c.get("/autentificare")
+    token = re.search(
+        rb'name="csrf_token" value="([^"]+)"', pagina.data).group(1).decode()
+    r = c.post("/autentificare",
+              data={"cui": "RO901", "password": "ParolaLunga123!",
+                    "csrf_token": token},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/app" in r.headers["Location"]
+
+
+def test_csrf_exempt_contact_endpoint_works_without_token(app):
+    """/api/contact ramane accesibil fara token chiar si cu CSRF activ -
+    e singurul flux public neautentificat (docs/contact.html e servit
+    static, fara acces la un token randat de Jinja)."""
+    app.config["WTF_CSRF_ENABLED"] = True
+    c = app.test_client()
+    r = c.post("/api/contact", json={
+        "nume": "Test", "email": "test@exemplu.ro", "tip": "general",
+        "mesaj": "Un mesaj de test."})
+    assert r.status_code == 200 and r.get_json()["ok"] is True

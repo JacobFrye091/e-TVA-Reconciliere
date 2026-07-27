@@ -41,6 +41,7 @@ tr.necitit { background: var(--danger-bg); }
         <td style="text-align:right">
           {% if not m['citit'] %}
           <form class="inline" method="post" action="/master/mesaje/{{ m['id'] }}/citit">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Marcheaza citit</button>
           </form>
           {% endif %}

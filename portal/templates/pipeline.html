@@ -43,6 +43,7 @@
       {% elif p['can_promote'] %}
       <form method="post" action="/master/pipeline/promoveaza"
             onsubmit="return confirm('Promovezi {{ labels[p['source']]['label'] }} -> {{ labels[p['target']]['label'] }}? Vei reporni manual serverul din {{ labels[p['target']]['label'] }} dupa aceea.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="source" value="{{ p['source'] }}">
         <input type="hidden" name="target" value="{{ p['target'] }}">
         <button type="submit">Promoveaza</button>

@@ -30,6 +30,7 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
   <div class="card">
     <h2>Anunț nou</h2>
     <form method="post" action="/master/anunturi">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="mesaj">Mesaj</label>
       <textarea id="mesaj" name="mesaj" rows="2" required
                 placeholder="Ex: Mentenanță programată — aplicația va fi indisponibilă cateva minute."></textarea>
@@ -67,6 +68,7 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
         <td style="text-align:right">
           {% if a['activ'] and a['se_termina_la'] >= acum %}
           <form class="inline" method="post" action="/master/anunturi/{{ a['id'] }}/dezactivare">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Dezactivează</button>
           </form>
           {% endif %}
