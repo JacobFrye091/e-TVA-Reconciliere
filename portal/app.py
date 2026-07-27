@@ -4,7 +4,7 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import base64, json, os, pathlib, re, secrets, smtplib, threading
+import json, os, pathlib, re, secrets, smtplib, threading
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
@@ -27,6 +27,7 @@ from etva import anaf_cui
 from etva import anaf_oauth
 from etva import digital_signature
 from etva import efactura_xml
+from etva import esemneaza
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
@@ -60,6 +61,16 @@ ANAF_TOKEN_VALIDITY_ZILE = 90
 # trimite nimic cu valoare legala. Se schimba explicit in "prod" abia dupa
 # ce un XML de test a fost validat cu adevarat impotriva sandbox-ului.
 ANAF_EFACTURA_MEDIU = os.environ.get("ANAF_EFACTURA_MEDIU", "test")
+
+# Semnarea contractului de prestari servicii (vezi semneaza_contract) - fara
+# aceasta cheie, optiunea de semnare ramane indisponibila (mesaj explicit,
+# nu o eroare oarba). ESEMNEAZA_WEBHOOK_SECRET/HEADER verifica evenimentele
+# primite pe /api/esemneaza/webhook - configurate manual, in oglinda, si in
+# contul eSemneaza (pagina Setari API); fara ele, verificarea starii se
+# bazeaza doar pe polling (vezi _verifica_finalizare_esemneaza).
+ESEMNEAZA_API_KEY = os.environ.get("ESEMNEAZA_API_KEY")
+ESEMNEAZA_WEBHOOK_HEADER = os.environ.get("ESEMNEAZA_WEBHOOK_HEADER", "X-Webhook-Secret")
+ESEMNEAZA_WEBHOOK_SECRET = os.environ.get("ESEMNEAZA_WEBHOOK_SECRET")
 
 # Implicit dezactivat: emailul de confirmare e singura cale de livrare a
 # link-ului de validare (spre deosebire de formularul de contact, unde o
@@ -861,11 +872,17 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             (firm_id,)).fetchone()
 
     def _regenereaza_pdf_contract(contract) -> bytes:
-        """PDF-ul contractului, regenerat de fiecare data din datele
-        stocate - nu se mai pastreaza niciun PDF in baza de date. Pentru
-        semnatura cu mouse-ul re-embedam PNG-ul desenat; pentru semnatura cu
-        certificat nu mai exista fisierul original incarcat, asa ca atasam
-        in schimb rezultatul verificarii facute la momentul semnarii."""
+        """PDF-ul contractului. Pentru eSemneaza, documentul semnat e un
+        artefact real primit de la un tert - servit exact cum a fost primit,
+        NU regenerat (spre deosebire de celelalte metode, unde nu exista
+        niciun fisier original de pastrat). Pentru semnatura cu mouse-ul (
+        metoda veche, pastrata doar pentru contracte semnate inainte de
+        eSemneaza) re-embedam PNG-ul desenat; pentru semnatura cu certificat
+        nu mai exista fisierul original incarcat, asa ca atasam in schimb
+        rezultatul verificarii facute la momentul semnarii."""
+        if (contract["metoda_semnatura"] == pdb.CONTRACT_METODA_ESEMNEAZA
+                and contract["esemneaza_document_pdf"]):
+            return bytes(contract["esemneaza_document_pdf"])
         continut = contract_mod.genereaza_text_din_rand(contract)
         if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_MOUSE:
             semnatura_img = (bytes(contract["semnatura_mouse_img"])
@@ -905,6 +922,59 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return conn.execute(
             "SELECT * FROM contracts WHERE id=?", (cur.lastrowid,)).fetchone(), None
 
+    def _finalizeaza_contract_esemneaza(contract, request_id: str):
+        """Marcheaza contractul semnat si pastreaza documentul final + (daca
+        e disponibil) certificatul de semnatura primite de la eSemneaza -
+        spre deosebire de celelalte metode, aici NU se regenereaza nimic:
+        documentul semnat e artefactul legal real, controlat de un tert, deci
+        trebuie pastrat exact cum a fost primit (aceeasi logica ca la
+        arhivarea raspunsului sigilat ANAF pentru e-Factura)."""
+        doc = esemneaza.get_completed_document_url(ESEMNEAZA_API_KEY, request_id)
+        pdf_bytes = esemneaza.fetch_url_bytes(doc["docUrl"])
+        cert_bytes = None
+        try:
+            cert = esemneaza.get_certificate_download_url(ESEMNEAZA_API_KEY, request_id)
+            cert_bytes = esemneaza.fetch_url_bytes(cert["certificateUrl"])
+        except esemneaza.EsemneazaError:
+            pass
+        conn.execute(
+            "UPDATE contracts SET stare=?, semnatura_verificata=1, "
+            "semnatura_detalii=?, semnat_la=?, esemneaza_document_pdf=?, "
+            "esemneaza_certificate_pdf=? WHERE id=?",
+            (pdb.CONTRACT_STARE_SEMNAT,
+             json.dumps({"metoda": "esemneaza", "request_id": request_id}),
+             datetime.now(timezone.utc).isoformat(), pdf_bytes, cert_bytes,
+             contract["id"]))
+        conn.commit()
+
+    def _verifica_finalizare_esemneaza(contract):
+        """Verifica manual la eSemneaza daca cererea de semnare in asteptare
+        s-a incheiat - necesar pana serverul are o adresa publica pentru
+        webhook (vezi /api/esemneaza/webhook mai jos); apelat automat la
+        fiecare vizualizare a paginii de contract, nu doar prin webhook."""
+        if (not ESEMNEAZA_API_KEY or not contract
+                or contract["stare"] != pdb.CONTRACT_STARE_IN_ASTEPTARE
+                or not contract["esemneaza_request_id"]):
+            return contract
+        try:
+            stare = esemneaza.get_sign_request(
+                ESEMNEAZA_API_KEY, contract["esemneaza_request_id"])
+        except esemneaza.EsemneazaError:
+            return contract
+        recipienti = stare.get("recipients") or []
+        sig = recipienti[0].get("sigStatus") if recipienti else None
+        if sig == esemneaza.SIGSTATUS_APPLIED:
+            _finalizeaza_contract_esemneaza(contract, contract["esemneaza_request_id"])
+        elif sig == esemneaza.SIGSTATUS_REJECTED:
+            conn.execute(
+                "UPDATE contracts SET esemneaza_request_id=NULL WHERE id=?",
+                (contract["id"],))
+            conn.commit()
+        else:
+            return contract
+        return conn.execute(
+            "SELECT * FROM contracts WHERE id=?", (contract["id"],)).fetchone()
+
     @app.get("/panou/contract")
     def vezi_contract():
         user = current_user()
@@ -918,6 +988,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
         contract, eroare_generare = _genereaza_contract(firm)
+        contract = _verifica_finalizare_esemneaza(contract)
         continut = (contract_mod.genereaza_text_din_rand(contract)
                    if contract is not None else None)
         return render_template(
@@ -958,6 +1029,21 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             headers={"Content-Disposition":
                     f'attachment; filename="contract-{contract["numar"]}.xml"'})
 
+    @app.get("/panou/contract/certificat")
+    def descarca_certificat_esemneaza():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        contract = _contract_curent(active_firm_id)
+        if contract is None or not contract["esemneaza_certificate_pdf"]:
+            return redirect(url_for("vezi_contract"))
+        return Response(
+            bytes(contract["esemneaza_certificate_pdf"]), mimetype="application/pdf",
+            headers={"Content-Disposition":
+                    f"inline; filename=certificat-contract-{contract['numar']}.pdf"})
+
     @app.post("/panou/contract/semneaza")
     def semneaza_contract():
         user = current_user()
@@ -972,28 +1058,52 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         metoda = request.form.get("metoda")
         acum = datetime.now(timezone.utc).isoformat()
 
-        if metoda == pdb.CONTRACT_METODA_MOUSE:
-            semnatura_b64 = request.form.get("semnatura_mouse", "")
-            if "," in semnatura_b64:
-                semnatura_b64 = semnatura_b64.split(",", 1)[1]
-            if not semnatura_b64:
+        if metoda == pdb.CONTRACT_METODA_ESEMNEAZA:
+            if not ESEMNEAZA_API_KEY:
                 return redirect(url_for(
-                    "vezi_contract", eroare="Deseneaza o semnatura inainte de a trimite."))
+                    "vezi_contract",
+                    eroare="Semnarea electronica nu este configurata inca pe acest server."))
+            admin = conn.execute(
+                "SELECT u.email FROM user_firms uf JOIN users u ON u.id = uf.user_id "
+                "WHERE uf.firm_id=? AND uf.role='admin' AND u.email IS NOT NULL "
+                "LIMIT 1", (active_firm_id,)).fetchone()
+            if admin is None or not admin["email"]:
+                return redirect(url_for(
+                    "vezi_contract",
+                    eroare="Adminul firmei nu are o adresa de email inregistrata "
+                          "- necesara pentru trimiterea contractului spre semnare."))
+            firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                                (active_firm_id,)).fetchone()
+            continut = contract_mod.genereaza_text_din_rand(contract)
+            pdf_bytes = contract_mod.genereaza_pdf(continut)
             try:
-                semnatura_png = base64.b64decode(semnatura_b64)
-            except (ValueError, TypeError):
+                file_name = esemneaza.upload_document(
+                    ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{contract['numar']}.pdf")
+                pagini = contract_mod.numar_pagini_pdf(pdf_bytes)
+                # Semnatura PRESTATORULUI (VML) e deja inclusa in textul
+                # contractului la generare (vezi contract.genereaza_text) -
+                # doar BENEFICIARUL semneaza efectiv prin eSemneaza.
+                rezultat = esemneaza.create_sign_request(
+                    ESEMNEAZA_API_KEY, file_name,
+                    recipients=[{"email": admin["email"], "name": firm["name"],
+                                "field_page": pagini}],
+                    sender_name="e-TVA Reconciliere")
+            except esemneaza.EsemneazaError as e:
                 return redirect(url_for(
-                    "vezi_contract", eroare="Semnatura trimisa este invalida."))
+                    "vezi_contract",
+                    eroare=f"Nu am putut trimite contractul spre semnare: {e}"))
             conn.execute(
-                "UPDATE contracts SET stare=?, metoda_semnatura=?, "
-                "semnatura_mouse_img=?, semnatura_verificata=0, "
-                "semnatura_detalii=?, semnat_la=? WHERE id=?",
-                (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_MOUSE,
-                 semnatura_png, json.dumps({
-                     "metoda": "mouse",
-                     "nota": "Semnatura electronica simpla - fara verificare criptografica."}),
-                 acum, contract["id"]))
+                "UPDATE contracts SET metoda_semnatura=?, esemneaza_request_id=? "
+                "WHERE id=?",
+                (pdb.CONTRACT_METODA_ESEMNEAZA, rezultat.get("id"), contract["id"]))
             conn.commit()
+            audit_fc = firm_conn(active_firm_id)
+            audit.log(audit_fc, user["username"], "contract.trimis_spre_semnare",
+                      "contract", str(contract["id"]))
+            return redirect(url_for(
+                "vezi_contract",
+                mesaj=f"Am trimis contractul spre semnare la {admin['email']} - "
+                     f"verifica emailul primit de la eSemneaza.ro."))
         elif metoda == pdb.CONTRACT_METODA_CERTIFICAT:
             fisier = request.files.get("semnatura_fisier")
             if fisier is None or not fisier.filename:
@@ -1025,6 +1135,40 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                   "contract", str(contract["id"]))
         return redirect(url_for(
             "vezi_contract", mesaj="Contractul a fost semnat cu succes."))
+
+    @app.post("/api/esemneaza/webhook")
+    @csrf.exempt
+    def webhook_esemneaza():
+        """Cale alternativa/mai rapida decat polling-ul din
+        _verifica_finalizare_esemneaza - functioneaza doar odata ce serverul
+        are o adresa publica configurata in contul eSemneaza (Setari API ->
+        URL Webhook), ceea ce nu e inca cazul in dev/testare. Forma exacta a
+        payload-ului NU e documentata nicaieri (nu exista o pagina de
+        referinta pentru webhook-uri) - scris defensiv, incearca cateva nume
+        de campuri plauzibile si nu se prabuseste niciodata pe o forma
+        neasteptata, fiindca fluxul functioneaza oricum si fara el."""
+        if (not ESEMNEAZA_WEBHOOK_SECRET
+                or request.headers.get(ESEMNEAZA_WEBHOOK_HEADER) != ESEMNEAZA_WEBHOOK_SECRET):
+            return jsonify({"error": "Neautorizat"}), 401
+        payload = request.get_json(silent=True) or {}
+        request_id = (payload.get("requestId") or payload.get("id")
+                     or payload.get("request_id"))
+        eveniment = payload.get("event") or payload.get("type") or payload.get("eventType")
+        if not request_id:
+            return jsonify({"ok": True})
+        contract = conn.execute(
+            "SELECT * FROM contracts WHERE esemneaza_request_id=?",
+            (request_id,)).fetchone()
+        if contract is None or contract["stare"] != pdb.CONTRACT_STARE_IN_ASTEPTARE:
+            return jsonify({"ok": True})
+        if eveniment in ("RECIPIENT_SIGNED", "REQUEST_COMPLETED"):
+            _finalizeaza_contract_esemneaza(contract, request_id)
+        elif eveniment == "RECIPIENT_REJECTED":
+            conn.execute(
+                "UPDATE contracts SET esemneaza_request_id=NULL WHERE id=?",
+                (contract["id"],))
+            conn.commit()
+        return jsonify({"ok": True})
 
     @app.post("/panou/contract/reziliaza")
     def reziliaza_contract():
@@ -2192,6 +2336,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             xml_bytes, mimetype="application/xml",
             headers={"Content-Disposition":
                     f'attachment; filename="contract-{contract["numar"]}.xml"'})
+
+    @app.get("/master/contracte/<int:contract_id>/certificat")
+    def descarca_certificat_esemneaza_master(contract_id):
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        if contract is None or not contract["esemneaza_certificate_pdf"]:
+            return redirect(url_for("master_contracte"))
+        return Response(
+            bytes(contract["esemneaza_certificate_pdf"]), mimetype="application/pdf",
+            headers={"Content-Disposition":
+                    f"inline; filename=certificat-contract-{contract['numar']}.pdf"})
 
     @app.post("/master/contracte/<int:contract_id>/reziliaza")
     def finalizeaza_reziliere_contract(contract_id):

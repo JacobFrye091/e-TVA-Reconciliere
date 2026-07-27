@@ -4,6 +4,7 @@ import pytest
 from portal.app import create_app
 from portal import security as psec
 from etva import anaf_cui
+from etva import esemneaza
 
 
 @pytest.fixture
@@ -27,6 +28,34 @@ def _mock_anaf_cui(monkeypatch):
                 "adresa": "", "stare_inregistrare": "INREGISTRAT",
                 "scpTVA": True}
     monkeypatch.setattr(anaf_cui, "verify_cui", _fake)
+
+
+@pytest.fixture(autouse=True)
+def _mock_esemneaza(monkeypatch):
+    """Contractele se semneaza prin eSemneaza.ro (nu mai exista semnatura
+    desenata cu mouse-ul) - testele nu ating serviciul real. Implicit,
+    orice cerere de semnare e imediat raportata ca aplicata (APPLIED) la
+    prima verificare, ca fluxul de plata/facturare sa poata fi testat fara
+    sa depinda de un webhook sau de asteptare reala - teste specifice
+    (vezi test_semneaza_contract_esemneaza_*) suprascriu comportamentul
+    pentru a verifica starile de asteptare/refuz. Modulul insusi (apeluri
+    HTTP reale mockuite) are propriile teste in tests/test_esemneaza.py."""
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "ESEMNEAZA_API_KEY", "test-key")
+    monkeypatch.setattr(esemneaza, "upload_document",
+                        lambda *a, **kw: "fake-file.pdf")
+    monkeypatch.setattr(esemneaza, "create_sign_request",
+                        lambda *a, **kw: {"id": "fake-request-id",
+                                          "status": "IN_PROGRESS"})
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "status": "COMPLETED",
+        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_APPLIED}]})
+    monkeypatch.setattr(esemneaza, "get_completed_document_url",
+                        lambda *a, **kw: {"docUrl": "https://fake/doc"})
+    monkeypatch.setattr(esemneaza, "get_certificate_download_url",
+                        lambda *a, **kw: {"certificateUrl": "https://fake/cert"})
+    monkeypatch.setattr(esemneaza, "fetch_url_bytes",
+                        lambda url: b"%PDF-fake-signed-bytes")
 
 
 def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate",
@@ -2548,19 +2577,17 @@ def _apropie_trial_de_final(app, cui):
     app.portal_conn.commit()
 
 
-_PNG_1X1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
-           "YAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
-
-
-def _semneaza_contract_mouse(c):
+def _semneaza_contract_esemneaza(c):
     """Genereaza (daca nu exista deja) si semneaza contractul curent al
-    firmei active a clientului dat, cu o 'semnatura' desenata falsa -
-    suficient cat sa treaca poarta din creeaza_cerere_plata fara sa
-    testeze aici verificarea criptografica (vezi testele dedicate)."""
+    firmei active a clientului dat, prin fluxul eSemneaza.ro - modulul
+    etva.esemneaza e mockuit implicit (vezi fixture-ul autouse
+    _mock_esemneaza) sa raporteze semnatura ca aplicata la prima verificare,
+    suficient cat sa treaca poarta din creeaza_cerere_plata fara sa depinda
+    de serviciul real (vezi tests/test_esemneaza.py pentru testele modulului
+    insusi)."""
     c.get("/panou/contract")
-    return c.post("/panou/contract/semneaza", data={
-        "metoda": "mouse",
-        "semnatura_mouse": "data:image/png;base64," + _PNG_1X1})
+    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+    return c.get("/panou/contract")
 
 
 def test_alege_plan_hides_payment_button_early_in_trial(app):
@@ -2601,7 +2628,7 @@ def test_creeaza_cerere_plata_direct_firm(app):
     inregistreaza(c, cui="RO204", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO204")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     r = c.post("/panou/plata", data={"recurent": "on"}, follow_redirects=True)
     assert "Cererea de plata a fost inregistrata".encode() in r.data
     row = app.portal_conn.execute(
@@ -2621,7 +2648,7 @@ def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
     inregistreaza(c, cui="RO205", tip="contabilitate")
     c.post("/panou/plan", data={"ciclu": "an"})
     _apropie_trial_de_final(app, "RO205")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO205'").fetchone()["id"]
     c.post("/panou/plata", data={})
@@ -2648,7 +2675,7 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
     inregistreaza(c, cui="RO206", tip="direct")
     c.post("/panou/plan", data={"ciclu": "6luni"})
     _apropie_trial_de_final(app, "RO206")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2683,7 +2710,7 @@ def test_valideaza_plata_rejects_already_validated(app):
     inregistreaza(c, cui="RO207", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO207")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2701,7 +2728,7 @@ def test_alege_plan_shows_12_month_payment_history(app):
     inregistreaza(c, cui="RO208", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO208")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     r = c.get("/panou/plan")
     assert "Istoricul pl".encode() in r.data
@@ -2780,7 +2807,7 @@ def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
     inregistreaza(c, cui="RO209", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO209")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2829,7 +2856,7 @@ def test_updated_cota_tva_is_used_by_payment_calculation(app):
     inregistreaza(c, cui="RO210", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO210")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -3114,30 +3141,96 @@ def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(
     assert "nu este păstrat pe server" in text
 
 
-def test_semneaza_contract_mouse(app):
+def test_semneaza_contract_esemneaza_completeaza_semnatura(app):
     c = app.test_client()
     inregistreaza(c, cui="RO304", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     row = app.portal_conn.execute(
         "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
         "WHERE f.cui='RO304'").fetchone()
     assert row["stare"] == "semnat"
-    assert row["metoda_semnatura"] == "mouse"
-    assert row["semnatura_verificata"] == 0
-    assert row["semnatura_mouse_img"] is not None
+    assert row["metoda_semnatura"] == "esemneaza"
+    assert row["semnatura_verificata"] == 1
+    assert bytes(row["esemneaza_document_pdf"]) == b"%PDF-fake-signed-bytes"
+    assert bytes(row["esemneaza_certificate_pdf"]) == b"%PDF-fake-signed-bytes"
     assert row["semnat_la"] is not None
 
 
-def test_semneaza_contract_mouse_requires_semnatura(app):
+def test_semneaza_contract_esemneaza_requires_api_key(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "ESEMNEAZA_API_KEY", None)
     c = app.test_client()
-    inregistreaza(c, cui="RO313", tip="direct")
+    inregistreaza(c, cui="RO314", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     c.get("/panou/contract")
-    r = c.post("/panou/contract/semneaza",
-              data={"metoda": "mouse", "semnatura_mouse": ""},
+    r = c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"},
               follow_redirects=True)
-    assert "Deseneaza o semnatura".encode() in r.data
+    assert "nu este configurata".encode() in r.data
+
+
+def test_semneaza_contract_esemneaza_stays_pending_until_signed(app, monkeypatch):
+    from etva import esemneaza
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "status": "IN_PROGRESS",
+        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_PENDING}]})
+    c = app.test_client()
+    inregistreaza(c, cui="RO315", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+    r = c.get("/panou/contract")
+    assert "trimis spre semnare".encode() in r.data.lower()
+    row = app.portal_conn.execute(
+        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO315'").fetchone()
+    assert row["stare"] == "in_asteptare"
+    assert row["esemneaza_request_id"] is not None
+
+
+def test_semneaza_contract_esemneaza_rejected_clears_request(app, monkeypatch):
+    from etva import esemneaza
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "status": "IN_PROGRESS",
+        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_REJECTED}]})
+    c = app.test_client()
+    inregistreaza(c, cui="RO316", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+    c.get("/panou/contract")
+    row = app.portal_conn.execute(
+        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
+        "WHERE f.cui='RO316'").fetchone()
+    assert row["stare"] == "in_asteptare"
+    assert row["esemneaza_request_id"] is None
+
+
+def test_webhook_esemneaza_requires_secret_header(app):
+    c = app.test_client()
+    r = c.post("/api/esemneaza/webhook", json={"requestId": "x", "event": "REQUEST_COMPLETED"})
+    assert r.status_code == 401
+
+
+def test_webhook_esemneaza_finalizes_matching_contract(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "ESEMNEAZA_WEBHOOK_SECRET", "sekret")
+    c = app.test_client()
+    inregistreaza(c, cui="RO317", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    c.get("/panou/contract")
+    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+    request_id = app.portal_conn.execute(
+        "SELECT c.esemneaza_request_id FROM contracts c JOIN firms f "
+        "ON f.id=c.firm_id WHERE f.cui='RO317'").fetchone()["esemneaza_request_id"]
+
+    r = c.post("/api/esemneaza/webhook",
+              headers={"X-Webhook-Secret": "sekret"},
+              json={"requestId": request_id, "event": "REQUEST_COMPLETED"})
+    assert r.status_code == 200
+    row = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE esemneaza_request_id=?", (request_id,)).fetchone()
+    assert row["stare"] == "semnat"
 
 
 def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certificat):
@@ -3234,7 +3327,7 @@ def test_reziliaza_contract_flow_complete(app):
     c = app.test_client()
     inregistreaza(c, cui="RO307", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     r = c.post("/panou/contract/reziliaza", follow_redirects=True)
     assert "reziliere a fost inregistrata".encode() in r.data
 
@@ -3263,7 +3356,7 @@ def test_finalizeaza_reziliere_rejects_ramburs_peste_maxim(app):
     c = app.test_client()
     inregistreaza(c, cui="RO308", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     contract_id = app.portal_conn.execute(
         "SELECT c.id FROM contracts c JOIN firms f ON f.id=c.firm_id "
         "WHERE f.cui='RO308'").fetchone()["id"]
@@ -3645,7 +3738,7 @@ def test_valideaza_plata_reactivates_archived_firm(app):
     inregistreaza(c, cui="RO610", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO610")
-    _semneaza_contract_mouse(c)
+    _semneaza_contract_esemneaza(c)
     c.post("/panou/plata", data={})
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO610'").fetchone()["id"]

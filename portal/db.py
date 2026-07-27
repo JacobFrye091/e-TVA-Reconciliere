@@ -172,7 +172,10 @@ CREATE TABLE IF NOT EXISTS contracts(
   reziliere_solicitata_la TEXT,
   reziliat_la TEXT,
   reziliat_de TEXT,
-  ramburs_procent REAL);
+  ramburs_procent REAL,
+  esemneaza_request_id TEXT,
+  esemneaza_document_pdf BLOB,
+  esemneaza_certificate_pdf BLOB);
 CREATE TABLE IF NOT EXISTS login_lockouts(
   identificator TEXT PRIMARY KEY,
   incercari INTEGER NOT NULL DEFAULT 0,
@@ -211,6 +214,11 @@ CONTRACT_STARE_REZILIAT = "reziliat"
 
 CONTRACT_METODA_MOUSE = "mouse"
 CONTRACT_METODA_CERTIFICAT = "certificat"
+# Inlocuieste CONTRACT_METODA_MOUSE ca metoda oferita in UI (2026-07-27) -
+# semnatura desenata cu mouse-ul ("semneaza cu ce vrei") a fost considerata
+# insuficient de robusta legal. CONTRACT_METODA_MOUSE ramane doar pentru
+# contractele deja semnate asa inainte de aceasta schimbare.
+CONTRACT_METODA_ESEMNEAZA = "esemneaza"
 
 # Cerut explicit: daca firma reziliaza contractul inainte de finalul
 # perioadei de facturare deja platite, rambursul nu poate depasi jumatate
@@ -472,6 +480,24 @@ def _migrate_add_firms_arhivare(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_contracts_esemneaza(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate the eSemneaza.ro integration (replaces
+    the old mouse-drawn signature - vezi CONTRACT_METODA_ESEMNEAZA) - add
+    the columns that track the pending sign request id and the final
+    signed document/certificate fetched from eSemneaza once completed."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "contracts" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(contracts)")}
+    if "esemneaza_request_id" in cols:
+        return
+    conn.execute("ALTER TABLE contracts ADD COLUMN esemneaza_request_id TEXT;")
+    conn.execute("ALTER TABLE contracts ADD COLUMN esemneaza_document_pdf BLOB;")
+    conn.execute("ALTER TABLE contracts ADD COLUMN esemneaza_certificate_pdf BLOB;")
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -681,6 +707,7 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firms_arhivare(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
+    _migrate_add_contracts_esemneaza(conn)
     _migrate_seed_cota_tva(conn)
     conn.commit()
     return conn

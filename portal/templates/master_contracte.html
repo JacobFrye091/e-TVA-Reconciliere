@@ -39,19 +39,24 @@ a.mic:hover { background:var(--paper); }
           {% if c['stare'] == 'semnat' %}<span class="chip ok">Semnat</span>
           {% elif c['stare'] == 'reziliere_solicitata' %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">Reziliere solicitată</span>
           {% elif c['stare'] == 'reziliat' %}<span class="chip" style="color:var(--muted);background:var(--paper)">Reziliat{% if c['ramburs_procent'] is not none %} ({{ c['ramburs_procent']|round(0,'floor')|int }}%){% endif %}</span>
+          {% elif c['esemneaza_request_id'] %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">Trimis spre semnare</span>
           {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
         </td>
         <td>
-          {% if c['metoda_semnatura'] %}
-            {{ 'Certificat' if c['metoda_semnatura'] == 'certificat' else 'Desenată' }}
-            {% if c['metoda_semnatura'] == 'certificat' %}
-              — {% if c['semnatura_verificata'] %}<span style="color:var(--ok)">verificată</span>{% else %}<span style="color:var(--warn)">neverificată</span>{% endif %}
-            {% endif %}
+          {% if c['metoda_semnatura'] == 'esemneaza' %}
+            eSemneaza.ro — <span style="color:var(--ok)">verificată</span>
+          {% elif c['metoda_semnatura'] == 'certificat' %}
+            Certificat — {% if c['semnatura_verificata'] %}<span style="color:var(--ok)">verificată</span>{% else %}<span style="color:var(--warn)">neverificată</span>{% endif %}
+          {% elif c['metoda_semnatura'] == 'mouse' %}
+            Desenată
           {% else %}<span class="nota" style="margin:0">—</span>{% endif %}
         </td>
         <td style="text-align:right;white-space:nowrap">
           <a class="mic" href="/master/contracte/{{ c['id'] }}/pdf">PDF</a>
           <a class="mic" href="/master/contracte/{{ c['id'] }}/xml">XML</a>
+          {% if c['esemneaza_certificate_pdf'] %}
+          <a class="mic" href="/master/contracte/{{ c['id'] }}/certificat">Certificat</a>
+          {% endif %}
           {% if c['stare'] in ('semnat', 'reziliere_solicitata') %}
           <form class="inline" method="post" action="/master/contracte/{{ c['id'] }}/reziliaza"
                 onsubmit="return confirm('Reziliezi acest contract? Introdu procentul de ramburs (max {{ 50 }}%).');" style="display:inline">

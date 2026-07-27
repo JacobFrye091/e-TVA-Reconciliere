@@ -20,6 +20,7 @@ import io
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import pdfplumber
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -155,11 +156,12 @@ X. CLAUZE FINALE
 10.1. Prezentul contract, împreună cu Termenii și condițiile publicate \
 pe platformă, reprezintă voința părților.
 
-10.2. Prezentul contract se consideră încheiat la data semnării lui de \
-către BENEFICIAR.
+10.2. PRESTATORUL a semnat electronic prezentul contract la data emiterii \
+lui, {azi}. Contractul se consideră încheiat la data la care BENEFICIARUL \
+îl semnează.
 
 
-PRESTATOR: {FURNIZOR['nume']}                BENEFICIAR: {beneficiar_anaf['denumire']}
+PRESTATOR: {FURNIZOR['nume']} (semnat electronic la {azi})     BENEFICIAR: {beneficiar_anaf['denumire']}
 """
 
 
@@ -283,3 +285,12 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
 
     doc.build(elems)
     return buf.getvalue()
+
+
+def numar_pagini_pdf(pdf_bytes: bytes) -> int:
+    """Numarul real de pagini al unui PDF deja generat - folosit pentru a
+    plasa campul de semnatura eSemneaza pe ultima pagina (vezi
+    etva/esemneaza.py:create_sign_request), fara sa presupunem un numar
+    fix - lungimea contractului variaza usor cu ciclul de facturare ales."""
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        return len(pdf.pages)

@@ -8,8 +8,6 @@
 .metoda-optiuni { display: flex; gap: 18px; margin: 14px 0; flex-wrap: wrap; }
 .metoda-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px;
   flex: 1; min-width: 240px; }
-#canvasSemnatura { border: 1px dashed var(--border); border-radius: 8px;
-  touch-action: none; cursor: crosshair; background: #fff; display: block; }
 </style>
 {% endblock %}
 {% block continut %}
@@ -36,24 +34,28 @@
     <div class="contract-text">{{ continut }}</div>
   </div>
 
-  {% if contract['stare'] == 'in_asteptare' %}
+  {% if contract['stare'] == 'in_asteptare' and contract['esemneaza_request_id'] %}
+  <div class="card">
+    <p class="sub" style="color:var(--warn)">Contractul a fost trimis spre semnare prin
+      eSemneaza.ro — verifică emailul primit de la <b>eSemneaza.ro</b> și semnează acolo.
+      Pagina verifică automat starea de fiecare dată când o reîncarci.</p>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/panou/contract">Verifică starea acum</a>
+  </div>
+  {% elif contract['stare'] == 'in_asteptare' %}
   <div class="card">
     <h2>Semnează contractul</h2>
     <p class="sub">Alege o metodă de semnătură.</p>
     <div class="metoda-optiuni">
       <div class="metoda-card">
-        <h3 style="margin-bottom:8px">Semnătură desenată</h3>
-        <p class="nota" style="margin:0 0 8px">Semnătură electronică simplă — fără verificare
-          criptografică a identității.</p>
-        <canvas id="canvasSemnatura" width="320" height="130"></canvas>
-        <div style="margin-top:8px;display:flex;gap:8px">
-          <button type="button" class="secundar" onclick="stergeSemnatura()">Șterge</button>
-        </div>
-        <form method="post" action="/panou/contract/semneaza" id="formMouse" style="margin-top:10px">
+        <h3 style="margin-bottom:8px">Semnătură electronică (eSemneaza.ro)</h3>
+        <p class="nota" style="margin:0 0 8px">Vei primi un email de la eSemneaza.ro cu un link
+          securizat de semnare — nicio informație nu se salvează pe telefonul sau
+          computerul tău în afara acelui serviciu.</p>
+        <form method="post" action="/panou/contract/semneaza">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="metoda" value="mouse">
-          <input type="hidden" name="semnatura_mouse" id="semnaturaMouseInput">
-          <button class="btn-lat" type="submit" onclick="return trimiteSemnaturaMouse()">Semnează cu semnătura desenată</button>
+          <input type="hidden" name="metoda" value="esemneaza">
+          <button class="btn-lat" type="submit">Semnează cu eSemneaza.ro</button>
         </form>
       </div>
       <div class="metoda-card">
@@ -72,7 +74,11 @@
   {% elif contract['stare'] == 'semnat' %}
   <div class="card">
     <p class="sub" style="color:var(--ok)">Contract semnat la {{ contract['semnat_la'][:10] }}
-      ({{ 'certificat digital' if contract['metoda_semnatura'] == 'certificat' else 'semnătură desenată' }}).</p>
+      ({{ {'esemneaza': 'eSemneaza.ro', 'certificat': 'certificat digital',
+           'mouse': 'semnătură desenată'}[contract['metoda_semnatura']] }}).
+      {% if contract['esemneaza_certificate_pdf'] %}
+      <a href="/panou/contract/certificat" target="_blank">Descarcă certificatul de semnătură</a>
+      {% endif %}</p>
     <form method="post" action="/panou/contract/reziliaza"
           onsubmit="return confirm('Sigur vrei să soliciți rezilierea contractului?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -90,39 +96,4 @@
   {% endif %}
   {% endif %}
 </main>
-<script>
-(function() {
-  const canvas = document.getElementById('canvasSemnatura');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#17203a';
-  let desenand = false, are_traseu = false;
-
-  function pozitie(e) {
-    const r = canvas.getBoundingClientRect();
-    const p = e.touches ? e.touches[0] : e;
-    return {x: p.clientX - r.left, y: p.clientY - r.top};
-  }
-  function start(e) { desenand = true; are_traseu = true; const p = pozitie(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
-  function move(e) { if (!desenand) return; const p = pozitie(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
-  function stop() { desenand = false; }
-
-  canvas.addEventListener('mousedown', start);
-  canvas.addEventListener('mousemove', move);
-  window.addEventListener('mouseup', stop);
-  canvas.addEventListener('touchstart', start);
-  canvas.addEventListener('touchmove', move);
-  window.addEventListener('touchend', stop);
-
-  window.stergeSemnatura = function() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    are_traseu = false;
-  };
-  window.trimiteSemnaturaMouse = function() {
-    if (!are_traseu) { alert('Desenează o semnătură înainte de a trimite.'); return false; }
-    document.getElementById('semnaturaMouseInput').value = canvas.toDataURL('image/png');
-    return true;
-  };
-})();
-</script>
 {% endblock %}
