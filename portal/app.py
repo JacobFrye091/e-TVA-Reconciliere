@@ -20,6 +20,7 @@ from portal import pipeline
 from portal import invoicing
 from portal import contract as contract_mod
 from portal import backup as backup_mod
+from portal import trial_reminders as remind_mod
 from etva import db as fdb
 from etva import audit, clients
 from etva import anaf_cui
@@ -97,7 +98,8 @@ def _donut_segments(counts: list[tuple[str, int]]) -> list[dict]:
     return segments
 
 
-def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
+def create_app(data_dir: str, enable_backup_scheduler: bool = False,
+               enable_trial_reminder_scheduler: bool = False) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
     firms_dir = os.path.join(data_dir, "firms")
     upload_dir = os.path.join(data_dir, "uploads")
@@ -1989,6 +1991,34 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
                "orice alta actiune in aceasta sesiune va esua pana atunci, pentru ca "
                "aplicatia tine conexiunile catre bazele de date deja deschise.</p>", 200)
 
+    # ---------- master: remindere expirare trial ----------
+    @app.get("/master/remindere-trial")
+    def master_remindere_trial():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        firme_brute = conn.execute(
+            "SELECT id, name, cui, trial_expira_la, trial_reminder_ultim_prag "
+            "FROM firms WHERE active=1 AND ciclu_facturare IS NULL "
+            "AND trial_expira_la IS NOT NULL ORDER BY trial_expira_la").fetchall()
+        firme = [dict(f, zile_ramase=remind_mod.zile_ramase_trial(f["trial_expira_la"]))
+                for f in firme_brute]
+        return render_template(
+            "master_remindere_trial.html", user=user, firme=firme,
+            praguri=pdb.TRIAL_REMINDER_PRAGURI_ZILE,
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
+
+    @app.post("/master/remindere-trial/trimite")
+    def trimite_remindere_trial():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        n = remind_mod.verifica_si_trimite(conn, _trimite_email)
+        _log_master_action(user, "remindere_trial_trimise", str(n))
+        return redirect(url_for(
+            "master_remindere_trial",
+            mesaj=f"{n} {'reminder trimis' if n == 1 else 'remindere trimise'}."))
+
     # ---------- master: validare incasari ----------
     @app.get("/master/plati")
     def master_plati():
@@ -2535,6 +2565,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False) -> Flask:
     @require("audit.vizualizare")
     def audit_view(ident):
         return jsonify(audit.entries(firm_conn(ident["firm_id"])))
+
+    if enable_trial_reminder_scheduler:
+        # Dupa _trimite_email (mai sus in fisier) - fir-ul de fundal are
+        # nevoie de closure-ul ei, deja legat de app.logger si SMTP.
+        remind_mod.start_scheduler(conn, db_lock, _trimite_email)
 
     app.portal_conn = conn  # exposed for tests/seeding
     app.portal_secret = secret

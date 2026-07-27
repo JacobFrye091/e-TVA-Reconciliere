@@ -3174,3 +3174,148 @@ def test_master_statistici_excludes_inactive_firms_from_mrr(app):
     r = c_master.get("/master/statistici")
     assert "0.00".encode() in r.data
     assert "59.00".encode() not in r.data
+
+
+# ---------- remindere expirare trial ----------
+
+def _seteaza_trial_zile_ramase(app, cui, zile):
+    """Muta trial_expira_la ca zile_ramase_trial() sa raporteze exact `zile`
+    zile ramase - sau 0 (trial deja expirat), pentru zile<=0."""
+    from datetime import datetime, timedelta, timezone
+    if zile <= 0:
+        expira = datetime.now(timezone.utc) - timedelta(hours=1)
+    else:
+        expira = datetime.now(timezone.utc) + timedelta(days=zile, hours=1)
+    app.portal_conn.execute(
+        "UPDATE firms SET trial_expira_la=? WHERE cui=?", (expira.isoformat(), cui))
+    app.portal_conn.commit()
+
+
+def test_master_remindere_trial_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/remindere-trial", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_zile_ramase_trial_computes_whole_days_left(app):
+    from portal import trial_reminders as remind_mod
+    from datetime import datetime, timedelta, timezone
+    expira = (datetime.now(timezone.utc) + timedelta(days=5, hours=1)).isoformat()
+    assert remind_mod.zile_ramase_trial(expira) == 5
+
+
+def test_zile_ramase_trial_never_negative(app):
+    from portal import trial_reminders as remind_mod
+    from datetime import datetime, timedelta, timezone
+    expira = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    assert remind_mod.zile_ramase_trial(expira) == 0
+
+
+def test_prag_de_trimis_advances_one_threshold_at_a_time(app):
+    from portal import trial_reminders as remind_mod
+    assert remind_mod._prag_de_trimis(8, None) is None  # peste orice prag
+    assert remind_mod._prag_de_trimis(7, None) == 7
+    # 3 zile ramase dar niciun email trimis inca - prinde intai pragul de 7
+    # (cel mai putin urgent netrimis), nu sare direct la cel mai urgent.
+    assert remind_mod._prag_de_trimis(3, None) == 7
+    assert remind_mod._prag_de_trimis(0, None) == 7
+    assert remind_mod._prag_de_trimis(1, 7) == 1  # 7 deja trimis, urmeaza 1
+    assert remind_mod._prag_de_trimis(3, 7) is None  # 3 zile > pragul de 1, inca nimic de trimis
+    assert remind_mod._prag_de_trimis(0, 1) == 0  # 1 deja trimis, urmeaza 0
+    assert remind_mod._prag_de_trimis(5, 7) is None  # 5<=7 dar 7 e deja trimis
+
+
+def test_verifica_si_trimite_sends_reminder_at_threshold_and_marks_sent(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO501", email="admin501@exemplu.ro")
+    _seteaza_trial_zile_ramase(app, "RO501", 7)
+    trimise = []
+    n = remind_mod.verifica_si_trimite(
+        app.portal_conn, lambda dest, subiect, continut: trimise.append((dest, subiect)))
+    assert n == 1
+    assert trimise[0][0] == "admin501@exemplu.ro"
+    row = app.portal_conn.execute(
+        "SELECT trial_reminder_ultim_prag FROM firms WHERE cui='RO501'").fetchone()
+    assert row["trial_reminder_ultim_prag"] == 7
+
+
+def test_verifica_si_trimite_does_not_resend_same_threshold(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO502")
+    _seteaza_trial_zile_ramase(app, "RO502", 7)
+    trimise = []
+    remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    assert len(trimise) == 1
+
+
+def test_verifica_si_trimite_sends_next_more_urgent_threshold(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO503")
+    _seteaza_trial_zile_ramase(app, "RO503", 7)
+    trimise = []
+    remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    _seteaza_trial_zile_ramase(app, "RO503", 1)
+    remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    assert len(trimise) == 2
+    row = app.portal_conn.execute(
+        "SELECT trial_reminder_ultim_prag FROM firms WHERE cui='RO503'").fetchone()
+    assert row["trial_reminder_ultim_prag"] == 1
+
+
+def test_verifica_si_trimite_excludes_firms_with_ciclu_ales(app):
+    from portal import trial_reminders as remind_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO504")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _seteaza_trial_zile_ramase(app, "RO504", 0)
+    trimise = []
+    n = remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    assert n == 0
+    assert trimise == []
+
+
+def test_verifica_si_trimite_excludes_inactive_firms(app):
+    from portal import trial_reminders as remind_mod
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO505")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO505'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/firma/{firm_id}/comutare")  # dezactiveaza firma
+    _seteaza_trial_zile_ramase(app, "RO505", 0)
+    trimise = []
+    n = remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: trimise.append(a))
+    assert n == 0
+
+
+def test_master_remindere_trial_page_lists_firms_in_trial(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO506", name="Firma Cinci Sase SRL")
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.get("/master/remindere-trial")
+    assert r.status_code == 200
+    assert "Firma Cinci Sase SRL".encode() in r.data
+    assert b"RO506" in r.data
+
+
+def test_trimite_remindere_trial_route_sends_and_updates_db(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO507")
+    _seteaza_trial_zile_ramase(app, "RO507", 7)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post("/master/remindere-trial/trimite", follow_redirects=True)
+    assert r.status_code == 200
+    assert "reminder trimis".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT trial_reminder_ultim_prag FROM firms WHERE cui='RO507'").fetchone()
+    assert row["trial_reminder_ultim_prag"] == 7

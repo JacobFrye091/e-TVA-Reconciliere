@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block titlu %}Remindere trial — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <div>
+      <h2>Remindere expirare trial</h2>
+      <p class="sub">Firmele active, inca in perioada de proba (fara ciclu de
+        facturare ales), primesc automat cate un email de avertizare cand mai
+        au {{ praguri|join(', ') }} zile ramase — fiecare prag o singura
+        data. Verificarea automata ruleaza pe server la fiecare cateva ore;
+        poti oricand porni una manual mai jos.</p>
+    </div>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Inapoi la panoul master</a>
+  </div>
+  {% if mesaj %}
+  <div class="card"><p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p></div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
+  <div class="card">
+    <form method="post" action="/master/remindere-trial/trimite">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Verifica si trimite remindere acum</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Firme in perioada de proba</h2>
+    <table>
+      <tr><th>Firma</th><th>CUI</th><th>Zile ramase</th><th>Ultimul reminder trimis</th></tr>
+      {% for f in firme %}
+      <tr>
+        <td>{{ f['name'] }}</td>
+        <td class="cod">{{ f['cui'] }}</td>
+        <td>{{ f['zile_ramase'] }}</td>
+        <td>
+          {% if f['trial_reminder_ultim_prag'] is none %}
+          <span style="color:var(--muted)">niciunul inca</span>
+          {% elif f['trial_reminder_ultim_prag'] == 0 %}
+          expirare (0 zile)
+          {% else %}
+          {{ f['trial_reminder_ultim_prag'] }} zile ramase
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--muted)">Nicio firma in perioada de proba momentan.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</main>
+{% endblock %}

@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS firms(
   email_verificare_token TEXT,
   creat_la TEXT,
   trial_expira_la TEXT,
-  ciclu_facturare TEXT);
+  ciclu_facturare TEXT,
+  trial_reminder_ultim_prag INTEGER);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
@@ -224,6 +225,13 @@ CICLU_LUNAR = "lunar"
 CICLU_6_LUNI = "6luni"
 CICLU_AN = "an"
 CICLURI_FACTURARE = (CICLU_LUNAR, CICLU_6_LUNI, CICLU_AN)
+
+# Pragurile (zile ramase din trial) la care se trimite un email de avertizare
+# firmelor care nu si-au ales inca un ciclu de facturare - in ordine
+# descrescatoare de urgenta. O firma primeste un singur email per prag,
+# niciodata retrimis - vezi firms.trial_reminder_ultim_prag si
+# portal/trial_reminders.py.
+TRIAL_REMINDER_PRAGURI_ZILE = (7, 1, 0)
 
 # Preturile initiale (RON, per luna echivalenta) folosite doar o singura
 # data, ca sa semene tabela planuri_facturare de mai jos la prima pornire -
@@ -400,6 +408,23 @@ def _migrate_add_firms_verificare_trial(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_firms_trial_reminder(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate the trial-expiry reminder emails - add
+    the column that tracks the last threshold (TRIAL_REMINDER_PRAGURI_ZILE)
+    already notified for each firm, so a fresh deploy doesn't immediately
+    re-send every reminder to every existing firm."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "trial_reminder_ultim_prag" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE firms ADD COLUMN trial_reminder_ultim_prag INTEGER;")
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -514,6 +539,7 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_efactura_columns(conn)
     _migrate_add_users_email(conn)
     _migrate_add_firms_verificare_trial(conn)
+    _migrate_add_firms_trial_reminder(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     conn.commit()
