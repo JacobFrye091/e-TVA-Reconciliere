@@ -292,6 +292,74 @@ def test_migrate_does_not_reseed_cota_tva_after_master_edit(tmp_path):
     assert pdb.get_cota_tva(reopened) == 23
 
 
+def test_migrate_setari_tva_converts_old_single_row_shape(tmp_path):
+    """setari_tva a inceput ca un singur rand fixat (id=1, fara marcator
+    activa) - o baza veche cu acel rand trebuie migrata, nu sterasa, in
+    noua forma cu istoric."""
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE setari_tva(id INTEGER PRIMARY KEY CHECK (id = 1), "
+        "cota_procent REAL NOT NULL, actualizat_de TEXT, actualizat_la TEXT)")
+    conn.execute(
+        "INSERT INTO setari_tva(id, cota_procent, actualizat_de, actualizat_la) "
+        "VALUES (1, 19, 'sistem', '2025-01-01T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+
+    migrated = pdb.open_db(path)
+    assert pdb.get_cota_tva(migrated) == 19
+    istoric = pdb.listeaza_cote_tva(migrated)
+    assert len(istoric) == 1
+    assert istoric[0]["activa"] == 1
+
+
+def test_setari_tva_unique_index_rejects_two_active_rows(tmp_path):
+    """Indexul unic partial garanteaza la nivel de baza de date ca cel mult
+    o cota poate fi activa - nu doar prin disciplina din set_cota_tva."""
+    import sqlite3
+    from portal import db as pdb
+
+    path = str(tmp_path / "portal.db")
+    conn = pdb.open_db(path)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
+            "VALUES (25, 1, 'test', '2026-01-01T00:00:00+00:00')")
+
+
+def test_set_cota_tva_keeps_history_with_only_latest_active(app):
+    from portal import db as pdb
+    pdb.set_cota_tva(app.portal_conn, 22, "sef")
+    pdb.set_cota_tva(app.portal_conn, 23, "sef")
+    istoric = pdb.listeaza_cote_tva(app.portal_conn)
+    procente_active = [r["cota_procent"] for r in istoric if r["activa"]]
+    assert procente_active == [23]
+    assert {r["cota_procent"] for r in istoric} == {21, 22, 23}
+    assert pdb.get_cota_tva(app.portal_conn) == 23
+
+
+def test_activeaza_cota_tva_reactivates_old_rate(app):
+    from portal import db as pdb
+    id_initial = pdb.listeaza_cote_tva(app.portal_conn)[0]["id"]
+    pdb.set_cota_tva(app.portal_conn, 23, "sef")
+    assert pdb.get_cota_tva(app.portal_conn) == 23
+
+    assert pdb.activeaza_cota_tva(app.portal_conn, id_initial, "sef") is True
+    assert pdb.get_cota_tva(app.portal_conn) == 21
+    procente_active = [r["cota_procent"] for r in pdb.listeaza_cote_tva(app.portal_conn)
+                      if r["activa"]]
+    assert procente_active == [21]
+
+
+def test_activeaza_cota_tva_returns_false_for_missing_id(app):
+    from portal import db as pdb
+    assert pdb.activeaza_cota_tva(app.portal_conn, 9999, "sef") is False
+
+
 def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
     """Reproduces the real crash: a firm gets soft-deleted (firms/user_firms
     rows removed, firm_keys kept on purpose so the encrypted database stays
@@ -2767,6 +2835,46 @@ def test_updated_cota_tva_is_used_by_payment_calculation(app):
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
         "WHERE f.cui='RO210'").fetchone()
     assert row["suma"] == round(59 * 1.22, 2)
+
+
+def test_master_nomenclator_shows_cota_tva_history(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c.post("/master/nomenclator/tva", data={"cota_tva": "22"})
+    r = c.get("/master/nomenclator")
+    assert "21.0%".encode() in r.data
+    assert "22.0%".encode() in r.data
+    assert "Activă".encode() in r.data
+    assert "Inactivă".encode() in r.data
+
+
+def test_activeaza_cota_tva_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/nomenclator/tva/1/activeaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_activeaza_cota_tva_route_reactivates_old_rate(app):
+    from portal import db as pdb
+    _seed_master(app)
+    id_initial = pdb.listeaza_cote_tva(app.portal_conn)[0]["id"]
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c.post("/master/nomenclator/tva", data={"cota_tva": "22"})
+    assert pdb.get_cota_tva(app.portal_conn) == 22
+
+    r = c.post(f"/master/nomenclator/tva/{id_initial}/activeaza", follow_redirects=True)
+    assert "Cota de TVA a fost reactivata".encode() in r.data
+    assert pdb.get_cota_tva(app.portal_conn) == 21
+
+
+def test_activeaza_cota_tva_route_rejects_missing_id(app):
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator/tva/9999/activeaza", follow_redirects=True)
+    assert "Cota de TVA nu a fost gasita".encode() in r.data
 
 
 def test_master_backup_list_requires_master(app):

@@ -178,9 +178,12 @@ CREATE TABLE IF NOT EXISTS login_lockouts(
   ultima_incercare TEXT,
   blocat_pana TEXT);
 CREATE TABLE IF NOT EXISTS setari_tva(
-  id INTEGER PRIMARY KEY CHECK (id = 1),
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   cota_procent REAL NOT NULL,
+  activa INTEGER NOT NULL DEFAULT 0,
   actualizat_de TEXT, actualizat_la TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
+  ON setari_tva(activa) WHERE activa=1;
 """
 
 # Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
@@ -235,9 +238,16 @@ CICLURI_FACTURARE = (CICLU_LUNAR, CICLU_6_LUNI, CICLU_AN)
 # ca valoarea curenta e in tabela setari_tva, editabila din
 # /master/nomenclator (vezi get_cota_tva/set_cota_tva) - un master poate
 # corecta cota chiar in ziua in care legea se schimba, fara sa astepte o
-# livrare de cod. _COTA_TVA_INITIALA e folosita o singura data, ca sa
-# semene tabela la prima pornire - vezi _migrate_seed_cota_tva. Dupa aceea,
-# sursa de adevar e tabela, la fel ca la planuri_facturare/get_preturi.
+# livrare de cod. setari_tva pastreaza istoricul complet al cotelor (nu
+# doar valoarea curenta) - fiecare rand are un marcator `activa`, iar un
+# index unic partial (idx_setari_tva_activa, WHERE activa=1) garanteaza la
+# nivel de baza de date ca cel mult o singura inregistrare poate fi activa
+# simultan. set_cota_tva adauga un rand nou si il activeaza (dezactivand
+# automat cel vechi); activeaza_cota_tva muta marcatorul inapoi pe un rand
+# mai vechi din istoric, fara sa retasteze procentul. _COTA_TVA_INITIALA e
+# folosita o singura data, ca sa semene primul rand (deja activ) la prima
+# pornire - vezi _migrate_seed_cota_tva. Dupa aceea, sursa de adevar e
+# tabela, la fel ca la planuri_facturare/get_preturi.
 #
 # planuri_facturare.pret_lunar_ron (si deci contracts.suma - vezi
 # contract.py, care afiseaza explicit "exclusiv TVA") raman pretul de baza,
@@ -528,32 +538,89 @@ def _migrate_contracts_fara_pdf(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_setari_tva_istoric(conn: sqlite3.Connection) -> None:
+    """setari_tva a inceput ca un singur rand fixat (id=1, fara istoric) -
+    userul a cerut pastrarea unui istoric al cotelor, fiecare cu un
+    marcator `activa` editabil din admin, cu un index unic garantand ca
+    doar o inregistrare poate fi activa. Migreaza randul unic vechi (daca
+    exista) intr-un rand activ=1 in noua forma, la fel ca
+    _migrate_contracts_fara_pdf pentru un rebuild de tabela."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "setari_tva" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(setari_tva)")}
+    if "activa" in cols:
+        return
+    conn.execute("ALTER TABLE setari_tva RENAME TO setari_tva_old")
+    conn.executescript(
+        "CREATE TABLE setari_tva("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  cota_procent REAL NOT NULL,"
+        "  activa INTEGER NOT NULL DEFAULT 0,"
+        "  actualizat_de TEXT, actualizat_la TEXT);"
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa "
+        "  ON setari_tva(activa) WHERE activa=1;")
+    conn.execute(
+        "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
+        "SELECT cota_procent, 1, actualizat_de, actualizat_la FROM setari_tva_old")
+    conn.execute("DROP TABLE setari_tva_old")
+    conn.commit()
+
+
 def _migrate_seed_cota_tva(conn: sqlite3.Connection) -> None:
-    """Semeaza cota de TVA la prima pornire, cu valoarea curenta la data
-    scrierii acestui cod (_COTA_TVA_INITIALA) - doar daca tabela e inca
-    goala, ca un master care a corectat-o deja sa nu o vada resetata la un
-    restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
+    """Semeaza cota de TVA (activa) la prima pornire, cu valoarea curenta la
+    data scrierii acestui cod (_COTA_TVA_INITIALA) - doar daca tabela e inca
+    goala, ca un master care a adaugat deja cote sa nu le vada resetate la
+    un restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
     n = conn.execute("SELECT COUNT(*) AS n FROM setari_tva").fetchone()["n"]
     if n:
         return
     conn.execute(
-        "INSERT INTO setari_tva(id, cota_procent, actualizat_de, actualizat_la) "
-        "VALUES (1, ?, ?, ?)",
+        "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
+        "VALUES (?, 1, ?, ?)",
         (_COTA_TVA_INITIALA, "sistem", datetime.now(timezone.utc).isoformat()))
     conn.commit()
 
 
 def get_cota_tva(conn: sqlite3.Connection) -> float:
     return conn.execute(
-        "SELECT cota_procent FROM setari_tva WHERE id=1").fetchone()["cota_procent"]
+        "SELECT cota_procent FROM setari_tva WHERE activa=1").fetchone()["cota_procent"]
+
+
+def listeaza_cote_tva(conn: sqlite3.Connection) -> list:
+    """Istoricul complet al cotelor de TVA, cea mai recenta prima - afisat
+    in /master/nomenclator alaturi de butonul de (re)activare."""
+    return conn.execute("SELECT * FROM setari_tva ORDER BY id DESC").fetchall()
 
 
 def set_cota_tva(conn: sqlite3.Connection, procent: float, actualizat_de: str) -> None:
+    """Adauga o cota noua si o activeaza - nu suprascrie istoricul existent,
+    doar dezactiveaza orice alta cota activa (indexul unic ar respinge
+    oricum doua randuri active simultan)."""
+    acum = datetime.now(timezone.utc).isoformat()
+    conn.execute("UPDATE setari_tva SET activa=0 WHERE activa=1")
     conn.execute(
-        "UPDATE setari_tva SET cota_procent=?, actualizat_de=?, actualizat_la=? "
-        "WHERE id=1",
-        (procent, actualizat_de, datetime.now(timezone.utc).isoformat()))
+        "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
+        "VALUES (?, 1, ?, ?)",
+        (procent, actualizat_de, acum))
     conn.commit()
+
+
+def activeaza_cota_tva(conn: sqlite3.Connection, id: int, actualizat_de: str) -> bool:
+    """Muta marcatorul `activa` inapoi pe o cota din istoric (ex: revenire
+    dupa o greseala), fara sa retasteze procentul. Intoarce False daca id-ul
+    nu exista in setari_tva."""
+    if not conn.execute(
+            "SELECT 1 FROM setari_tva WHERE id=?", (id,)).fetchone():
+        return False
+    conn.execute("UPDATE setari_tva SET activa=0 WHERE activa=1")
+    conn.execute(
+        "UPDATE setari_tva SET activa=1, actualizat_de=?, actualizat_la=? "
+        "WHERE id=?",
+        (actualizat_de, datetime.now(timezone.utc).isoformat(), id))
+    conn.commit()
+    return True
 
 
 def get_preturi(conn: sqlite3.Connection) -> dict:
@@ -582,6 +649,12 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_legacy_users(conn)
     _migrate_add_firm_tip(conn)
     _migrate_add_onboarding_flag(conn)
+    # Trebuie rulata inainte de executescript(_SCHEMA): schema de mai jos
+    # adauga un CREATE UNIQUE INDEX pe setari_tva.activa, care ar esua daca
+    # tabela mai exista inca in forma veche (fara acea coloana) - la fel ca
+    # celelalte migrari de mai sus, care repara forme vechi de tabele
+    # inainte ca scriptul de schema sa presupuna forma noua.
+    _migrate_setari_tva_istoric(conn)
     conn.executescript(_SCHEMA)
     _migrate_firms_autoincrement(conn)
     _migrate_add_efactura_columns(conn)

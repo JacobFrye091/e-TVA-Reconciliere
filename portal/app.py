@@ -2193,7 +2193,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("login"))
         return render_template(
             "master_nomenclator.html", user=user, preturi=pdb.get_preturi(conn),
-            cota_tva=pdb.get_cota_tva(conn),
+            cota_tva=pdb.get_cota_tva(conn), istoric_tva=pdb.listeaza_cote_tva(conn),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/master/nomenclator")
@@ -2251,6 +2251,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         _log_master_action(user, "nomenclator.cota_tva", f"{procent:g}%")
         return redirect(url_for(
             "master_nomenclator", mesaj="Cota de TVA a fost actualizata."))
+
+    @app.post("/master/nomenclator/tva/<int:cota_id>/activeaza")
+    def activeaza_cota_tva(cota_id):
+        """Reactiveaza o cota din istoric (ex: revenire dupa o greseala) -
+        muta marcatorul `activa`, fara sa retasteze procentul."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if not pdb.activeaza_cota_tva(conn, cota_id, user["username"]):
+            return redirect(url_for(
+                "master_nomenclator", eroare="Cota de TVA nu a fost gasita."))
+        _log_master_action(user, "nomenclator.cota_tva_reactivata", f"id {cota_id}")
+        return redirect(url_for(
+            "master_nomenclator", mesaj="Cota de TVA a fost reactivata."))
 
     # ---------- master: dev/testare/productie pipeline ----------
     @app.get("/master/pipeline")

@@ -55,14 +55,39 @@
     <p class="sub">Folosită la calculul sumei cerute firmelor la plată și la
       facturile emise — <b>nu e fixată în cod</b>, ca să poată fi corectată
       imediat ce legea se schimbă (ultima schimbare: 19% → 21%, 01.08.2025),
-      fără să aștepți o livrare de cod.</p>
+      fără să aștepți o livrare de cod. Fiecare cotă adăugată rămâne în
+      istoric mai jos — doar una poate fi activă la un moment dat; o poți
+      reactiva oricând pe una veche, fără să retastezi procentul.</p>
     <form method="post" action="/master/nomenclator/tva" style="display:flex;gap:10px;align-items:center">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="number" step="0.01" min="0.01" max="99.99" name="cota_tva"
              value="{{ cota_tva }}" required style="max-width:120px">
       <span>%</span>
-      <button class="btn-lat" type="submit" style="margin:0">Salvează cota</button>
+      <button class="btn-lat" type="submit" style="margin:0">Adaugă cota nouă</button>
     </form>
+
+    <table style="margin-top:16px">
+      <tr><th>Cotă</th><th>Stare</th><th>Actualizat de</th><th>Actualizat la</th><th></th></tr>
+      {% for c in istoric_tva %}
+      <tr>
+        <td>{{ c['cota_procent'] }}%</td>
+        <td>
+          {% if c['activa'] %}<span class="chip ok">Activă</span>
+          {% else %}<span class="chip" style="color:var(--muted)">Inactivă</span>{% endif %}
+        </td>
+        <td>{{ c['actualizat_de'] }}</td>
+        <td>{{ c['actualizat_la'][:16] if c['actualizat_la'] else '' }}</td>
+        <td style="text-align:right">
+          {% if not c['activa'] %}
+          <form class="inline" method="post" action="/master/nomenclator/tva/{{ c['id'] }}/activeaza">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="mic" type="submit">Activează</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
   </div>
 </main>
 {% endblock %}
