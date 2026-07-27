@@ -17,6 +17,7 @@ schimbe la fiecare vizualizare); un contract nou trebuie generat explicit
 daca firma isi schimba ciclul de facturare, la fel ca inainte.
 """
 import io
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -25,7 +26,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 
 from etva import anaf_cui
 from portal import pdf_fonts
@@ -271,6 +272,22 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
         prima_linie = bloc.split("\n")[0]
         if bloc.startswith("CONTRACT DE"):
             elems.append(Paragraph(bloc.replace("\n", "<br/>"), titlu))
+        elif bloc.startswith("PRESTATOR:"):
+            # Randul final PRESTATOR/BENEFICIAR - doua coloane reale
+            # (un Paragraph obisnuit reflow-eaza spatiile multiple folosite
+            # pentru aliniere si arata urat, in loc sa pastreze cele doua
+            # blocuri separate vizual).
+            stanga, dreapta = re.split(r"\s{2,}", bloc, maxsplit=1)
+            latime_coloana = (doc.width) / 2
+            elems.append(Spacer(1, 4 * mm))
+            elems.append(Table(
+                [[Paragraph(stanga, body), Paragraph(dreapta, body)]],
+                colWidths=[latime_coloana, latime_coloana],
+                style=TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ])))
         elif len(prima_linie) < 60 and prima_linie.isupper():
             elems.append(Paragraph(bloc.replace("\n", " "), articol))
         else:
