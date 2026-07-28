@@ -4,6 +4,7 @@ Visibility: users whose portal permissions include `clienti.creare` or
 `useri.gestionare` (firm admins, managers) see every client; everyone else
 sees only the clients assigned to their username.
 """
+from etva import dbcompat
 
 
 class ClientError(Exception):
@@ -13,15 +14,17 @@ class ClientError(Exception):
 def create_client(conn, cui: str, name: str) -> int:
     if conn.execute("SELECT 1 FROM clients WHERE cui=?", (cui,)).fetchone():
         raise ClientError("Exista deja un client cu acest CUI.")
-    cur = conn.execute("INSERT INTO clients(cui, name) VALUES(?,?)",
-                       (cui, name))
+    new_id = dbcompat.insert_id(
+        conn, "INSERT INTO clients(cui, name) VALUES(?,?)", (cui, name))
     conn.commit()
-    return cur.lastrowid
+    return new_id
 
 
 def assign(conn, username: str, client_id: int) -> None:
-    conn.execute("INSERT OR IGNORE INTO client_assignments VALUES(?,?)",
-                 (username, client_id))
+    conn.execute(
+        "INSERT INTO client_assignments(username, client_id) VALUES(?,?) "
+        "ON CONFLICT(username, client_id) DO NOTHING",
+        (username, client_id))
     conn.commit()
 
 

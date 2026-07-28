@@ -641,14 +641,14 @@ def _migrate_seed_cota_tva(conn: sqlite3.Connection) -> None:
         return
     conn.execute(
         "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
-        "VALUES (?, 1, ?, ?)",
+        "VALUES (?, TRUE, ?, ?)",
         (_COTA_TVA_INITIALA, "sistem", datetime.now(timezone.utc).isoformat()))
     conn.commit()
 
 
 def get_cota_tva(conn: sqlite3.Connection) -> float:
     return conn.execute(
-        "SELECT cota_procent FROM setari_tva WHERE activa=1").fetchone()["cota_procent"]
+        "SELECT cota_procent FROM setari_tva WHERE activa=TRUE").fetchone()["cota_procent"]
 
 
 def listeaza_cote_tva(conn: sqlite3.Connection) -> list:
@@ -662,10 +662,10 @@ def set_cota_tva(conn: sqlite3.Connection, procent: float, actualizat_de: str) -
     doar dezactiveaza orice alta cota activa (indexul unic ar respinge
     oricum doua randuri active simultan)."""
     acum = datetime.now(timezone.utc).isoformat()
-    conn.execute("UPDATE setari_tva SET activa=0 WHERE activa=1")
+    conn.execute("UPDATE setari_tva SET activa=FALSE WHERE activa=TRUE")
     conn.execute(
         "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
-        "VALUES (?, 1, ?, ?)",
+        "VALUES (?, TRUE, ?, ?)",
         (procent, actualizat_de, acum))
     conn.commit()
 
@@ -677,9 +677,9 @@ def activeaza_cota_tva(conn: sqlite3.Connection, id: int, actualizat_de: str) ->
     if not conn.execute(
             "SELECT 1 FROM setari_tva WHERE id=?", (id,)).fetchone():
         return False
-    conn.execute("UPDATE setari_tva SET activa=0 WHERE activa=1")
+    conn.execute("UPDATE setari_tva SET activa=FALSE WHERE activa=TRUE")
     conn.execute(
-        "UPDATE setari_tva SET activa=1, actualizat_de=?, actualizat_la=? "
+        "UPDATE setari_tva SET activa=TRUE, actualizat_de=?, actualizat_la=? "
         "WHERE id=?",
         (actualizat_de, datetime.now(timezone.utc).isoformat(), id))
     conn.commit()

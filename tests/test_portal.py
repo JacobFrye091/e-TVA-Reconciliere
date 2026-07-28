@@ -385,7 +385,7 @@ def test_setari_tva_unique_index_rejects_two_active_rows(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO setari_tva(cota_procent, activa, actualizat_de, actualizat_la) "
-            "VALUES (25, 1, 'test', '2026-01-01T00:00:00+00:00')")
+            "VALUES (25, TRUE, 'test', '2026-01-01T00:00:00+00:00')")
 
 
 def test_set_cota_tva_keeps_history_with_only_latest_active(app):
@@ -425,6 +425,7 @@ def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
     with the still-there firm_keys row."""
     import sqlite3
     from portal import db as pdb
+    from etva import dbcompat
 
     path = str(tmp_path / "portal.db")
     conn = sqlite3.connect(path)
@@ -443,9 +444,9 @@ def test_migrate_stops_firms_from_reusing_a_soft_deleted_id(tmp_path):
     conn.close()
 
     reopened = pdb.open_db(path)
-    cur = reopened.execute(
+    id_nou = dbcompat.insert_id(
+        reopened,
         "INSERT INTO firms(name, cui) VALUES ('Firma Noua SRL', 'RO222')")
-    id_nou = cur.lastrowid
     assert id_nou != 1
     reopened.execute(  # nu mai pica cu UNIQUE constraint failed: firm_keys.firm_id
         "INSERT INTO firm_keys(firm_id, wrapped_key) VALUES (?, ?)", (id_nou, b"cheie noua"))
@@ -551,7 +552,7 @@ def test_master_still_logs_in_by_username_not_cui(app):
     foloseste numele lui de utilizator in campul de autentificare."""
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
@@ -732,7 +733,7 @@ def test_member_roles_and_permissions(app):
 def test_master_dashboard_and_firm_toggle(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c_firma = app.test_client()
@@ -758,7 +759,7 @@ def test_master_page_warns_when_server_is_stale(app, monkeypatch):
         "stale": True})
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
@@ -777,7 +778,7 @@ def test_master_page_shows_up_to_date_server(app, monkeypatch):
         "stale": False})
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
@@ -791,7 +792,7 @@ def test_master_page_shows_up_to_date_server(app, monkeypatch):
 def test_master_cannot_use_app_api(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
@@ -937,7 +938,7 @@ from portal import pipeline as pl
 def _seed_master(app, username="sef", password="ParolaMaster123!"):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         (username, psec.hash_password(password)))
     conn.commit()
 
@@ -1172,13 +1173,13 @@ def test_assignment_gives_visibility(app):
 def test_deactivated_firm_blocks_product(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
     c = app.test_client()
     inregistreaza(c)
     firm_id = conn.execute("SELECT id FROM firms").fetchone()["id"]
-    conn.execute("UPDATE firms SET active=0 WHERE id=?", (firm_id,))
+    conn.execute("UPDATE firms SET active=FALSE WHERE id=?", (firm_id,))
     conn.commit()
     assert c.get("/api/me").status_code == 401
 
@@ -1322,7 +1323,7 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
 
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
 
@@ -1366,7 +1367,7 @@ def test_master_users_direct_firm_has_no_manual_client_but_gets_reconciliations(
 
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
 
@@ -1389,7 +1390,7 @@ def test_master_users_kpis_and_charts(app, monkeypatch):
 
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
 
@@ -1433,7 +1434,7 @@ def test_master_user_history_requires_master(app):
 def test_master_user_history_lists_actions_across_firms_and_exports_xml(app):
     conn = app.portal_conn
     conn.execute(
-        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
         ("sef", psec.hash_password("ParolaMaster123!")))
     conn.commit()
 
@@ -1996,7 +1997,7 @@ def test_get_valid_anaf_access_token_returns_stored_token_when_fresh(app, monkey
 
 
 def test_get_valid_anaf_access_token_refreshes_when_expired(app, monkeypatch):
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
     monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
@@ -2008,7 +2009,7 @@ def test_get_valid_anaf_access_token_refreshes_when_expired(app, monkeypatch):
 
     app.portal_conn.execute(
         "UPDATE anaf_oauth_tokens SET expira_la=? WHERE firm_id=?",
-        ((datetime.now() - timedelta(days=1)).isoformat(), firm_id))
+        ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), firm_id))
     app.portal_conn.commit()
 
     monkeypatch.setattr(anaf_oauth, "refresh_access_token",
@@ -3849,7 +3850,7 @@ def _creeaza_master(app):
     if conn.execute("SELECT 1 FROM users WHERE username=?", ("master-test",)).fetchone() is None:
         # master-test doesn't exist, create it
         conn.execute(
-            "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+            "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
             ("master-test", psec.hash_password("ParolaMaster123!")))
         conn.commit()
     master = app.test_client()

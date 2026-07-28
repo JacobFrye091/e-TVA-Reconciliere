@@ -82,7 +82,7 @@ def verifica_si_trimite(conn, trimite_email_fn) -> int:
     folosit atat de fir-ul de fundal, cat si de butonul manual din master."""
     firme = conn.execute(
         "SELECT id, name, trial_expira_la, trial_reminder_ultim_prag "
-        "FROM firms WHERE active=1 AND ciclu_facturare IS NULL "
+        "FROM firms WHERE active=TRUE AND ciclu_facturare IS NULL "
         "AND trial_expira_la IS NOT NULL").fetchall()
     n_trimise = 0
     for firma in firme:
@@ -114,7 +114,7 @@ def arhiveaza_firme_neplatitoare(conn) -> int:
     nu mai e reprocesata. Returneaza numarul de firme arhivate."""
     acum = datetime.now(timezone.utc).isoformat()
     firme = conn.execute(
-        "SELECT id, trial_expira_la FROM firms WHERE active=1 "
+        "SELECT id, trial_expira_la FROM firms WHERE active=TRUE "
         "AND ciclu_facturare IS NULL AND arhivata_la IS NULL "
         "AND trial_expira_la IS NOT NULL").fetchall()
     n_arhivate = 0

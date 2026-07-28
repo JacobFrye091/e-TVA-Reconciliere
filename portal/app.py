@@ -207,7 +207,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         uid = session.get("user_id")
         if uid is None:
             return None
-        return conn.execute("SELECT * FROM users WHERE id=? AND active=1",
+        return conn.execute("SELECT * FROM users WHERE id=? AND active=TRUE",
                             (uid,)).fetchone()
 
     def list_user_firms(user_id: int):
@@ -215,7 +215,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return conn.execute(
             "SELECT f.id, f.name, f.cui, f.tip, uf.role FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
-            "WHERE uf.user_id=? AND uf.active=1 AND f.active=1 "
+            "WHERE uf.user_id=? AND uf.active=TRUE AND f.active=TRUE "
             "ORDER BY f.name", (user_id,)).fetchall()
 
     def current_identity():
@@ -229,7 +229,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         row = conn.execute(
             "SELECT uf.role, f.id, f.name, f.tip, f.cui FROM user_firms uf "
             "JOIN firms f ON f.id = uf.firm_id "
-            "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=1 AND f.active=1 "
+            "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=TRUE AND f.active=TRUE "
             "AND f.arhivata_la IS NULL",
             (user["id"], active_firm_id)).fetchone()
         if row is None:
@@ -326,7 +326,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     # ---------- ANAF OAuth2 (decontul precompletat) ----------
     def _store_anaf_tokens(firm_id: int, tokens: dict, username: str) -> None:
-        acum = datetime.now()
+        # aware (nu naiv): expira_la e timestamptz pe PG si vine inapoi din
+        # dbcompat cu +00:00; comparatia din get_valid_anaf_access_token
+        # trebuie sa ramana aware-aware pe ambele backend-uri.
+        acum = datetime.now(timezone.utc)
         expira = acum + timedelta(days=ANAF_TOKEN_VALIDITY_ZILE)
         conn.execute(
             "INSERT INTO anaf_oauth_tokens(firm_id, wrapped_access_token, "
@@ -350,7 +353,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if row is None:
             return None
         expira = datetime.fromisoformat(row["expira_la"])
-        if expira > datetime.now() + timedelta(days=1):
+        if expira > datetime.now(timezone.utc) + timedelta(days=1):
             return psec.unwrap_key(secret, row["wrapped_access_token"]).decode()
         refresh_token = psec.unwrap_key(secret, row["wrapped_refresh_token"]).decode()
         tokens = anaf_oauth.refresh_access_token(
@@ -472,16 +475,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         creat_la = now.isoformat()
         trial_expira_la = (now + timedelta(days=pdb.TRIAL_ZILE)).isoformat()
         token = None if email_verificat else secrets.token_urlsafe(32)
-        cur = conn.execute(
+        firm_id = dbcompat.insert_id(
+            conn,
             "INSERT INTO firms(name, cui, tip, email_verificat, "
             "email_verificare_token, creat_la, trial_expira_la) "
             "VALUES(?,?,?,?,?,?,?)",
-            (name, cui, tip, 1 if email_verificat else 0, token,
+            (name, cui, tip, email_verificat, token,
              creat_la, trial_expira_la))
-        firm_id = cur.lastrowid
         conn.execute(
             "INSERT INTO user_firms(user_id, firm_id, role, active) "
-            "VALUES(?,?,?,1)", (user_id, firm_id, role))
+            "VALUES(?,?,?,TRUE)", (user_id, firm_id, role))
         conn.execute("INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
                      (firm_id, psec.wrap_key(secret, os.urandom(32))))
         conn.commit()
@@ -521,10 +524,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # Login identifies people by CUI + parola, not de un nume ales de ei -
         # username ramane doar o eticheta interna (audit, panoul de echipa).
         username = _unique_username(_slugify(name))
-        cur = conn.execute(
+        user_id = dbcompat.insert_id(
+            conn,
             "INSERT INTO users(username, pw_hash, email) VALUES(?,?,?)",
             (username, psec.hash_password(password), email))
-        user_id = cur.lastrowid
         firm_id, token = _create_firm(name, cui, tip, user_id, "admin")
         if token:
             _trimite_email_verificare(email, name, token)
@@ -541,7 +544,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "login", eroare="Link de confirmare invalid sau deja folosit."))
         conn.execute(
-            "UPDATE firms SET email_verificat=1, email_verificare_token=NULL "
+            "UPDATE firms SET email_verificat=TRUE, email_verificare_token=NULL "
             "WHERE id=?", (firm["id"],))
         conn.commit()
         # Ordinea conteaza - clientul primeste confirmarea intai, abia apoi
@@ -649,7 +652,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # Master nu apartine niciunei firme (nu are CUI), asa ca ramane
         # singurul cont care se autentifica prin numele lui de utilizator.
         row = conn.execute(
-            "SELECT * FROM users WHERE username=? AND is_master=1",
+            "SELECT * FROM users WHERE username=? AND is_master=TRUE",
             (identificator,)).fetchone()
         if row is None or not psec.verify_password(row["pw_hash"], password):
             row = None
@@ -658,9 +661,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             # distinge (add_member impiedica doi colegi sa aiba aceeasi).
             candidati = conn.execute(
                 "SELECT u.* FROM users u "
-                "JOIN user_firms uf ON uf.user_id = u.id AND uf.active = 1 "
+                "JOIN user_firms uf ON uf.user_id = u.id AND uf.active = TRUE "
                 "JOIN firms f ON f.id = uf.firm_id "
-                "WHERE f.cui = ? AND u.active = 1",
+                "WHERE f.cui = ? AND u.active = TRUE",
                 (identificator,)).fetchall()
             row = next((r for r in candidati
                        if psec.verify_password(r["pw_hash"], password)), None)
@@ -726,7 +729,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     def _role_in_firm(user_id: int, firm_id: int) -> str | None:
         row = conn.execute(
             "SELECT role FROM user_firms WHERE user_id=? AND firm_id=? "
-            "AND active=1", (user_id, firm_id)).fetchone()
+            "AND active=TRUE", (user_id, firm_id)).fetchone()
         return row["role"] if row else None
 
     @app.get("/panou")
@@ -887,19 +890,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     eroare="Trebuie sa semnezi contractul de prestari servicii "
                           "inainte de a trimite o cerere de plata."))
         suma = _suma_cu_tva(_calculeaza_suma_plata(firm, firm["ciclu_facturare"]))
-        recurent = 1 if request.form.get("recurent") else 0
+        recurent = bool(request.form.get("recurent"))
         # TODO integrare FGO: aici ar trebui creata factura+link de plata
         # prin API-ul FGO (conectat la Netopia Payments) si redirectionat
         # clientul catre acel link, in loc sa marcam direct in_asteptare.
         # Ramane asa pana exista un cont FGO/Netopia real de integrat.
-        cur = conn.execute(
+        payment_id = dbcompat.insert_id(
+            conn,
             "INSERT INTO payments(firm_id, ciclu_facturare, suma, recurent, "
             "stare, creat_la) VALUES(?,?,?,?,?,?)",
             (active_firm_id, firm["ciclu_facturare"], suma, recurent,
              pdb.PLATA_IN_ASTEPTARE, datetime.now(timezone.utc).isoformat()))
         conn.commit()
         audit.log(firm_conn(active_firm_id), user["username"], "plata.cerere",
-                  "payment", str(cur.lastrowid))
+                  "payment", str(payment_id))
         return redirect(url_for(
             "alege_plan",
             mesaj="Cererea de plata a fost inregistrata - va fi procesata "
@@ -975,7 +979,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         })
         xml_final = contract_mod.date_contract_xml(rand_final)
         conn.execute(
-            "UPDATE contracts SET stare=?, semnatura_verificata=1, "
+            "UPDATE contracts SET stare=?, semnatura_verificata=TRUE, "
             "semnatura_detalii=?, semnat_la=?, esemneaza_document_pdf=?, "
             "esemneaza_certificate_pdf=?, contract_xml_final=? WHERE id=?",
             (pdb.CONTRACT_STARE_SEMNAT, semnatura_detalii, acum, pdf_bytes,
@@ -1133,7 +1137,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "semnatura_verificata=?, semnatura_detalii=?, "
                 "semnat_la=? WHERE id=?",
                 (pdb.CONTRACT_STARE_SEMNAT, pdb.CONTRACT_METODA_CERTIFICAT,
-                 1 if verificare["trusted"] else 0,
+                 bool(verificare["trusted"]),
                  json.dumps(verificare), acum, contract["id"]))
             conn.commit()
         else:
@@ -1235,7 +1239,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         colegi = conn.execute(
             "SELECT u.pw_hash FROM users u "
             "JOIN user_firms uf ON uf.user_id = u.id "
-            "WHERE uf.firm_id=? AND uf.active=1", (active_firm_id,)).fetchall()
+            "WHERE uf.firm_id=? AND uf.active=TRUE", (active_firm_id,)).fetchall()
         if any(psec.verify_password(c["pw_hash"], password) for c in colegi):
             return redirect(url_for(
                 "panou", eroare="Aceasta parola este deja folosita de un alt "
@@ -1243,12 +1247,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                 "ca fiecare coleg sa poata fi recunoscut unic "
                                 "la autentificare doar cu CUI-ul firmei."))
         username_atribuit = _unique_username(username)
-        cur = conn.execute(
+        user_id_nou = dbcompat.insert_id(
+            conn,
             "INSERT INTO users(username, pw_hash) VALUES(?,?)",
             (username_atribuit, psec.hash_password(password)))
         conn.execute(
             "INSERT INTO user_firms(user_id, firm_id, role, active) "
-            "VALUES(?,?,?,1)", (cur.lastrowid, active_firm_id, role))
+            "VALUES(?,?,?,TRUE)", (user_id_nou, active_firm_id, role))
         conn.commit()
         mesaj = (f"Cont creat: {username_atribuit}."
                 if username_atribuit != username else None)
@@ -1270,7 +1275,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                               (username,)).fetchone()
         if target:
             conn.execute(
-                "UPDATE user_firms SET active=0 WHERE user_id=? AND firm_id=? "
+                "UPDATE user_firms SET active=FALSE WHERE user_id=? AND firm_id=? "
                 "AND role!='admin'", (target["id"], active_firm_id))
             conn.commit()
         return redirect(url_for("panou"))
@@ -1297,7 +1302,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         firma = (conn.execute("SELECT name FROM firms WHERE id=?",
                               (active_firm_id,)).fetchone()
                 if active_firm_id else None)
-        acum = datetime.now()
+        # aware: termen_la e timestamptz pe PG (vezi comparatia din
+        # /master/cereri-stergere, care trebuie sa ramana aware-aware).
+        acum = datetime.now(timezone.utc)
         termen = acum + timedelta(days=pdb.DELETION_TERMEN_ZILE)
         conn.execute(
             "INSERT INTO deletion_requests(user_id, username, firm_id, "
@@ -1319,10 +1326,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("login"))
         firms = conn.execute(
             "SELECT f.*, (SELECT COUNT(*) FROM user_firms uf "
-            "WHERE uf.firm_id=f.id AND uf.active=1) AS n_users "
+            "WHERE uf.firm_id=f.id AND uf.active=TRUE) AS n_users "
             "FROM firms f ORDER BY f.name").fetchall()
         n_mesaje_necitite = conn.execute(
-            "SELECT COUNT(*) AS n FROM contact_messages WHERE citit=0"
+            "SELECT COUNT(*) AS n FROM contact_messages WHERE citit=FALSE"
         ).fetchone()["n"]
         n_cereri_in_asteptare = conn.execute(
             "SELECT COUNT(*) AS n FROM deletion_requests WHERE stare=?",
@@ -1330,7 +1337,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         n_cereri_intarziate = conn.execute(
             "SELECT COUNT(*) AS n FROM deletion_requests WHERE stare=? "
             "AND termen_la<?", (pdb.DELETION_STARE_IN_ASTEPTARE,
-                                datetime.now().isoformat())).fetchone()["n"]
+                                datetime.now(timezone.utc).isoformat())).fetchone()["n"]
         return render_template("master.html", user=user, firms=firms,
                                versiune=pipeline.running_vs_current(),
                                mediu=pipeline.own_environment(),
@@ -1347,7 +1354,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
-        conn.execute("UPDATE firms SET active = 1 - active WHERE id=?", (firm_id,))
+        conn.execute("UPDATE firms SET active = NOT active WHERE id=?", (firm_id,))
         conn.commit()
         if firma is not None:
             stare_noua = "dezactivata" if firma["active"] else "activata"
@@ -1483,7 +1490,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         kpi = {
             "total_conturi": len(conturi),
             "total_firme_active": conn.execute(
-                "SELECT COUNT(*) AS n FROM firms WHERE active=1"
+                "SELECT COUNT(*) AS n FROM firms WHERE active=TRUE"
             ).fetchone()["n"],
             "total_reconcilieri": total_reconcilieri,
             "medie_reconcilieri": round(total_reconcilieri / len(conturi), 1)
@@ -1496,7 +1503,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                        "bar_pct": _bar_pct(o["n_reconcilieri_total"], top_max)}
                       for o in top_conturi]
         tip_counts = conn.execute(
-            "SELECT tip, COUNT(*) AS n FROM firms WHERE active=1 "
+            "SELECT tip, COUNT(*) AS n FROM firms WHERE active=TRUE "
             "GROUP BY tip").fetchall()
         tip_by_key = {r["tip"]: r["n"] for r in tip_counts}
         firm_tip_dist = _donut_segments([
@@ -1653,7 +1660,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         calculator pe care ruleaza si serverul."""
         acum = datetime.now().isoformat()
         return conn.execute(
-            "SELECT * FROM announcements WHERE activ=1 "
+            "SELECT * FROM announcements WHERE activ=TRUE "
             "AND incepe_la<=? AND se_termina_la>=? "
             "ORDER BY incepe_la DESC LIMIT 1", (acum, acum)).fetchone()
 
@@ -1704,7 +1711,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
-        conn.execute("UPDATE announcements SET activ=0 WHERE id=?", (anunt_id,))
+        conn.execute("UPDATE announcements SET activ=FALSE WHERE id=?", (anunt_id,))
         conn.commit()
         _log_master_action(user, "anunt.dezactivare", f"anunt #{anunt_id}")
         return redirect(url_for("master_anunturi"))
@@ -1828,7 +1835,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
-        conn.execute("UPDATE contact_messages SET citit=1 WHERE id=?", (mesaj_id,))
+        conn.execute("UPDATE contact_messages SET citit=TRUE WHERE id=?", (mesaj_id,))
         conn.commit()
         _log_master_action(user, "mesaj.citire", f"mesaj #{mesaj_id}")
         return redirect(url_for("master_mesaje"))
@@ -1839,7 +1846,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
-        acum = datetime.now()
+        # aware: termen_la e timestamptz pe PG, comparat mai jos cu
+        # fromisoformat(r["termen_la"]) - trebuie aware-aware pe ambele backend-uri.
+        acum = datetime.now(timezone.utc)
         rows = conn.execute(
             "SELECT * FROM deletion_requests ORDER BY "
             "(stare=?) DESC, creat_la DESC",
@@ -1868,9 +1877,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("master_cereri_stergere"))
         anonim = f"utilizator-sters-{cerere['user_id']}"
         conn.execute(
-            "UPDATE users SET username=?, pw_hash=?, active=0 WHERE id=?",
+            "UPDATE users SET username=?, pw_hash=?, active=FALSE WHERE id=?",
             (anonim, psec.hash_password(secrets.token_hex(32)), cerere["user_id"]))
-        conn.execute("UPDATE user_firms SET active=0 WHERE user_id=?",
+        conn.execute("UPDATE user_firms SET active=FALSE WHERE user_id=?",
                      (cerere["user_id"],))
         conn.execute(
             "UPDATE deletion_requests SET stare=?, procesat_la=?, procesat_de=? "
@@ -1910,7 +1919,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         facturi = conn.execute(
             "SELECT * FROM invoices ORDER BY serie DESC, numar DESC").fetchall()
         firme = conn.execute(
-            "SELECT id, name, cui FROM firms WHERE active=1 ORDER BY name"
+            "SELECT id, name, cui FROM firms WHERE active=TRUE ORDER BY name"
         ).fetchall()
         return render_template("master_facturi.html", user=user, facturi=facturi,
                                firme=firme, eroare=request.args.get("eroare"),
@@ -1944,7 +1953,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
         valoare_tva = round(valoare_neta * cota_tva / 100, 2)
         valoare_totala = round(valoare_neta + valoare_tva, 2)
-        acum = datetime.now()
+        # aware: data_emiterii/creat_la sunt timestamptz pe PG - un timestamp
+        # naiv ar fi reinterpretat de server ca UTC (vezi SET TIME ZONE din
+        # dbcompat.connect), deplasand ora reala de emitere a facturii.
+        acum = datetime.now(timezone.utc)
         conn.execute(
             "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
             "descriere, perioada_inceput, perioada_sfarsit, data_emiterii, "
@@ -2271,7 +2283,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("login"))
         firme_brute = conn.execute(
             "SELECT id, name, cui, trial_expira_la, trial_reminder_ultim_prag, "
-            "arhivata_la FROM firms WHERE active=1 AND ciclu_facturare IS NULL "
+            "arhivata_la FROM firms WHERE active=TRUE AND ciclu_facturare IS NULL "
             "AND trial_expira_la IS NOT NULL ORDER BY trial_expira_la").fetchall()
         firme = [dict(f, zile_ramase=remind_mod.zile_ramase_trial(f["trial_expira_la"]))
                 for f in firme_brute]
@@ -2350,8 +2362,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         valoare_totala = plata["suma"]
         valoare_neta = round(valoare_totala / (1 + cota_tva / 100), 2)
         valoare_tva = round(valoare_totala - valoare_neta, 2)
-        acum = datetime.now()
-        cur = conn.execute(
+        # aware - acelasi motiv ca la creeaza_factura de mai sus.
+        acum = datetime.now(timezone.utc)
+        invoice_id = dbcompat.insert_id(
+            conn,
             "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
             "descriere, data_emiterii, valoare_neta, cota_tva, valoare_tva, "
             "valoare_totala, creat_de, creat_la) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -2359,7 +2373,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
              f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
              acum.isoformat(), valoare_neta, cota_tva, valoare_tva,
              valoare_totala, user["username"], acum.isoformat()))
-        invoice_id = cur.lastrowid
         conn.execute(
             "UPDATE payments SET stare=?, validat_de=?, validat_la=?, "
             "invoice_id=? WHERE id=?",
@@ -2472,13 +2485,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 eroare="Adminul firmei nu are o adresa de email inregistrata."))
         numar = contract_mod.next_contract_number(conn)
         acum = datetime.now(timezone.utc).isoformat()
-        cur = conn.execute(
+        contract_id = dbcompat.insert_id(
+            conn,
             "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
             "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
             "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
             (firm_id, numar, ciclu, suma, denumire, firm["cui"], adresa,
              pdb.CONTRACT_STARE_IN_ASTEPTARE, acum))
-        contract_id = cur.lastrowid
         conn.commit()
         contract = conn.execute("SELECT * FROM contracts WHERE id=?",
                                 (contract_id,)).fetchone()
@@ -2785,7 +2798,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     @app.post("/api/onboarding/completat")
     @require()
     def onboarding_completat(ident):
-        conn.execute("UPDATE users SET onboarding_completat=1 WHERE username=?",
+        conn.execute("UPDATE users SET onboarding_completat=TRUE WHERE username=?",
                     (ident["username"],))
         conn.commit()
         return jsonify({"ok": True})
@@ -2849,12 +2862,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return path
 
     def _persist(fc, username, client_id, period, comp_rows, anaf_rows):
-        cur = fc.execute(
+        rid = dbcompat.insert_id(
+            fc,
             "INSERT INTO reconciliations(client_id, period, created_at, "
             "created_by) VALUES(?,?,?,?)",
             (client_id, period,
              datetime.now(timezone.utc).isoformat(), username))
-        rid = cur.lastrowid
         for table, rows in (("invoices_company", comp_rows),
                             ("invoices_anaf", anaf_rows)):
             fc.executemany(
@@ -2880,12 +2893,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "suggestions": suggest_d300(result)}
 
     def _persist_lines(fc, username, client_id, period, company_lines, anaf_lines):
-        cur = fc.execute(
+        rid = dbcompat.insert_id(
+            fc,
             "INSERT INTO reconciliations(client_id, period, created_at, "
             "created_by) VALUES(?,?,?,?)",
             (client_id, period,
              datetime.now(timezone.utc).isoformat(), username))
-        rid = cur.lastrowid
         for table, lines in (("invoices_company", company_lines),
                             ("invoices_anaf", anaf_lines)):
             fc.executemany(
