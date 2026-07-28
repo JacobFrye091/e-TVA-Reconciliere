@@ -946,7 +946,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
         documentul final + certificatul primite de la eSemneaza, si ingheata
         un instantaneu XML - vezi planning/specs/2026-07-28-contract-
-        esemneaza-admin-review-design.md."""
+        esemneaza-admin-review-design.md.
+
+        Un singur UPDATE, un singur commit: o versiune anterioara facea asta
+        in doi pasi (UPDATE+commit pentru stare/semnatura, apoi un al doilea
+        UPDATE+commit pentru contract_xml_final, calculat dintr-un SELECT
+        dupa primul commit). Daca procesul murea intre cele doua commit-uri
+        (restart, OOM, kill), contractul ramanea blocat definitiv la
+        stare=semnat cu contract_xml_final=NULL, fara nicio cale de retry -
+        _actualizeaza_stare_esemneaza reverifica prin polling doar contractele
+        inca in_asteptare, deci nu mai era rechemata niciodata pentru un
+        contract deja trecut in stare=semnat. Aici construim rand_final ca
+        o copie in memorie a randului curent, suprapusa cu valorile noi
+        (fara alt round-trip SELECT), calculam XML-ul din ea, si scriem tot
+        - inclusiv contract_xml_final - intr-un singur UPDATE."""
         doc = esemneaza.get_completed_document_url(ESEMNEAZA_API_KEY, request_id)
         pdf_bytes = esemneaza.fetch_url_bytes(doc["docUrl"])
         cert_bytes = None
@@ -956,19 +969,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         except esemneaza.EsemneazaError:
             pass
         acum = datetime.now(timezone.utc).isoformat()
+        semnatura_detalii = json.dumps(
+            {"metoda": "esemneaza", "request_id": request_id})
+        rand_final = dict(contract)
+        rand_final.update({
+            "stare": pdb.CONTRACT_STARE_SEMNAT,
+            "semnatura_verificata": 1,
+            "semnatura_detalii": semnatura_detalii,
+            "semnat_la": acum,
+            "esemneaza_document_pdf": pdf_bytes,
+            "esemneaza_certificate_pdf": cert_bytes,
+        })
+        xml_final = contract_mod.date_contract_xml(rand_final)
         conn.execute(
             "UPDATE contracts SET stare=?, semnatura_verificata=1, "
             "semnatura_detalii=?, semnat_la=?, esemneaza_document_pdf=?, "
-            "esemneaza_certificate_pdf=? WHERE id=?",
-            (pdb.CONTRACT_STARE_SEMNAT,
-             json.dumps({"metoda": "esemneaza", "request_id": request_id}),
-             acum, pdf_bytes, cert_bytes, contract["id"]))
-        conn.commit()
-        rand_final = conn.execute("SELECT * FROM contracts WHERE id=?",
-                                  (contract["id"],)).fetchone()
-        xml_final = contract_mod.date_contract_xml(rand_final)
-        conn.execute("UPDATE contracts SET contract_xml_final=? WHERE id=?",
-                    (xml_final, contract["id"]))
+            "esemneaza_certificate_pdf=?, contract_xml_final=? WHERE id=?",
+            (pdb.CONTRACT_STARE_SEMNAT, semnatura_detalii, acum, pdf_bytes,
+             cert_bytes, xml_final, contract["id"]))
         conn.commit()
 
     def _actualizeaza_stare_esemneaza(contract):
