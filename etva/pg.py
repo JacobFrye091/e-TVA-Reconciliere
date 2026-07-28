@@ -1,12 +1,13 @@
-"""PostgreSQL connectivity - faza 1 a migrarii de la SQLite/SQLCipher
-(task #71 - vezi planul de migrare).
+"""PostgreSQL connectivity - fundatia migrarii de la SQLite/SQLCipher
+(vezi planning/migrare-postgres.md).
 
-Strict aditiv: nimic din portal/app.py, portal/db.py sau etva/db.py cheama
-inca acest modul - DEV continua exclusiv pe SQLite. Scopul acestei faze e
-doar sa punem bazele conectarii la bazele Postgres deja existente pe
-gazduirea cPanel Hostico (gymhxjim_testare/gymhxjim_productie), pastrate la
-zi manual prin phpPgAdmin pe masura ce am adaugat coloane noi (vezi
-etva_postgres_schema.sql).
+Bazele reale ale aplicatiei (etva_testare/etva_productie) ruleaza pe
+PostgreSQL 16 chiar pe VPS, pe 127.0.0.1 - cele de pe gazduirea shared
+cPanel (gymhxjim_*) s-au dovedit inaccesibile din exterior (portul 5432
+inchis) si raman doar referinta istorica de schema. Sursa de adevar a
+schemei e acum versionata in repo: etva/pg_schema.sql (idempotent,
+aplicabil cu psql -f), iar EXPECTED_SCHEMA de mai jos trebuie tinut in
+sinc cu el - verify_schema() compara acea referinta cu baza reala.
 
 Modelul de securitate (confirmat cu utilizatorul): izolarea intre firme se
 face prin Row-Level Security (politica 'izolare_firma', filtrand dupa
@@ -137,6 +138,8 @@ EXPECTED_SCHEMA = {
         "ramburs_procent": "numeric", "esemneaza_request_id": "text",
         "esemneaza_document_pdf": "bytea",
         "esemneaza_certificate_pdf": "bytea",
+        "prestator_semnat_la": "timestamp with time zone",
+        "contract_xml_final": "bytea",
     },
     "clients": {
         "id": "integer", "firm_id": "integer", "cui": "text",
