@@ -2633,16 +2633,24 @@ def _apropie_trial_de_final(app, cui):
     app.portal_conn.commit()
 
 
-def _semneaza_contract_esemneaza(c):
-    """Genereaza (daca nu exista deja) si semneaza contractul curent al
-    firmei active a clientului dat, prin fluxul eSemneaza.ro - modulul
-    etva.esemneaza e mockuit implicit (vezi fixture-ul autouse
-    _mock_esemneaza) sa raporteze semnatura ca aplicata la prima verificare,
-    suficient cat sa treaca poarta din creeaza_cerere_plata fara sa depinda
-    de serviciul real (vezi tests/test_esemneaza.py pentru testele modulului
-    insusi)."""
-    c.get("/panou/contract")
-    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+def _semneaza_contract_esemneaza(app, c):
+    """Master creeaza si trimite contractul (fluxul nou, controlat de
+    master - vezi planning/specs/2026-07-28-contract-esemneaza-admin-review-
+    design.md), apoi verifica starea din partea firmei. `c` ramane
+    autentificat ca firma - se foloseste un client separat, autentificat ca
+    master, pentru pasul de trimitere. Modulul etva.esemneaza e mockuit
+    implicit (vezi fixture-ul autouse _mock_esemneaza) sa raporteze ambii
+    semnatari ca APPLIED la prima verificare, suficient cat sa treaca poarta
+    din creeaza_cerere_plata fara sa depinda de serviciul real (vezi
+    tests/test_esemneaza.py pentru testele modulului insusi)."""
+    with c.session_transaction() as sess:
+        firm_id = sess["active_firm_id"]
+    master = _creeaza_master(app)
+    ciclu = app.portal_conn.execute(
+        "SELECT ciclu_facturare FROM firms WHERE id=?", (firm_id,)).fetchone()["ciclu_facturare"]
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Adresa Test",
+        "ciclu": ciclu, "suma": "100.00"})
     return c.get("/panou/contract")
 
 
@@ -2684,7 +2692,7 @@ def test_creeaza_cerere_plata_direct_firm(app):
     inregistreaza(c, cui="RO204", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO204")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     r = c.post("/panou/plata", data={"recurent": "on"}, follow_redirects=True)
     assert "Cererea de plata a fost inregistrata".encode() in r.data
     row = app.portal_conn.execute(
@@ -2702,7 +2710,7 @@ def test_creeaza_cerere_plata_logs_audit(app):
     inregistreaza(c, cui="RO299", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO299")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO299'").fetchone()["id"]
     c.post("/panou/plata", data={})
@@ -2723,7 +2731,7 @@ def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
     inregistreaza(c, cui="RO205", tip="contabilitate")
     c.post("/panou/plan", data={"ciclu": "an"})
     _apropie_trial_de_final(app, "RO205")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO205'").fetchone()["id"]
     c.post("/panou/plata", data={})
@@ -2750,7 +2758,7 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
     inregistreaza(c, cui="RO206", tip="direct")
     c.post("/panou/plan", data={"ciclu": "6luni"})
     _apropie_trial_de_final(app, "RO206")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2785,7 +2793,7 @@ def test_valideaza_plata_rejects_already_validated(app):
     inregistreaza(c, cui="RO207", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO207")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     plata_id = app.portal_conn.execute(
         "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2803,7 +2811,7 @@ def test_alege_plan_shows_12_month_payment_history(app):
     inregistreaza(c, cui="RO208", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO208")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     r = c.get("/panou/plan")
     assert "Istoricul pl".encode() in r.data
@@ -2882,7 +2890,7 @@ def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
     inregistreaza(c, cui="RO209", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO209")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -2931,7 +2939,7 @@ def test_updated_cota_tva_is_used_by_payment_calculation(app):
     inregistreaza(c, cui="RO210", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO210")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     row = app.portal_conn.execute(
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
@@ -3507,7 +3515,8 @@ def test_master_contracte_requires_master(app):
 
 def _creeaza_master(app):
     conn = app.portal_conn
-    if conn.execute("SELECT 1 FROM users WHERE is_master=1").fetchone() is None:
+    if conn.execute("SELECT 1 FROM users WHERE username=?", ("master-test",)).fetchone() is None:
+        # master-test doesn't exist, create it
         conn.execute(
             "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
             ("master-test", psec.hash_password("ParolaMaster123!")))
@@ -3678,7 +3687,7 @@ def test_reziliaza_contract_flow_complete(app):
     c = app.test_client()
     inregistreaza(c, cui="RO307", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     r = c.post("/panou/contract/reziliaza", follow_redirects=True)
     assert "reziliere a fost inregistrata".encode() in r.data
 
@@ -3707,7 +3716,7 @@ def test_finalizeaza_reziliere_rejects_ramburs_peste_maxim(app):
     c = app.test_client()
     inregistreaza(c, cui="RO308", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     contract_id = app.portal_conn.execute(
         "SELECT c.id FROM contracts c JOIN firms f ON f.id=c.firm_id "
         "WHERE f.cui='RO308'").fetchone()["id"]
@@ -4089,7 +4098,7 @@ def test_valideaza_plata_reactivates_archived_firm(app):
     inregistreaza(c, cui="RO610", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
     _apropie_trial_de_final(app, "RO610")
-    _semneaza_contract_esemneaza(c)
+    _semneaza_contract_esemneaza(app, c)
     c.post("/panou/plata", data={})
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO610'").fetchone()["id"]
