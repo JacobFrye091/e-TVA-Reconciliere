@@ -91,12 +91,14 @@ a.mic:hover { background:var(--paper); }
     <a class="btn" href="/master/remindere-trial">Deschide remindere-le</a>
   </div>
 
+  {% if contracte_active %}
   <div class="card">
     <h2>Contracte</h2>
     <p class="sub">Contractele de prestări servicii ale firmelor, starea
       semnăturii și rezilierile cu ramburs.</p>
     <a class="btn" href="/master/contracte">Deschide contractele</a>
   </div>
+  {% endif %}
 
   <div class="card">
     <h2>Nomenclator prețuri</h2>

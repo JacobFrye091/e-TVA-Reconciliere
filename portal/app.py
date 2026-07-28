@@ -72,6 +72,14 @@ ESEMNEAZA_API_KEY = os.environ.get("ESEMNEAZA_API_KEY")
 ESEMNEAZA_WEBHOOK_HEADER = os.environ.get("ESEMNEAZA_WEBHOOK_HEADER", "X-Webhook-Secret")
 ESEMNEAZA_WEBHOOK_SECRET = os.environ.get("ESEMNEAZA_WEBHOOK_SECRET")
 
+# Contractul de prestari servicii e pus pe pauza (decizie de business, nu
+# tehnica) - codul ramane intact (rutele, contract.py, esemneaza.py) pentru
+# cand va fi reluat, dar implicit e dezactivat: firma nu mai e obligata sa
+# semneze nimic ca sa trimita o cerere de plata, are acces doar la facturile
+# emise de VML (tiparibile + XML, vezi /master/facturi). Se poate reactiva
+# fara nicio schimbare de cod, doar cu variabila de mediu CONTRACTE_ACTIVE=1.
+CONTRACTE_ACTIVE = os.environ.get("CONTRACTE_ACTIVE", "0") == "1"
+
 # Implicit dezactivat: emailul de confirmare e singura cale de livrare a
 # link-ului de validare (spre deosebire de formularul de contact, unde o
 # eroare de trimitere nu blocheaza nimic), asa ca blocarea reala a
@@ -750,6 +758,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                anaf_autorizare=anaf_autorizare,
                                plan_activ=plan_activ, zile_trial=zile_trial,
                                contract_activ=contract_activ,
+                               contracte_active=CONTRACTE_ACTIVE,
                                email_verificare_obligatorie=EMAIL_VERIFICARE_OBLIGATORIE)
 
     @app.post("/panou/firme")
@@ -838,16 +847,17 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if firm is None or not firm["ciclu_facturare"]:
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
-        contract_curent = conn.execute(
-            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
-            (active_firm_id,)).fetchone()
-        if (contract_curent is None
-                or contract_curent["stare"] != pdb.CONTRACT_STARE_SEMNAT
-                or contract_curent["ciclu_facturare"] != firm["ciclu_facturare"]):
-            return redirect(url_for(
-                "vezi_contract",
-                eroare="Trebuie sa semnezi contractul de prestari servicii "
-                      "inainte de a trimite o cerere de plata."))
+        if CONTRACTE_ACTIVE:
+            contract_curent = conn.execute(
+                "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+                (active_firm_id,)).fetchone()
+            if (contract_curent is None
+                    or contract_curent["stare"] != pdb.CONTRACT_STARE_SEMNAT
+                    or contract_curent["ciclu_facturare"] != firm["ciclu_facturare"]):
+                return redirect(url_for(
+                    "vezi_contract",
+                    eroare="Trebuie sa semnezi contractul de prestari servicii "
+                          "inainte de a trimite o cerere de plata."))
         suma = _suma_cu_tva(_calculeaza_suma_plata(firm, firm["ciclu_facturare"]))
         recurent = 1 if request.form.get("recurent") else 0
         # TODO integrare FGO: aici ar trebui creata factura+link de plata
@@ -977,6 +987,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/panou/contract")
     def vezi_contract():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -999,6 +1011,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/panou/contract/pdf")
     def descarca_contract_pdf():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -1015,6 +1029,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/panou/contract/xml")
     def descarca_contract_xml():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -1031,6 +1047,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/panou/contract/certificat")
     def descarca_certificat_esemneaza():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -1046,6 +1064,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.post("/panou/contract/semneaza")
     def semneaza_contract():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -1150,6 +1170,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         referinta pentru webhook-uri) - scris defensiv, incearca cateva nume
         de campuri plauzibile si nu se prabuseste niciodata pe o forma
         neasteptata, fiindca fluxul functioneaza oricum si fara el."""
+        if not CONTRACTE_ACTIVE:
+            return jsonify({"ok": True})
         if (not ESEMNEAZA_WEBHOOK_SECRET
                 or request.headers.get(ESEMNEAZA_WEBHOOK_HEADER) != ESEMNEAZA_WEBHOOK_SECRET):
             return jsonify({"error": "Neautorizat"}), 401
@@ -1175,6 +1197,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.post("/panou/contract/reziliaza")
     def reziliaza_contract():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("panou"))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
@@ -1332,7 +1356,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                versiune=pipeline.running_vs_current(),
                                n_mesaje_necitite=n_mesaje_necitite,
                                n_cereri_in_asteptare=n_cereri_in_asteptare,
-                               n_cereri_intarziate=n_cereri_intarziate)
+                               n_cereri_intarziate=n_cereri_intarziate,
+                               contracte_active=CONTRACTE_ACTIVE)
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):
@@ -2300,6 +2325,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/master/contracte")
     def master_contracte():
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
@@ -2312,6 +2339,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/master/contracte/<int:contract_id>/pdf")
     def descarca_contract_pdf_master(contract_id):
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
@@ -2327,6 +2356,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/master/contracte/<int:contract_id>/xml")
     def descarca_contract_xml_master(contract_id):
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
@@ -2342,6 +2373,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.get("/master/contracte/<int:contract_id>/certificat")
     def descarca_certificat_esemneaza_master(contract_id):
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
@@ -2359,6 +2392,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         """Master proceseaza manual reziliere - fie ceruta de firma, fie
         initiata direct - cu un ramburs care nu poate depasi jumatate din
         suma achitata pentru ciclul curent (CONTRACT_RAMBURS_MAX_PROCENT)."""
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))

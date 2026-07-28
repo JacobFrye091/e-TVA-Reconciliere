@@ -100,7 +100,7 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     {% endif %}
   </div>
 
-  {% if active %}
+  {% if active and contracte_active %}
   <div class="card">
     <h2>Contract de prestări servicii</h2>
     {% if contract_activ and contract_activ['stare'] == 'semnat' %}

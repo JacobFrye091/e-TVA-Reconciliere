@@ -8,7 +8,7 @@ from etva import esemneaza
 
 
 @pytest.fixture
-def app(tmp_path):
+def app(tmp_path, monkeypatch):
     a = create_app(str(tmp_path))
     a.config["TESTING"] = True
     # Practica standard flask-wtf pentru teste: restul suitei posteaza
@@ -17,6 +17,12 @@ def app(tmp_path):
     # verificata separat, cu WTF_CSRF_ENABLED=True explicit - vezi
     # test_csrf_*.
     a.config["WTF_CSRF_ENABLED"] = False
+    # Contractele sunt dezactivate implicit in productie (vezi
+    # app_module.CONTRACTE_ACTIVE) - dar codul ramane complet, asa ca
+    # majoritatea testelor il verifica activ; comportamentul "dezactivat"
+    # (implicit real) are propriile teste, vezi test_contracte_dezactivate_*.
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", True)
     return a
 
 
@@ -3319,6 +3325,68 @@ def test_creeaza_cerere_plata_requires_signed_contract(app):
     _apropie_trial_de_final(app, "RO309")
     r = c.post("/panou/plata", data={}, follow_redirects=True)
     assert "semnezi contractul de prestari servicii".encode() in r.data
+
+
+def test_creeaza_cerere_plata_works_without_contract_when_disabled(app, monkeypatch):
+    """Contractele sunt puse pe pauza (CONTRACTE_ACTIVE implicit False in
+    productie - vezi portal/app.py) - poarta din creeaza_cerere_plata nu se
+    mai aplica, firma poate cere plata direct."""
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", False)
+    c = app.test_client()
+    inregistreaza(c, cui="RO320", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO320")
+    r = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "semnezi contractul de prestari servicii".encode() not in r.data
+    row = app.portal_conn.execute(
+        "SELECT p.* FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO320'").fetchone()
+    assert row is not None
+
+
+def test_contract_routes_redirect_when_disabled(app, monkeypatch):
+    """Codul rutelor /panou/contract* ramane intact, doar nu mai e accesibil
+    cat timp CONTRACTE_ACTIVE e False (implicit in productie)."""
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", False)
+    c = app.test_client()
+    inregistreaza(c, cui="RO321", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    for path in ("/panou/contract", "/panou/contract/pdf",
+                "/panou/contract/xml", "/panou/contract/certificat"):
+        r = c.get(path, follow_redirects=False)
+        assert r.status_code == 302 and "/panou" in r.headers["Location"]
+    r = c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/panou" in r.headers["Location"]
+    r = c.post("/panou/contract/reziliaza", follow_redirects=False)
+    assert r.status_code == 302 and "/panou" in r.headers["Location"]
+
+
+def test_master_contract_routes_redirect_when_disabled(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", False)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    for path in ("/master/contracte", "/master/contracte/1/pdf",
+                "/master/contracte/1/xml", "/master/contracte/1/certificat"):
+        r = c.get(path, follow_redirects=False)
+        assert r.status_code == 302 and "/master" in r.headers["Location"]
+    r = c.post("/master/contracte/1/reziliaza", data={"ramburs_procent": "10"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/master" in r.headers["Location"]
+
+
+def test_webhook_esemneaza_noop_when_disabled(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", False)
+    monkeypatch.setattr(app_module, "ESEMNEAZA_WEBHOOK_SECRET", "shh")
+    c = app.test_client()
+    r = c.post("/api/esemneaza/webhook", json={"requestId": "x"},
+              headers={"X-Webhook-Secret": "shh"})
+    assert r.status_code == 200
 
 
 def test_reziliaza_contract_requires_signed_state(app):
