@@ -92,10 +92,25 @@ Capcane cunoscute, de verificat explicit la review (nu de presupus):
 
 ## Testare
 
-Suita rămâne implicit pe SQLite (fixture-urile actuale, neschimbate).
-`ETVA_TEST_PG=1` rulează aceeași suită pe un PostgreSQL local
-(instalat pe Windows-ul de dev; baza de test se recreează per sesiune de
-teste). Nimic nu se promovează fără ambele rulări verzi.
+Suita implicită (`pytest -q`, ~417 teste) rămâne pe SQLite, neschimbată -
+nu depinde de PostgreSQL fiind pornit pe mașina care rulează testele.
+
+`tests/test_migrare_pg.py` (5 teste, pentru `portal/migrare_pg.py`) rulează
+împotriva unui PostgreSQL 16 REAL local, cu auto-skip curat dacă acel
+cluster nu e pornit - nu blochează niciodată suita principală. Setup local
+(o singură dată, pe mașina de dev):
+```
+initdb -D <folder> -U postgres -A trust
+pg_ctl -D <folder> -o "-p 54329 -c listen_addresses=127.0.0.1" start
+psql -U postgres -h 127.0.0.1 -p 54329 -c "CREATE ROLE etva_app LOGIN PASSWORD 'etva_test'"
+psql -U postgres -h 127.0.0.1 -p 54329 -c "CREATE DATABASE etva_template"
+psql -U postgres -h 127.0.0.1 -p 54329 -d etva_template -f etva/pg_schema.sql
+```
+Fixture-ul `pg_dsn` clonează `etva_template` (`CREATE DATABASE ... TEMPLATE`)
+într-o bază nouă per test, ștearsă la final - fiecare test pornește de la
+schema curată, fără date reziduale între teste. Orice modificare la
+`etva/pg_schema.sql` trebuie reaplicată manual pe `etva_template` local
+(exact comanda de mai sus) ca aceste teste să reflecte schema curentă.
 
 ## Migrarea datelor + flip (per mediu, testare întâi)
 
