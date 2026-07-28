@@ -8,6 +8,10 @@
 .plan-card label { display:flex; align-items:center; gap:8px; font-weight:normal;
   margin-top:10px; }
 .plan-card input[type="radio"] { width:auto; }
+a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
+  color:var(--accent); border:1px solid var(--border); border-radius:7px;
+  text-decoration:none; display:inline-block; }
+a.mic:hover { background:var(--paper); }
 </style>
 {% endblock %}
 {% block continut %}
@@ -94,6 +98,31 @@
         <td>
           {% if p['stare'] == 'validata' %}<span class="chip ok">Validată</span>
           {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% if facturi %}
+  <div class="card">
+    <h2>Facturile mele</h2>
+    <p class="sub">Facturile emise de e-TVA Reconciliere pentru abonamentul
+      acestei firme la platformă.</p>
+    <table>
+      <tr><th>Serie / Nr.</th><th>Data emiterii</th><th>Total</th><th></th></tr>
+      {% for f in facturi %}
+      <tr>
+        <td class="cod">{{ f['serie'] }} {{ f['numar'] }}</td>
+        <td>{{ f['data_emiterii'][:10] }}</td>
+        <td>{{ '%.2f'|format(f['valoare_totala']) }} {{ f['moneda'] }}</td>
+        <td style="text-align:right">
+          <a class="mic" href="/panou/factura/{{ f['id'] }}/pdf">PDF</a>
+          <a class="mic" href="/panou/factura/{{ f['id'] }}/xml">XML</a>
+          {% if f['anaf_raspuns'] %}
+          <a class="mic" href="/panou/factura/{{ f['id'] }}/raspuns-anaf">Răspuns ANAF</a>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

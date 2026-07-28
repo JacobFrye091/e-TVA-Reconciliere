@@ -807,6 +807,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         plati = conn.execute(
             "SELECT * FROM payments WHERE firm_id=? AND creat_la>=? "
             "ORDER BY creat_la DESC", (active_firm_id, de_un_an)).fetchall()
+        facturi = conn.execute(
+            "SELECT * FROM invoices WHERE firm_id=? "
+            "ORDER BY serie DESC, numar DESC", (active_firm_id,)).fetchall()
         suma_neta_curenta = (_calculeaza_suma_plata(firm, firm["ciclu_facturare"])
                             if firm["ciclu_facturare"] else None)
         suma_curenta = (_suma_cu_tva(suma_neta_curenta)
@@ -818,7 +821,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             preturi=pdb.get_preturi(conn)[firm["tip"]],
             zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
             suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
-            cota_tva=pdb.get_cota_tva(conn), plati=plati,
+            cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
             arata_plata=(firm["ciclu_facturare"] and zile_trial is not None
                         and zile_trial <= 1),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
@@ -2069,6 +2072,71 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                (factura_id,)).fetchone()
         if factura is None or not factura["anaf_raspuns"]:
             return redirect(url_for("master_facturi"))
+        nume_fisier = f"raspuns_anaf_{factura['serie']}{factura['numar']}.zip"
+        return Response(
+            factura["anaf_raspuns"], mimetype="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    # ---------- firma: facturile proprii (doar vizualizare/descarcare) ----------
+    # Firma nu poate crea/trimite/verifica facturi (asta ramane exclusiv
+    # master, vezi rutele /master/facturi* de mai sus) - poate doar sa vada
+    # si sa descarce facturile pe care VML i le-a emis ei insasi.
+
+    def _factura_proprie(factura_id: int, active_firm_id: int | None):
+        """Intoarce factura DOAR daca apartine firmei active din sesiune -
+        proprietatea critica de securitate a acestei sectiuni: o firma nu
+        trebuie sa poata accesa factura altei firme ghicindu-i/iterandu-i
+        id-ul. Cand nu exista sau apartine altei firme, tratam identic
+        (None) ca sa nu scurgem prin diferenta de comportament daca acel
+        id exista sau nu."""
+        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
+                               (factura_id,)).fetchone()
+        if factura is None or factura["firm_id"] != active_firm_id:
+            return None
+        return factura
+
+    @app.get("/panou/factura/<int:factura_id>/pdf")
+    def descarca_factura_proprie_pdf(factura_id):
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        factura = _factura_proprie(factura_id, active_firm_id)
+        if factura is None:
+            return redirect(url_for("alege_plan"))
+        pdf_bytes = invoicing.generate_pdf(dict(factura))
+        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.pdf"
+        return Response(
+            pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    @app.get("/panou/factura/<int:factura_id>/xml")
+    def descarca_factura_proprie_xml(factura_id):
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        factura = _factura_proprie(factura_id, active_firm_id)
+        if factura is None:
+            return redirect(url_for("alege_plan"))
+        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
+        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.xml"
+        return Response(
+            xml_bytes, mimetype="application/xml",
+            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
+
+    @app.get("/panou/factura/<int:factura_id>/raspuns-anaf")
+    def descarca_raspuns_anaf_propriu(factura_id):
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or not _role_in_firm(user["id"], active_firm_id)):
+            return redirect(url_for("login"))
+        factura = _factura_proprie(factura_id, active_firm_id)
+        if factura is None or not factura["anaf_raspuns"]:
+            return redirect(url_for("alege_plan"))
         nume_fisier = f"raspuns_anaf_{factura['serie']}{factura['numar']}.zip"
         return Response(
             factura["anaf_raspuns"], mimetype="application/zip",

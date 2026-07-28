@@ -2415,6 +2415,164 @@ def test_descarca_raspuns_anaf_returns_none_when_not_yet_available(app):
     assert r.status_code == 302 and "/master/facturi" in r.headers["Location"]
 
 
+# ---------- facturare: vizibilitate firma (facturile ei proprii) ----------
+
+def test_alege_plan_shows_own_invoices(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Patru SRL", cui="RO308")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO308'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    _creeaza_factura(app, c_master, firm_id, descriere="Abonament e-TVA")
+
+    r = c.get("/panou/plan")
+    assert "Facturile mele".encode() in r.data
+    assert "ETVA".encode() in r.data
+    assert "119.00".encode() in r.data or "119.0".encode() in r.data
+
+
+def test_descarca_factura_proprie_pdf_requires_login(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO309")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO309'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_id = _creeaza_factura(app, c_master, firm_id)
+
+    c_anonim = app.test_client()
+    r = c_anonim.get(f"/panou/factura/{factura_id}/pdf", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_descarca_factura_proprie_pdf_returns_own_invoice(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Proprie SRL", cui="RO310")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO310'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_id = _creeaza_factura(app, c_master, firm_id)
+
+    r = c.get(f"/panou/factura/{factura_id}/pdf")
+    assert r.status_code == 200
+    assert r.mimetype == "application/pdf"
+    assert r.data[:4] == b"%PDF"
+
+
+def test_descarca_factura_proprie_xml_returns_own_invoice(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Proprie SRL", cui="RO311")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO311'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_id = _creeaza_factura(app, c_master, firm_id, descriere="Abonament")
+
+    r = c.get(f"/panou/factura/{factura_id}/xml")
+    assert r.status_code == 200
+    assert r.mimetype == "application/xml"
+    assert b"<?xml" in r.data
+    assert b"Firma Proprie SRL" in r.data
+
+
+def test_descarca_raspuns_anaf_propriu_returns_none_when_not_yet_available(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO312")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO312'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_id = _creeaza_factura(app, c_master, firm_id)
+
+    r = c.get(f"/panou/factura/{factura_id}/raspuns-anaf", follow_redirects=False)
+    assert r.status_code == 302 and "/panou/plan" in r.headers["Location"]
+
+
+def test_descarca_raspuns_anaf_propriu_returns_zip_when_available(app, monkeypatch):
+    _seed_master(app)
+    _autorizeaza_vml_anaf(app, monkeypatch)
+    c = app.test_client()
+    inregistreaza(c, name="Firma Cinci SRL", cui="RO313")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO313'").fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_id = _creeaza_factura(app, c_master, firm_id)
+    monkeypatch.setattr(anaf_oauth, "upload_invoice",
+                        lambda *a, **kw: {"index_incarcare": "999888"})
+    c_master.post(f"/master/facturi/{factura_id}/trimite-anaf")
+    monkeypatch.setattr(anaf_oauth, "check_upload_status",
+                        lambda *a, **kw: {"stare": "ok", "id_descarcare": "111222"})
+    monkeypatch.setattr(anaf_oauth, "download_response",
+                        lambda *a, **kw: b"PK\x03\x04semnat-de-anaf")
+    c_master.post(f"/master/facturi/{factura_id}/verifica-stare")
+
+    r = c.get(f"/panou/factura/{factura_id}/raspuns-anaf")
+    assert r.status_code == 200
+    assert r.mimetype == "application/zip"
+    assert r.data == b"PK\x03\x04semnat-de-anaf"
+
+
+def test_firma_nu_poate_accesa_factura_altei_firme_prin_id_ghicit(app):
+    """Proprietatea de securitate centrala a acestei functionalitati: o
+    firma autentificata in propriul cont/propria firma NU trebuie sa poata
+    accesa factura altei firme doar ghicind/iterand id-ul numeric din URL.
+
+    O implementare naiva ar verifica doar `_role_in_firm(user_id,
+    active_firm_id)` (adica "esti membru al vreunei firme?") si ar servi
+    orice `factura_id` cerut - cum firma A e intr-adevar membra a firmei ei
+    proprii (A), acel check ar trece, iar factura firmei B (la care A nu
+    are niciun rol) ar fi servita oricum. Testul de fata ar pica exact pe
+    o asemenea implementare, pentru ca verifica in mod explicit ca raspunsul
+    NU e 200/continutul facturii B, ci un redirect identic cu cazul
+    "factura inexistenta"."""
+    _seed_master(app)
+    c_a = app.test_client()
+    inregistreaza(c_a, name="Firma A SRL", cui="RO314")
+    firm_a_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO314'").fetchone()["id"]
+
+    c_b = app.test_client()
+    inregistreaza(c_b, name="Firma B SRL", cui="RO315")
+    firm_b_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO315'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    factura_b_id = _creeaza_factura(app, c_master, firm_b_id,
+                                    descriere="Abonament Firma B - confidential")
+
+    # Firma A e complet neasociata firmei B (niciun rol in user_firms) - dar
+    # e autentificata normal, in propriul cont. Incearca sa acceseze factura
+    # firmei B ghicind id-ul (de exemplu incrementand propriul ei id de
+    # factura, daca ar fi avut una).
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM invoices WHERE firm_id=?",
+        (firm_a_id,)).fetchone()["n"] == 0
+
+    r_pdf = c_a.get(f"/panou/factura/{factura_b_id}/pdf", follow_redirects=False)
+    assert r_pdf.status_code == 302 and "/panou/plan" in r_pdf.headers["Location"]
+
+    r_xml = c_a.get(f"/panou/factura/{factura_b_id}/xml", follow_redirects=False)
+    assert r_xml.status_code == 302 and "/panou/plan" in r_xml.headers["Location"]
+
+    r_raspuns = c_a.get(f"/panou/factura/{factura_b_id}/raspuns-anaf",
+                        follow_redirects=False)
+    assert r_raspuns.status_code == 302 and "/panou/plan" in r_raspuns.headers["Location"]
+
+    # Firma B insasi tot poate accesa propria factura - confirmam ca
+    # respingerea de mai sus e specifica firmei A, nu o ruta stricata.
+    r_ok = c_b.get(f"/panou/factura/{factura_b_id}/pdf")
+    assert r_ok.status_code == 200 and r_ok.data[:4] == b"%PDF"
+
+
 # ---------- backup date productie ----------
 
 def test_restaureaza_backup_requires_master(app):
