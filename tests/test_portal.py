@@ -3476,6 +3476,78 @@ def test_master_contracte_requires_master(app):
     assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
 
 
+def _creeaza_master(app):
+    conn = app.portal_conn
+    if conn.execute("SELECT 1 FROM users WHERE is_master=1").fetchone() is None:
+        conn.execute(
+            "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,1)",
+            ("master-test", psec.hash_password("ParolaMaster123!")))
+        conn.commit()
+    master = app.test_client()
+    master.post("/autentificare",
+               data={"cui": "master-test", "password": "ParolaMaster123!"})
+    return master
+
+
+def test_creeaza_contract_master_requires_master(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO301")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO301'").fetchone()["id"]
+    r = c.get(f"/master/contracte/creeaza/{firm_id}", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_creeaza_contract_master_prefills_from_anaf(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO302")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO302'").fetchone()["id"]
+    r = master.get(f"/master/contracte/creeaza/{firm_id}")
+    assert b"Firma Test" in r.data  # din _mock_anaf_cui (denumire="Firma Test")
+
+
+def test_trimite_contract_master_creeaza_si_trimite(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO303")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO303'").fetchone()["id"]
+    r = master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": "100.00"}, follow_redirects=False)
+    assert r.status_code == 302 and "/master/contracte" in r.headers["Location"]
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
+    assert contract is not None
+    assert contract["stare"] == "in_asteptare"
+    assert contract["metoda_semnatura"] == "esemneaza"
+    assert contract["esemneaza_request_id"] == "fake-request-id"
+    assert contract["numar"] >= 1
+
+
+def test_trimite_contract_master_blocks_second_pending_contract(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO304")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO304'").fetchone()["id"]
+    data = {"denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+            "ciclu": "lunar", "suma": "100.00"}
+    master.post(f"/master/contracte/creeaza/{firm_id}", data=data)
+    r = master.post(f"/master/contracte/creeaza/{firm_id}", data=data,
+                    follow_redirects=True)
+    assert "deja un contract".encode() in r.data
+    contracte = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+    assert contracte == 1
+
+
 def test_finalizeaza_reziliere_requires_master(app):
     c = app.test_client()
     r = c.post("/master/contracte/1/reziliaza", data={"ramburs_procent": "10"},

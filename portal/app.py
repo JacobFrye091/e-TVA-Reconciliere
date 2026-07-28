@@ -2347,6 +2347,128 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "master_contracte.html", user=user, contracte=contracte,
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
+    @app.get("/master/contracte/creeaza/<int:firm_id>")
+    def creeaza_contract_master(firm_id):
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if firm is None:
+            return redirect(url_for("master_contracte", eroare="Firma nu a fost gasita."))
+        ultimul = conn.execute(
+            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+            (firm_id,)).fetchone()
+        if (ultimul is not None and ultimul["stare"] == pdb.CONTRACT_STARE_IN_ASTEPTARE
+                and ultimul["esemneaza_request_id"]):
+            return redirect(url_for(
+                "master_contracte",
+                eroare="Firma are deja un contract in asteptare - reziliaza-l intai."))
+        denumire_sugerata = adresa_sugerata = ""
+        eroare_anaf = None
+        try:
+            beneficiar = contract_mod.date_beneficiar(firm["cui"])
+            denumire_sugerata = beneficiar["denumire"]
+            adresa_sugerata = beneficiar["adresa"]
+        except contract_mod.ContractError as e:
+            eroare_anaf = str(e)
+        suma_sugerata = (_calculeaza_suma_plata(firm, firm["ciclu_facturare"])
+                        if firm["ciclu_facturare"] else None)
+        return render_template(
+            "master_contract_creeaza.html", user=user, firm=firm,
+            denumire_sugerata=denumire_sugerata, adresa_sugerata=adresa_sugerata,
+            suma_sugerata=suma_sugerata, eroare_anaf=eroare_anaf,
+            cicluri=pdb.CICLURI_FACTURARE,
+            eroare=request.args.get("eroare"))
+
+    @app.post("/master/contracte/creeaza/<int:firm_id>")
+    def trimite_contract_master(firm_id):
+        if not CONTRACTE_ACTIVE:
+            return redirect(url_for("master"))
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if not ESEMNEAZA_API_KEY:
+            return redirect(url_for(
+                "creeaza_contract_master", firm_id=firm_id,
+                eroare="Semnarea electronica nu este configurata inca pe acest server."))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if firm is None:
+            return redirect(url_for("master_contracte", eroare="Firma nu a fost gasita."))
+        ultimul = conn.execute(
+            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+            (firm_id,)).fetchone()
+        if (ultimul is not None and ultimul["stare"] == pdb.CONTRACT_STARE_IN_ASTEPTARE
+                and ultimul["esemneaza_request_id"]):
+            return redirect(url_for(
+                "master_contracte",
+                eroare="Firma are deja un contract in asteptare - reziliaza-l intai."))
+        denumire = request.form.get("denumire", "").strip()
+        adresa = request.form.get("adresa", "").strip()
+        ciclu = request.form.get("ciclu", "")
+        try:
+            suma = float(request.form.get("suma", ""))
+        except ValueError:
+            suma = None
+        if (not denumire or not adresa or ciclu not in pdb.CICLURI_FACTURARE
+                or suma is None or suma <= 0):
+            return redirect(url_for(
+                "creeaza_contract_master", firm_id=firm_id,
+                eroare="Completeaza toate campurile cu valori valide."))
+        admin = conn.execute(
+            "SELECT u.email FROM user_firms uf JOIN users u ON u.id = uf.user_id "
+            "WHERE uf.firm_id=? AND uf.role='admin' AND u.email IS NOT NULL "
+            "LIMIT 1", (firm_id,)).fetchone()
+        if admin is None or not admin["email"]:
+            return redirect(url_for(
+                "creeaza_contract_master", firm_id=firm_id,
+                eroare="Adminul firmei nu are o adresa de email inregistrata."))
+        numar = contract_mod.next_contract_number(conn)
+        acum = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
+            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
+            "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
+            (firm_id, numar, ciclu, suma, denumire, firm["cui"], adresa,
+             pdb.CONTRACT_STARE_IN_ASTEPTARE, acum))
+        contract_id = cur.lastrowid
+        conn.commit()
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        continut = contract_mod.genereaza_text_din_rand(contract)
+        pdf_bytes = contract_mod.genereaza_pdf(continut, tag_semnatura_esemneaza=True)
+        try:
+            file_name = esemneaza.upload_document(
+                ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{numar}.pdf")
+            rezultat = esemneaza.create_sign_request(
+                ESEMNEAZA_API_KEY, file_name,
+                recipients=[
+                    {"email": invoicing.FURNIZOR["email"], "name": invoicing.FURNIZOR["nume"],
+                     "options": ["one_click_sign"]},
+                    {"email": admin["email"], "name": firm["name"],
+                     "options": ["one_click_sign"]},
+                ],
+                sender_name="e-TVA Reconciliere", extract_tags=True,
+                sign_in_order=True)
+        except esemneaza.EsemneazaError as e:
+            conn.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
+            conn.commit()
+            return redirect(url_for(
+                "creeaza_contract_master", firm_id=firm_id,
+                eroare=f"Nu am putut trimite contractul spre semnare: {e}"))
+        conn.execute(
+            "UPDATE contracts SET metoda_semnatura=?, esemneaza_request_id=? "
+            "WHERE id=?",
+            (pdb.CONTRACT_METODA_ESEMNEAZA, rezultat.get("id"), contract_id))
+        conn.commit()
+        _log_master_action(
+            user, "contract.trimis_spre_semnare",
+            f"{firm['name']} - contract nr. {numar}")
+        return redirect(url_for(
+            "master_contracte",
+            mesaj=f"Contractul nr. {numar} a fost trimis spre semnare."))
+
     @app.get("/master/contracte/<int:contract_id>/pdf")
     def descarca_contract_pdf_master(contract_id):
         if not CONTRACTE_ACTIVE:

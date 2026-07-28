@@ -48,8 +48,11 @@ a.mic:hover { background:var(--paper); }
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="mic" type="submit">Validează încasarea</button>
           </form>
-          {% elif p['invoice_id'] %}
+          {% else %}
+          {% if p['invoice_id'] %}
           <a class="mic" href="/master/facturi/{{ p['invoice_id'] }}/pdf">Factura (PDF)</a>
+          {% endif %}
+          <a class="mic" href="/master/contracte/creeaza/{{ p['firm_id'] }}">Trimite contract</a>
           {% endif %}
         </td>
       </tr>

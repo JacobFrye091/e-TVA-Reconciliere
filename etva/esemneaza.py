@@ -106,12 +106,11 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
                         sender_name: "str | None" = None,
                         sign_in_order: bool = False,
                         extract_tags: bool = False) -> dict:
-    """Creeaza cererea de semnare. `recipients` e o lista (desi contractul
-    acestei platforme are in practica un singur semnatar real prin
-    eSemneaza - BENEFICIARUL/firma client; semnatura PRESTATORULUI (VML) e
-    deja inclusa ca text in contract la generare, vezi
-    contract.genereaza_text, nu trece prin eSemneaza) - lasata generica in
-    caz ca apare vreodata nevoia unui al doilea semnatar real.
+    """Creeaza cererea de semnare. `recipients` e o lista - contractul
+    acestei platforme are doi semnatari reali prin eSemneaza, in ordine:
+    PRESTATORUL (master, semneaza primul) si BENEFICIARUL/firma client
+    (semneaza al doilea), vezi portal/app.py::trimite_contract_master;
+    ramane generica pentru orice alt numar/ordine de semnatari.
 
     extract_tags=True (folosit de portal/app.py::semneaza_contract): PDF-ul
     are deja tag-ul invizibil `{{s:1}}` incorporat (vezi
