@@ -3548,6 +3548,32 @@ def test_trimite_contract_master_blocks_second_pending_contract(app):
     assert contracte == 1
 
 
+def test_trimite_contract_master_allows_retry_after_rejection(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO310")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO310'").fetchone()["id"]
+    data = {"denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+            "ciclu": "lunar", "suma": "100.00"}
+    master.post(f"/master/contracte/creeaza/{firm_id}", data=data)
+
+    # Simulate a rejection: esemneaza_request_id cleared, stare stays in_asteptare
+    # (matches _verifica_finalizare_esemneaza's real behavior on SIGSTATUS_REJECTED).
+    app.portal_conn.execute(
+        "UPDATE contracts SET esemneaza_request_id=NULL WHERE firm_id=?", (firm_id,))
+    app.portal_conn.commit()
+
+    r = master.post(f"/master/contracte/creeaza/{firm_id}", data=data,
+                    follow_redirects=False)
+    assert r.status_code == 302 and "/master/contracte" in r.headers["Location"]
+    contracte = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+    assert contracte == 2
+
+
 def test_finalizeaza_reziliere_requires_master(app):
     c = app.test_client()
     r = c.post("/master/contracte/1/reziliaza", data={"ramburs_procent": "10"},
