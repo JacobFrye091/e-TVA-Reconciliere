@@ -58,7 +58,7 @@
   {% elif contract['stare'] == 'semnat' %}
   <div class="card">
     <p class="sub" style="color:var(--ok)">Contract semnat la {{ contract['semnat_la'][:10] }}
-      ({{ {'esemneaza': 'eSemneaza.ro', 'certificat': 'certificat digital'}[contract['metoda_semnatura']] }}).
+      ({{ {'esemneaza': 'eSemneaza.ro', 'certificat': 'certificat digital', 'mouse': 'semnătură desenată'}[contract['metoda_semnatura']] }}).
       {% if contract['esemneaza_certificate_pdf'] %}
       <a href="/panou/contract/certificat" target="_blank">Descarcă certificatul de semnătură</a>
       {% endif %}</p>

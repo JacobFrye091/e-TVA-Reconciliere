@@ -3348,6 +3348,34 @@ def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certi
     assert "eSemneaza.ro".encode() not in r2.data
 
 
+def test_vezi_contract_shows_label_for_legacy_mouse_signed_contract(app, _semnatura_certificat):
+    """metoda_semnatura='mouse' nu mai e ofertata in UI, dar contracte vechi
+    semnate asa inainte de eSemneaza tot exista si tot se pot vizualiza
+    (vezi _regenereaza_pdf_contract) - eticheta nu trebuie sa devina goala
+    pentru ele (vezi Task 6 finding 1, regresie prinsa la re-review)."""
+    pdf_semnat, _root_pem = _semnatura_certificat
+    c = app.test_client()
+    inregistreaza(c, cui="RO318", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO318'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
+    c.post("/panou/contract/semneaza", data={
+        "metoda": "certificat",
+        "semnatura_fisier": (io.BytesIO(pdf_semnat), "contract_semnat.pdf"),
+    }, content_type="multipart/form-data")
+    # Simuleaza date vechi: niciun flux curent nu mai produce metoda_semnatura
+    # = "mouse", dar contracte semnate asa inainte de eSemneaza tot exista.
+    app.portal_conn.execute(
+        "UPDATE contracts SET metoda_semnatura='mouse' WHERE firm_id=?", (firm_id,))
+    app.portal_conn.commit()
+
+    r = c.get("/panou/contract")
+    assert "semnătură desenată".encode() in r.data
+    assert "certificat digital".encode() not in r.data
+    assert "eSemneaza.ro".encode() not in r.data
+
+
 def test_semneaza_contract_certificat_rejects_unsigned_pdf(app):
     c = app.test_client()
     inregistreaza(c, cui="RO311", tip="direct")
