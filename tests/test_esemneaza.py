@@ -180,6 +180,42 @@ def test_fetch_url_bytes_returns_raw_body(monkeypatch):
     assert esemneaza.fetch_url_bytes("https://x/doc") == b"raw-pdf-bytes"
 
 
+def test_create_sign_request_passes_recipient_options(monkeypatch):
+    captured = {}
+
+    def handler(req):
+        captured["body"] = json.loads(req.data)
+        return json.dumps({"id": "req-4"}).encode()
+
+    _install_fake_urlopen(monkeypatch, handler)
+    esemneaza.create_sign_request(
+        "key-123", "contract-4.pdf",
+        recipients=[
+            {"email": "a@exemplu.ro", "name": "A", "options": ["one_click_sign"]},
+            {"email": "b@exemplu.ro", "name": "B", "options": ["one_click_sign"]},
+        ],
+        extract_tags=True, sign_in_order=True)
+
+    recipients = captured["body"]["recipients"]
+    assert recipients[0]["options"] == ["one_click_sign"]
+    assert recipients[1]["options"] == ["one_click_sign"]
+
+
+def test_create_sign_request_omits_options_when_not_given(monkeypatch):
+    captured = {}
+
+    def handler(req):
+        captured["body"] = json.loads(req.data)
+        return json.dumps({"id": "req-5"}).encode()
+
+    _install_fake_urlopen(monkeypatch, handler)
+    esemneaza.create_sign_request(
+        "key-123", "contract-5.pdf",
+        recipients=[{"email": "a@exemplu.ro", "name": "A", "field_page": 1}])
+
+    assert "options" not in captured["body"]["recipients"][0]
+
+
 def test_http_error_raises_esemneaza_error(monkeypatch):
     import urllib.error
 

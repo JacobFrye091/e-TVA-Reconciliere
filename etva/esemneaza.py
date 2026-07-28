@@ -136,6 +136,8 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
                 "width": 180, "height": 50, "pageNum": r["field_page"],
                 "type": "SIGNATURE", "required": True,
             }]
+        if r.get("options"):
+            recipient["options"] = r["options"]
         body_recipients.append(recipient)
     body = {"fileName": file_name, "recipients": body_recipients,
            "signInOrder": sign_in_order}
