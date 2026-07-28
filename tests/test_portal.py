@@ -3341,6 +3341,11 @@ def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certi
     detalii = _json.loads(row["semnatura_detalii"])
     assert detalii["valid"] is True
     assert detalii["trusted"] is False
+    # Eticheta afisata trebuie sa reflecte metoda reala folosita (certificat),
+    # nu hardcodata la eSemneaza.ro - vezi Task 6 finding 1.
+    r2 = c.get("/panou/contract")
+    assert "certificat digital".encode() in r2.data
+    assert "eSemneaza.ro".encode() not in r2.data
 
 
 def test_semneaza_contract_certificat_rejects_unsigned_pdf(app):
@@ -3587,12 +3592,17 @@ def test_actualizeaza_stare_esemneaza_marks_prestator_then_completes(app, monkey
         "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
         "ciclu": "lunar", "suma": "100.00"})
 
-    c.get("/panou/contract")
+    r = c.get("/panou/contract")
     contract = app.portal_conn.execute(
         "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
     assert contract["prestator_semnat_la"] is not None
     assert contract["stare"] == "in_asteptare"
     assert contract["contract_xml_final"] is None
+    assert contract["esemneaza_request_id"] is not None
+    # Randare corecta a starii "e randul beneficiarului sa semneze" - vezi
+    # Task 6 finding 2 (test lipsa dupa stergerea
+    # test_semneaza_contract_esemneaza_stays_pending_until_signed).
+    assert "trimis spre semnare".encode() in r.data
 
     monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
         "recipients": [
