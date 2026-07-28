@@ -55,7 +55,9 @@ def _mock_esemneaza(monkeypatch):
                                           "status": "IN_PROGRESS"})
     monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
         "status": "COMPLETED",
-        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_APPLIED}]})
+        "recipients": [
+            {"order": 1, "sigStatus": esemneaza.SIGSTATUS_APPLIED},
+            {"order": 2, "sigStatus": esemneaza.SIGSTATUS_APPLIED}]})
     monkeypatch.setattr(esemneaza, "get_completed_document_url",
                         lambda *a, **kw: {"docUrl": "https://fake/doc"})
     monkeypatch.setattr(esemneaza, "get_certificate_download_url",
@@ -3272,7 +3274,7 @@ def test_semneaza_contract_esemneaza_stays_pending_until_signed(app, monkeypatch
     from etva import esemneaza
     monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
         "status": "IN_PROGRESS",
-        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_PENDING}]})
+        "recipients": [{"order": 1, "sigStatus": esemneaza.SIGSTATUS_PENDING}]})
     c = app.test_client()
     inregistreaza(c, cui="RO315", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
@@ -3291,7 +3293,7 @@ def test_semneaza_contract_esemneaza_rejected_clears_request(app, monkeypatch):
     from etva import esemneaza
     monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
         "status": "IN_PROGRESS",
-        "recipients": [{"sigStatus": esemneaza.SIGSTATUS_REJECTED}]})
+        "recipients": [{"order": 1, "sigStatus": esemneaza.SIGSTATUS_REJECTED}]})
     c = app.test_client()
     inregistreaza(c, cui="RO316", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
@@ -3560,7 +3562,7 @@ def test_trimite_contract_master_allows_retry_after_rejection(app):
     master.post(f"/master/contracte/creeaza/{firm_id}", data=data)
 
     # Simulate a rejection: esemneaza_request_id cleared, stare stays in_asteptare
-    # (matches _verifica_finalizare_esemneaza's real behavior on SIGSTATUS_REJECTED).
+    # (matches _actualizeaza_stare_esemneaza's real behavior on SIGSTATUS_REJECTED).
     app.portal_conn.execute(
         "UPDATE contracts SET esemneaza_request_id=NULL WHERE firm_id=?", (firm_id,))
     app.portal_conn.commit()
@@ -3572,6 +3574,64 @@ def test_trimite_contract_master_allows_retry_after_rejection(app):
         "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
         (firm_id,)).fetchone()["n"]
     assert contracte == 2
+
+
+def test_actualizeaza_stare_esemneaza_marks_prestator_then_completes(app, monkeypatch):
+    import portal.app as app_module
+    c = app.test_client()
+    inregistreaza(c, cui="RO305")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO305'").fetchone()["id"]
+
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "recipients": [
+            {"order": 1, "sigStatus": esemneaza.SIGSTATUS_APPLIED},
+            {"order": 2, "sigStatus": esemneaza.SIGSTATUS_PENDING}]})
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": "100.00"})
+
+    c.get("/panou/contract")
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
+    assert contract["prestator_semnat_la"] is not None
+    assert contract["stare"] == "in_asteptare"
+    assert contract["contract_xml_final"] is None
+
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "recipients": [
+            {"order": 1, "sigStatus": esemneaza.SIGSTATUS_APPLIED},
+            {"order": 2, "sigStatus": esemneaza.SIGSTATUS_APPLIED}]})
+    c.get("/panou/contract")
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
+    assert contract["stare"] == "semnat"
+    assert contract["contract_xml_final"] is not None
+    assert b"<contract " in bytes(contract["contract_xml_final"])[:200]
+
+
+def test_actualizeaza_stare_esemneaza_handles_rejection(app, monkeypatch):
+    c = app.test_client()
+    inregistreaza(c, cui="RO306")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO306'").fetchone()["id"]
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": "100.00"})
+
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "recipients": [
+            {"order": 1, "sigStatus": esemneaza.SIGSTATUS_REJECTED},
+            {"order": 2, "sigStatus": esemneaza.SIGSTATUS_PENDING}]})
+    c.get("/panou/contract")
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
+    assert contract["esemneaza_request_id"] is None
+    assert contract["stare"] == "in_asteptare"
 
 
 def test_finalizeaza_reziliere_requires_master(app):

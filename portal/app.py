@@ -67,7 +67,7 @@ ANAF_EFACTURA_MEDIU = os.environ.get("ANAF_EFACTURA_MEDIU", "test")
 # nu o eroare oarba). ESEMNEAZA_WEBHOOK_SECRET/HEADER verifica evenimentele
 # primite pe /api/esemneaza/webhook - configurate manual, in oglinda, si in
 # contul eSemneaza (pagina Setari API); fara ele, verificarea starii se
-# bazeaza doar pe polling (vezi _verifica_finalizare_esemneaza).
+# bazeaza doar pe polling (vezi _actualizeaza_stare_esemneaza).
 ESEMNEAZA_API_KEY = os.environ.get("ESEMNEAZA_API_KEY")
 ESEMNEAZA_WEBHOOK_HEADER = os.environ.get("ESEMNEAZA_WEBHOOK_HEADER", "X-Webhook-Secret")
 ESEMNEAZA_WEBHOOK_SECRET = os.environ.get("ESEMNEAZA_WEBHOOK_SECRET")
@@ -943,12 +943,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT * FROM contracts WHERE id=?", (cur.lastrowid,)).fetchone(), None
 
     def _finalizeaza_contract_esemneaza(contract, request_id: str):
-        """Marcheaza contractul semnat si pastreaza documentul final + (daca
-        e disponibil) certificatul de semnatura primite de la eSemneaza -
-        spre deosebire de celelalte metode, aici NU se regenereaza nimic:
-        documentul semnat e artefactul legal real, controlat de un tert, deci
-        trebuie pastrat exact cum a fost primit (aceeasi logica ca la
-        arhivarea raspunsului sigilat ANAF pentru e-Factura)."""
+        """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
+        documentul final + certificatul primite de la eSemneaza, si ingheata
+        un instantaneu XML - vezi planning/specs/2026-07-28-contract-
+        esemneaza-admin-review-design.md."""
         doc = esemneaza.get_completed_document_url(ESEMNEAZA_API_KEY, request_id)
         pdf_bytes = esemneaza.fetch_url_bytes(doc["docUrl"])
         cert_bytes = None
@@ -957,21 +955,29 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             cert_bytes = esemneaza.fetch_url_bytes(cert["certificateUrl"])
         except esemneaza.EsemneazaError:
             pass
+        acum = datetime.now(timezone.utc).isoformat()
         conn.execute(
             "UPDATE contracts SET stare=?, semnatura_verificata=1, "
             "semnatura_detalii=?, semnat_la=?, esemneaza_document_pdf=?, "
             "esemneaza_certificate_pdf=? WHERE id=?",
             (pdb.CONTRACT_STARE_SEMNAT,
              json.dumps({"metoda": "esemneaza", "request_id": request_id}),
-             datetime.now(timezone.utc).isoformat(), pdf_bytes, cert_bytes,
-             contract["id"]))
+             acum, pdf_bytes, cert_bytes, contract["id"]))
+        conn.commit()
+        rand_final = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                  (contract["id"],)).fetchone()
+        xml_final = contract_mod.date_contract_xml(rand_final)
+        conn.execute("UPDATE contracts SET contract_xml_final=? WHERE id=?",
+                    (xml_final, contract["id"]))
         conn.commit()
 
-    def _verifica_finalizare_esemneaza(contract):
-        """Verifica manual la eSemneaza daca cererea de semnare in asteptare
-        s-a incheiat - necesar pana serverul are o adresa publica pentru
-        webhook (vezi /api/esemneaza/webhook mai jos); apelat automat la
-        fiecare vizualizare a paginii de contract, nu doar prin webhook."""
+    def _actualizeaza_stare_esemneaza(contract):
+        """Interogheaza starea reala la eSemneaza (sursa de adevar - vezi
+        get_sign_request, NU continutul webhook-ului, a carui forma exacta
+        nu e documentata) si actualizeaza contractul. Recipientii se
+        identifica dupa `order` (1=PRESTATOR, 2=BENEFICIAR, impus prin
+        signInOrder la creare - vezi trimite_contract_master). Apelata atat
+        din polling (vezi vezi_contract) cat si din webhook."""
         if (not ESEMNEAZA_API_KEY or not contract
                 or contract["stare"] != pdb.CONTRACT_STARE_IN_ASTEPTARE
                 or not contract["esemneaza_request_id"]):
@@ -982,18 +988,31 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         except esemneaza.EsemneazaError:
             return contract
         recipienti = stare.get("recipients") or []
-        sig = recipienti[0].get("sigStatus") if recipienti else None
-        if sig == esemneaza.SIGSTATUS_APPLIED:
-            _finalizeaza_contract_esemneaza(contract, contract["esemneaza_request_id"])
-        elif sig == esemneaza.SIGSTATUS_REJECTED:
+        prestator = next((r for r in recipienti if r.get("order") == 1), None)
+        beneficiar = next((r for r in recipienti if r.get("order") == 2), None)
+        respins = (
+            (prestator and prestator.get("sigStatus") == esemneaza.SIGSTATUS_REJECTED)
+            or (beneficiar and beneficiar.get("sigStatus") == esemneaza.SIGSTATUS_REJECTED))
+        if respins:
             conn.execute(
                 "UPDATE contracts SET esemneaza_request_id=NULL WHERE id=?",
                 (contract["id"],))
             conn.commit()
-        else:
-            return contract
-        return conn.execute(
-            "SELECT * FROM contracts WHERE id=?", (contract["id"],)).fetchone()
+            return conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract["id"],)).fetchone()
+        prestator_semnat = (
+            prestator and prestator.get("sigStatus") == esemneaza.SIGSTATUS_APPLIED)
+        if prestator_semnat and not contract["prestator_semnat_la"]:
+            conn.execute(
+                "UPDATE contracts SET prestator_semnat_la=? WHERE id=?",
+                (datetime.now(timezone.utc).isoformat(), contract["id"]))
+            conn.commit()
+        beneficiar_semnat = (
+            beneficiar and beneficiar.get("sigStatus") == esemneaza.SIGSTATUS_APPLIED)
+        if prestator_semnat and beneficiar_semnat:
+            _finalizeaza_contract_esemneaza(contract, contract["esemneaza_request_id"])
+        return conn.execute("SELECT * FROM contracts WHERE id=?",
+                            (contract["id"],)).fetchone()
 
     @app.get("/panou/contract")
     def vezi_contract():
@@ -1010,7 +1029,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
         contract, eroare_generare = _genereaza_contract(firm)
-        contract = _verifica_finalizare_esemneaza(contract)
+        contract = _actualizeaza_stare_esemneaza(contract)
         continut = (contract_mod.genereaza_text_din_rand(contract)
                    if contract is not None else None)
         return render_template(
@@ -1173,7 +1192,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     @csrf.exempt
     def webhook_esemneaza():
         """Cale alternativa/mai rapida decat polling-ul din
-        _verifica_finalizare_esemneaza - functioneaza doar odata ce serverul
+        _actualizeaza_stare_esemneaza - functioneaza doar odata ce serverul
         are o adresa publica configurata in contul eSemneaza (Setari API ->
         URL Webhook), ceea ce nu e inca cazul in dev/testare. Forma exacta a
         payload-ului NU e documentata nicaieri (nu exista o pagina de
@@ -1188,21 +1207,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         payload = request.get_json(silent=True) or {}
         request_id = (payload.get("requestId") or payload.get("id")
                      or payload.get("request_id"))
-        eveniment = payload.get("event") or payload.get("type") or payload.get("eventType")
         if not request_id:
             return jsonify({"ok": True})
         contract = conn.execute(
             "SELECT * FROM contracts WHERE esemneaza_request_id=?",
             (request_id,)).fetchone()
-        if contract is None or contract["stare"] != pdb.CONTRACT_STARE_IN_ASTEPTARE:
-            return jsonify({"ok": True})
-        if eveniment in ("RECIPIENT_SIGNED", "REQUEST_COMPLETED"):
-            _finalizeaza_contract_esemneaza(contract, request_id)
-        elif eveniment == "RECIPIENT_REJECTED":
-            conn.execute(
-                "UPDATE contracts SET esemneaza_request_id=NULL WHERE id=?",
-                (contract["id"],))
-            conn.commit()
+        if contract is not None:
+            _actualizeaza_stare_esemneaza(contract)
         return jsonify({"ok": True})
 
     @app.post("/panou/contract/reziliaza")
