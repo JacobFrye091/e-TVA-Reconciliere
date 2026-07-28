@@ -156,12 +156,11 @@ X. CLAUZE FINALE
 10.1. Prezentul contract, împreună cu Termenii și condițiile publicate \
 pe platformă, reprezintă voința părților.
 
-10.2. PRESTATORUL a semnat electronic prezentul contract la data emiterii \
-lui, {azi}. Contractul se consideră încheiat la data la care BENEFICIARUL \
-îl semnează.
+10.2. Prezentul contract se consideră încheiat la data la care ambele \
+părți l-au semnat electronic.
 
 
-PRESTATOR: {FURNIZOR['nume']} (semnat electronic la {azi})     BENEFICIAR: {beneficiar_anaf['denumire']}
+PRESTATOR: {FURNIZOR['nume']}     BENEFICIAR: {beneficiar_anaf['denumire']}
 """
 
 
@@ -249,13 +248,12 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
     beneficiar - nota_semnatura (vezi nota_verificare_certificat) descrie
     in schimb rezultatul verificarii facute la momentul semnarii.
 
-    tag_semnatura_esemneaza=True adauga tag-ul `{{s:1}}` (font alb, invizibil
-    pentru cititor) imediat dupa BENEFICIAR - eSemneaza il detecteaza automat
-    cu extractTags=True (vezi etva/esemneaza.py:create_sign_request) si
-    genereaza singur campul de semnatura, cu pozitia exacta calculata din
-    locul tag-ului in text - confirmat empiric (2026-07-27) impotriva
-    serviciului real, nu ghicit: fara acest tag, pozitia campului trebuia
-    aproximata manual (x/y fixe, fara legatura cu continutul real)."""
+    tag_semnatura_esemneaza=True adauga doua tag-uri invizibile (font alb):
+    `{{s:1}}` langa PRESTATOR si `{{s:2}}` langa BENEFICIAR - eSemneaza le
+    detecteaza automat cu extractTags=True (vezi etva/esemneaza.py) si
+    genereaza campurile de semnatura, cu pozitia calculata din locul
+    tag-urilor in text, cate unul pentru fiecare semnatar in ordine
+    (signInOrder=True: semnatarul 1 = PRESTATOR, semnatarul 2 = BENEFICIAR)."""
     pdf_fonts.asigura_fonturi()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -287,7 +285,8 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
             # blocuri separate vizual).
             stanga, dreapta = re.split(r"\s{2,}", bloc, maxsplit=1)
             if tag_semnatura_esemneaza:
-                dreapta += ' <font color="white">{{s:1}}</font>'
+                stanga += ' <font color="white">{{s:1}}</font>'
+                dreapta += ' <font color="white">{{s:2}}</font>'
             latime_coloana = (doc.width) / 2
             elems.append(Spacer(1, 4 * mm))
             elems.append(Table(

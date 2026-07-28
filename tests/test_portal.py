@@ -3177,7 +3177,10 @@ def test_descarca_contract_pdf_renders_romanian_diacritics(app):
 def test_genereaza_pdf_embeds_esemneaza_signature_tag(app):
     """Confirmat empiric impotriva eSemneaza real (2026-07-27): un PDF cu
     "{{s:1}}" in text, incarcat cu extractTags=True, produce singur un camp
-    de semnatura cu pozitie corecta - nu mai trebuie ghicite coordonate."""
+    de semnatura cu pozitie corecta - nu mai trebuie ghicite coordonate.
+    Acum ambele parti semneaza real (vezi planning/specs/2026-07-28-
+    contract-esemneaza-admin-review-design.md), deci ambele tag-uri trebuie
+    prezente: {{s:1}} langa PRESTATOR, {{s:2}} langa BENEFICIAR."""
     import pdfplumber
     from portal import contract as contract_mod
     from datetime import datetime, timezone
@@ -3189,10 +3192,12 @@ def test_genereaza_pdf_embeds_esemneaza_signature_tag(app):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         text = pdf.pages[-1].extract_text()
     assert "{{s:1}}" in text
+    assert "{{s:2}}" in text
     pdf_fara_tag = contract_mod.genereaza_pdf(continut)
     with pdfplumber.open(io.BytesIO(pdf_fara_tag)) as pdf:
         text_fara_tag = pdf.pages[-1].extract_text()
     assert "{{s:1}}" not in text_fara_tag
+    assert "{{s:2}}" not in text_fara_tag
 
 
 def test_descarca_contract_xml(app):
