@@ -187,6 +187,77 @@ def test_migreaza_sets_sequences_past_existing_ids(data_dir, pg_dsn):
         assert noul_id > firm_id
 
 
+def test_raport_migrare_counts_without_writing_anything(data_dir, pg_dsn):
+    """Cel mai important contract al raportului: e strict read-only - poate
+    fi rulat in siguranta impotriva unui mediu real, chiar cu date reale,
+    fara sa lase nicio urma pe Postgres."""
+    sconn = pdb.open_db(os.path.join(data_dir, "portal.db"))
+    secret = psec.load_secret(os.path.join(data_dir, "secret.key"))
+    firm_id, fc = _adauga_firma_cu_baza_proprie(
+        data_dir, sconn, secret, cui="RO1", name="Firma Test SRL")
+    sconn.close()
+    fc.execute("INSERT INTO clients(id, cui, name) VALUES(1, 'RO1', 'Client Unu')")
+    fc.execute("INSERT INTO client_assignments(username, client_id) VALUES('op', 1)")
+    fc.commit()
+    fc.close()
+
+    raport = mig.raport_migrare(data_dir, pg_dsn)
+
+    assert raport["portal"]["firms"] == 1
+    assert raport["firme"][f"{firm_id} (Firma Test SRL, RO1)"]["clients"] == 1
+    assert raport["postgres"]["are_deja_date"] is False
+    assert raport["postgres"]["schema_ok"] is True
+    assert raport["postgres"]["gata_de_migrare"] is True
+    assert raport["avertismente"] == []
+
+    with psycopg.connect(pg_dsn) as pg:
+        assert pg.execute("SELECT COUNT(*) FROM firms").fetchone()[0] == 0
+        assert pg.execute("SELECT COUNT(*) FROM clients").fetchone()[0] == 0
+
+
+def test_raport_migrare_flags_orphaned_assignments_and_missing_firm_db(data_dir, pg_dsn):
+    sconn = pdb.open_db(os.path.join(data_dir, "portal.db"))
+    secret = psec.load_secret(os.path.join(data_dir, "secret.key"))
+    firm_id, fc = _adauga_firma_cu_baza_proprie(
+        data_dir, sconn, secret, cui="RO1", name="Firma Cu Orfan SRL")
+    fc.execute("INSERT INTO client_assignments(username, client_id) VALUES('op', 99)")
+    fc.commit()
+    fc.close()
+    # a doua firma, fara fisier firm_<id>.db propriu (ex: creata dar
+    # niciodata folosita) - trebuie semnalata, nu sa opreasca raportul.
+    firm_id_fara_baza = sconn.execute(
+        "INSERT INTO firms(name, cui, tip, creat_la) VALUES(?,?,?,?)",
+        ("Firma Fara Baza SRL", "RO2", "direct", "2026-01-01T00:00:00+00:00")
+    ).lastrowid
+    sconn.commit()
+    sconn.close()
+
+    raport = mig.raport_migrare(data_dir, pg_dsn)
+
+    assert any("orfane" in a for a in raport["avertismente"])
+    eticheta_fara_baza = f"{firm_id_fara_baza} (Firma Fara Baza SRL, RO2)"
+    assert raport["firme"][eticheta_fara_baza] == "fara baza de date proprie - ar fi sarita"
+
+
+def test_raport_migrare_detects_postgres_already_seeded(data_dir, pg_dsn):
+    pdb.open_db(os.path.join(data_dir, "portal.db")).close()
+    with psycopg.connect(pg_dsn) as pg:
+        pg.execute("INSERT INTO firms(name, cui) VALUES('Deja acolo', 'RO0')")
+        pg.commit()
+
+    raport = mig.raport_migrare(data_dir, pg_dsn)
+
+    assert raport["postgres"]["are_deja_date"] is True
+    assert raport["postgres"]["gata_de_migrare"] is False
+
+
+def test_raport_migrare_reports_connection_failure_without_raising(data_dir):
+    pdb.open_db(os.path.join(data_dir, "portal.db")).close()
+    raport = mig.raport_migrare(
+        data_dir, f"postgresql://etva_app:gresit@{PG_HOST}:{PG_PORT}/nu_exista")
+    assert "eroare_conectare" in raport["postgres"]
+
+
 def test_migreaza_rolls_back_everything_on_error(data_dir, pg_dsn):
     """O cheie stricata (nu doar un fisier lipsa - acela e sarit deliberat,
     vezi ramura 'fara baza de date proprie') trebuie sa opreasca migrarea

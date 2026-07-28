@@ -28,6 +28,7 @@ eroare lasa baza exact cum era):
 
 Fisierele SQLite nu sunt atinse - raman pe disc ca backup inghetat.
 """
+import json
 import os
 import sqlite3
 import sys
@@ -160,6 +161,90 @@ def _migreaza_firma(pg_cur, firm_id: int, fc) -> dict:
     return stats
 
 
+def raport_migrare(data_dir_path: str, dsn: str) -> dict:
+    """Verificare STRICT read-only, inainte de a rula vreodata migreaza()
+    pe date reale: numara ce s-ar migra si semnaleaza orice ar bloca sau
+    ar fi neasteptat. Nu deschide nicio tranzactie de scriere pe Postgres -
+    doar SELECT-uri, atat pe SQLite cat si pe baza tinta. Gandit sa fie
+    sigur de rulat chiar si direct impotriva unui mediu real (testare/
+    productie), ca pas de pre-verificare separat de migrarea efectiva."""
+    sconn = sqlite3.connect(os.path.join(data_dir_path, "portal.db"))
+    sconn.row_factory = sqlite3.Row
+    secret = psec.load_secret(os.path.join(data_dir_path, "secret.key"))
+
+    raport = {"portal": {}, "firme": {}, "postgres": {}, "avertismente": []}
+    try:
+        for tabel in _TABELE_PORTAL:
+            raport["portal"][tabel] = sconn.execute(
+                f"SELECT COUNT(*) AS n FROM {tabel}").fetchone()["n"]
+
+        firme = sconn.execute("SELECT id, name, cui FROM firms ORDER BY id").fetchall()
+        for f in firme:
+            fid = f["id"]
+            eticheta = f"{fid} ({f['name']}, {f['cui']})"
+            cale = os.path.join(data_dir_path, "firms", f"firm_{fid}.db")
+            rand_cheie = sconn.execute(
+                "SELECT wrapped_key FROM firm_keys WHERE firm_id=?", (fid,)).fetchone()
+            if rand_cheie is None or not os.path.exists(cale):
+                raport["firme"][eticheta] = "fara baza de date proprie - ar fi sarita"
+                continue
+            fc = fdb.open_db(cale, psec.unwrap_key(secret, rand_cheie["wrapped_key"]))
+            try:
+                alocari_orfane = fc.execute(
+                    "SELECT COUNT(*) AS n FROM client_assignments "
+                    "WHERE client_id NOT IN (SELECT id FROM clients)").fetchone()["n"]
+                raport["firme"][eticheta] = {
+                    "clients": fc.execute(
+                        "SELECT COUNT(*) AS n FROM clients").fetchone()["n"],
+                    "client_assignments": fc.execute(
+                        "SELECT COUNT(*) AS n FROM client_assignments").fetchone()["n"],
+                    "reconciliations": fc.execute(
+                        "SELECT COUNT(*) AS n FROM reconciliations").fetchone()["n"],
+                    "invoices_company": fc.execute(
+                        "SELECT COUNT(*) AS n FROM invoices_company").fetchone()["n"],
+                    "invoices_anaf": fc.execute(
+                        "SELECT COUNT(*) AS n FROM invoices_anaf").fetchone()["n"],
+                    "differences": fc.execute(
+                        "SELECT COUNT(*) AS n FROM differences").fetchone()["n"],
+                    "audit_log": fc.execute(
+                        "SELECT COUNT(*) AS n FROM audit_log").fetchone()["n"],
+                }
+                if alocari_orfane:
+                    raport["avertismente"].append(
+                        f"Firma {eticheta}: {alocari_orfane} alocari "
+                        "client_assignments orfane (client sters) - vor fi "
+                        "sarite la migrare, ca de obicei.")
+            finally:
+                fc.close()
+    finally:
+        sconn.close()
+
+    import psycopg
+    from psycopg.rows import dict_row
+    try:
+        # dict_row - pg.verify_schema() indexeaza rezultatele dupa nume de
+        # coloana, nu pozitional.
+        pgconn = psycopg.connect(dsn, row_factory=dict_row)
+    except psycopg.OperationalError as exc:
+        raport["postgres"]["eroare_conectare"] = str(exc)
+        return raport
+    try:
+        cur = pgconn.cursor()
+        probleme_schema = pg.verify_schema(pgconn)
+        raport["postgres"]["schema_ok"] = not probleme_schema
+        if probleme_schema:
+            raport["postgres"]["probleme_schema"] = probleme_schema
+        n_firme = cur.execute("SELECT COUNT(*) AS n FROM firms").fetchone()["n"]
+        n_useri = cur.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        raport["postgres"]["are_deja_date"] = bool(n_firme or n_useri)
+        raport["postgres"]["gata_de_migrare"] = (
+            not probleme_schema and not n_firme and not n_useri)
+    finally:
+        pgconn.close()
+
+    return raport
+
+
 def migreaza(data_dir_path: str, dsn: str) -> dict:
     import psycopg
     from psycopg.rows import dict_row
@@ -223,6 +308,11 @@ def main():
         print("Seteaza DATABASE_URL (postgresql://...).")
         sys.exit(1)
     d = data_dir()
+    if "--dry-run" in sys.argv[1:]:
+        print(f"Verificare read-only pentru {d} (nimic nu se scrie)...")
+        raport = json.dumps(raport_migrare(d, dsn), indent=2, ensure_ascii=False)
+        print(raport)
+        return
     print(f"Migrez {d} -> Postgres...")
     rezumat = migreaza(d, dsn)
     for tabel, n in rezumat.items():
