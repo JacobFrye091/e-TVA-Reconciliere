@@ -250,14 +250,18 @@ git commit -m "db: add contracts.prestator_semnat_la and contract_xml_final"
 - Modify: `portal/contract.py:77-165` (`genereaza_text`), `portal/contract.py:242-314`
   (`genereaza_pdf`)
 - Create: `tests/test_contract.py` (nu există încă în repo - fișier nou, lângă `tests/test_esemneaza.py`)
+- Modify: `tests/test_portal.py:3157-3175` (`test_genereaza_pdf_embeds_esemneaza_signature_tag` -
+  test existent, verifică deja `{{s:1}}` via `pdfplumber`; trebuie extins pentru al doilea tag,
+  nu duplicat într-un test nou și mai slab)
 
 **Interfaces:**
-- Consumes: nimic nou.
+- Consumes: `pdfplumber` (deja o dependință a proiectului - `requirements.txt`, folosită deja în
+  `tests/test_portal.py:3161` pentru exact acest scop).
 - Produces: `genereaza_text(...)` nu mai include propoziția "PRESTATORUL a semnat electronic...";
   `genereaza_pdf(..., tag_semnatura_esemneaza=True)` inserează `{{s:1}}` lângă PRESTATOR și
   `{{s:2}}` lângă BENEFICIAR (nu doar `{{s:1}}` lângă BENEFICIAR, ca acum).
 
-- [ ] **Step 1: Scrie testele care eșuează**
+- [ ] **Step 1: Scrie testul care eșuează pentru text**
 
 Creează `tests/test_contract.py`:
 
@@ -267,35 +271,58 @@ from datetime import datetime, timezone
 from portal import contract
 
 
-def _beneficiar():
-    return {"denumire": "Firma Test SRL", "cui": "RO123", "adresa": "Str. Test 1"}
-
-
 def test_genereaza_text_does_not_assert_prestator_signature():
+    beneficiar = {"denumire": "Firma Test SRL", "cui": "RO123", "adresa": "Str. Test 1"}
     text = contract.genereaza_text(
-        1, _beneficiar(), "lunar", 100.0, datetime(2026, 7, 28, tzinfo=timezone.utc))
+        1, beneficiar, "lunar", 100.0, datetime(2026, 7, 28, tzinfo=timezone.utc))
     assert "a semnat electronic" not in text
     assert "PRESTATOR: VML EXPERT ADVISOR SRL" in text
-
-
-def test_genereaza_pdf_tags_both_signers():
-    text = contract.genereaza_text(
-        1, _beneficiar(), "lunar", 100.0, datetime(2026, 7, 28, tzinfo=timezone.utc))
-    pdf_bytes = contract.genereaza_pdf(text, tag_semnatura_esemneaza=True)
-    assert pdf_bytes.startswith(b"%PDF")
 ```
 
-(Al doilea test verifică doar că generarea nu pică - tag-urile `{{s:1}}`/`{{s:2}}` sunt text alb
-în interiorul unui `Paragraph`, nu ceva ce poate fi extras ușor înapoi dintr-un PDF binar fără o
-librărie de parsare suplimentară; testul de conținut exact rămâne cel din Step 1 pentru text.)
+- [ ] **Step 2: Actualizează testul existent pentru al doilea tag**
 
-- [ ] **Step 2: Rulează testele, confirmă eșecul**
+În `tests/test_portal.py`, funcția `test_genereaza_pdf_embeds_esemneaza_signature_tag`
+(linia ~3157-3175) verifică azi doar `{{s:1}}` (lângă BENEFICIAR, în forma veche). Înlocuiește
+integral funcția cu:
 
-Run: `python -m pytest tests/test_contract.py -v`
+```python
+def test_genereaza_pdf_embeds_esemneaza_signature_tag(app):
+    """Confirmat empiric impotriva eSemneaza real (2026-07-27): un PDF cu
+    "{{s:1}}" in text, incarcat cu extractTags=True, produce singur un camp
+    de semnatura cu pozitie corecta - nu mai trebuie ghicite coordonate.
+    Acum ambele parti semneaza real (vezi planning/specs/2026-07-28-
+    contract-esemneaza-admin-review-design.md), deci ambele tag-uri trebuie
+    prezente: {{s:1}} langa PRESTATOR, {{s:2}} langa BENEFICIAR."""
+    import pdfplumber
+    from portal import contract as contract_mod
+    from datetime import datetime, timezone
+    beneficiar = {"denumire": "Firma Test SRL", "cui": "RO999",
+                 "adresa": "Adresa test"}
+    continut = contract_mod.genereaza_text(
+        1, beneficiar, "lunar", 59.0, datetime.now(timezone.utc))
+    pdf_bytes = contract_mod.genereaza_pdf(continut, tag_semnatura_esemneaza=True)
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        text = pdf.pages[-1].extract_text()
+    assert "{{s:1}}" in text
+    assert "{{s:2}}" in text
+    pdf_fara_tag = contract_mod.genereaza_pdf(continut)
+    with pdfplumber.open(io.BytesIO(pdf_fara_tag)) as pdf:
+        text_fara_tag = pdf.pages[-1].extract_text()
+    assert "{{s:1}}" not in text_fara_tag
+    assert "{{s:2}}" not in text_fara_tag
+```
+
+(`import io` există deja la linia 989 din `tests/test_portal.py`, deci `io.BytesIO` e deja
+disponibil ca nume global în fișier - nu adăuga alt import.)
+
+- [ ] **Step 3: Rulează testele, confirmă eșecul**
+
+Run: `python -m pytest tests/test_contract.py tests/test_portal.py::test_genereaza_pdf_embeds_esemneaza_signature_tag -v`
 Expected: `test_genereaza_text_does_not_assert_prestator_signature` FAIL (textul conține încă
-"a semnat electronic").
+"a semnat electronic"); `test_genereaza_pdf_embeds_esemneaza_signature_tag` FAIL la
+`assert "{{s:2}}" in text` (al doilea tag nu există încă).
 
-- [ ] **Step 3: Implementează în `genereaza_text`**
+- [ ] **Step 4: Implementează în `genereaza_text`**
 
 În `portal/contract.py`, în funcția `genereaza_text` (linia ~154-164), înlocuiește:
 
@@ -320,7 +347,7 @@ PRESTATOR: {FURNIZOR['nume']}     BENEFICIAR: {beneficiar_anaf['denumire']}
 """
 ```
 
-- [ ] **Step 4: Implementează în `genereaza_pdf`**
+- [ ] **Step 5: Implementează în `genereaza_pdf`**
 
 În `portal/contract.py`, în funcția `genereaza_pdf`, în ramura `elif bloc.startswith("PRESTATOR:")`
 (linia ~283-300), înlocuiește:
@@ -353,20 +380,20 @@ Actualizează și docstring-ul parametrului `tag_semnatura_esemneaza` (mențione
     (signInOrder=True: semnatarul 1 = PRESTATOR, semnatarul 2 = BENEFICIAR).
 ```
 
-- [ ] **Step 5: Rulează testele, confirmă succesul**
+- [ ] **Step 6: Rulează testele, confirmă succesul**
 
-Run: `python -m pytest tests/test_contract.py -v`
+Run: `python -m pytest tests/test_contract.py tests/test_portal.py::test_genereaza_pdf_embeds_esemneaza_signature_tag -v`
 Expected: toate PASS.
 
-- [ ] **Step 6: Rulează suita completă (verificare de regresie pe generarea textului)**
+- [ ] **Step 7: Rulează suita completă (verificare de regresie pe generarea textului)**
 
 Run: `python -m pytest -q`
 Expected: toate PASS (verifică niciun test existent nu depindea de textul vechi).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add portal/contract.py tests/test_contract.py
+git add portal/contract.py tests/test_contract.py tests/test_portal.py
 git commit -m "contract: real dual signature (drop textual prestator assertion, tag both signers)"
 ```
 
