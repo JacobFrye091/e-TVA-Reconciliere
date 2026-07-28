@@ -22,6 +22,7 @@ from portal import contract as contract_mod
 from portal import backup as backup_mod
 from portal import trial_reminders as remind_mod
 from etva import db as fdb
+from etva import dbcompat
 from etva import audit, clients
 from etva import anaf_cui
 from etva import anaf_oauth
@@ -170,6 +171,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # eliberarea unui lock neachizitionat de cererea curenta arunca
         # RuntimeError.
         if g.pop("db_lock_acquired", False):
+            if dbcompat.backend() == "postgres":
+                # Pe Postgres si un simplu SELECT deschide o tranzactie
+                # care altfel ar ramane atarnata pe conexiunea unica
+                # partajata; scrierile legitime au facut deja commit in
+                # cursul cererii, deci rollback-ul de aici curata doar
+                # tranzactii de citire sau lucru abandonat de o exceptie.
+                conn.rollback()
             db_lock.release()
 
     if enable_backup_scheduler:
@@ -177,13 +185,22 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     def firm_conn(firm_id: int):
         if firm_id not in firm_conns:
-            wrapped = conn.execute(
-                "SELECT wrapped_key FROM firm_keys WHERE firm_id=?",
-                (firm_id,)).fetchone()["wrapped_key"]
-            key = psec.unwrap_key(secret, wrapped)
-            fc = fdb.open_db(os.path.join(firms_dir, f"firm_{firm_id}.db"), key)
-            fdb.init_schema(fc)
-            firm_conns[firm_id] = fc
+            if dbcompat.backend() == "postgres":
+                # Aceeasi conexiune fizica precum portalul, dar cu
+                # app.firm_id setat inaintea fiecarei comenzi - politicile
+                # RLS din etva/pg_schema.sql izoleaza randurile firmei.
+                # Cheia SQLCipher nu mai are rol aici; firm_keys ramane
+                # scrisa la creare doar pentru recuperabilitatea vechilor
+                # fisiere criptate.
+                firm_conns[firm_id] = dbcompat.firm_scope(conn, firm_id)
+            else:
+                wrapped = conn.execute(
+                    "SELECT wrapped_key FROM firm_keys WHERE firm_id=?",
+                    (firm_id,)).fetchone()["wrapped_key"]
+                key = psec.unwrap_key(secret, wrapped)
+                fc = fdb.open_db(os.path.join(firms_dir, f"firm_{firm_id}.db"), key)
+                fdb.init_schema(fc)
+                firm_conns[firm_id] = fc
         return firm_conns[firm_id]
 
     def current_user():
@@ -2193,6 +2210,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "master_backup",
                 eroare="Restaurarea e dezactivata in productie - ar suprascrie datele live."))
+        if dbcompat.backend() == "postgres":
+            # Arhivele zip contin fisiere SQLite - nu au ce restaura intr-un
+            # mediu care ruleaza pe Postgres (restaurarea PG vine odata cu
+            # integrarea pg_dump in portal/backup.py - vezi
+            # planning/migrare-postgres.md, faza 5).
+            return redirect(url_for(
+                "master_backup",
+                eroare="Restaurarea din arhive SQLite nu e disponibila pe "
+                       "mediile migrate pe Postgres."))
         if request.form.get("confirm") != "da":
             return redirect(url_for(
                 "master_backup", eroare="Trebuie sa confirmi explicit inainte de restaurare."))

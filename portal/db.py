@@ -10,6 +10,7 @@ permissions per role come from etva.db so both sides stay in sync.
 import sqlite3
 from datetime import datetime, timezone
 
+from etva import dbcompat
 from etva.db import PERMISSIONS, DEFAULT_ROLES
 
 ROLE_PERMISSIONS = {
@@ -705,7 +706,30 @@ def set_pret(conn: sqlite3.Connection, tip: str, ciclu: str,
     conn.commit()
 
 
+def _open_db_postgres():
+    """Ramura Postgres a open_db: conexiunea vine din DATABASE_URL, schema
+    nu se creeaza aici (sursa de adevar e etva/pg_schema.sql, aplicat ca
+    pas de operare cu psql -f), ci doar se VERIFICA - pornirea esueaza
+    zgomotos si devreme daca baza a derivat de la referinta. Migrarile
+    _migrate_* raman exclusiv pe ramura SQLite; pe Postgres ruleaza doar
+    cele doua seed-uri idempotente de date initiale."""
+    from etva import pg
+    conn = dbcompat.connect(pg.dsn_from_env())
+    probleme = pg.verify_schema(conn.raw)
+    if probleme:
+        conn.close()
+        raise RuntimeError(
+            "Schema Postgres nu corespunde referintei (ruleaza "
+            "etva/pg_schema.sql): " + "; ".join(probleme))
+    conn.rollback()  # verify_schema a deschis o tranzactie de citire
+    _migrate_seed_planuri_facturare(conn)
+    _migrate_seed_cota_tva(conn)
+    return conn
+
+
 def open_db(path: str) -> sqlite3.Connection:
+    if dbcompat.backend() == "postgres":
+        return _open_db_postgres()
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     _migrate_legacy_users(conn)
