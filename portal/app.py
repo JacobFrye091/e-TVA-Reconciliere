@@ -2590,6 +2590,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
+        if not pipeline.local_pipeline_available():
+            # Un VPS deployat e un singur checkout independent - nu poate
+            # (si nu ar trebui sa incerce sa) citeasca celelalte doua medii.
+            return render_template(
+                "pipeline.html", user=user, local_available=False,
+                labels=pipeline.ENVIRONMENTS, mediu=pipeline.own_environment(),
+                rulare=pipeline.running_vs_current(),
+                eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
         envs = {env: pipeline.branch_info(env) for env in pipeline.ENVIRONMENTS}
         promotions = []
         for source, target in pipeline.PROMOTIONS:
@@ -2605,7 +2613,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 info["blocked"] = str(e)
             promotions.append(info)
         return render_template(
-            "pipeline.html", user=user, envs=envs, labels=pipeline.ENVIRONMENTS,
+            "pipeline.html", user=user, local_available=True, envs=envs,
+            labels=pipeline.ENVIRONMENTS,
             promotions=promotions, istoric=pipeline.history(conn),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 

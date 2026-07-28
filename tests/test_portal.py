@@ -950,6 +950,9 @@ def test_pipeline_dashboard_requires_master(app):
 
 def test_pipeline_dashboard_and_promote(app, monkeypatch):
     _seed_master(app)
+    # Not dependent on the real repo's disk layout (siblings may not exist
+    # on whatever machine runs the suite) - explicit like the rest of this test.
+    monkeypatch.setattr(pl, "local_pipeline_available", lambda: True)
     monkeypatch.setattr(pl, "branch_info", lambda env: {
         "env": env, "branch": pl.ENVIRONMENTS[env]["branch"], "exists": True,
         "path": "x", "commit": "abcd123", "subject": "test", "date": "2026-07-22"})
@@ -969,6 +972,28 @@ def test_pipeline_dashboard_and_promote(app, monkeypatch):
     assert "GitHub".encode() in r2.data
     hist = pl.history(app.portal_conn)
     assert hist[0]["commit_hash"] == "deadbeef" and hist[0]["promoted_by"] == "sef"
+
+
+def test_pipeline_dashboard_degrades_gracefully_on_a_vps_deploy(app, monkeypatch):
+    """A VPS deployment is a single standalone checkout, never a sibling
+    worktree of the other two environments - the dashboard must show a
+    plain current-environment summary instead of the local 3-worktree
+    table/promotion UI (vezi task #185)."""
+    _seed_master(app)
+    monkeypatch.setattr(pl, "local_pipeline_available", lambda: False)
+    monkeypatch.setattr(pl, "own_environment", lambda: "productie")
+    monkeypatch.setattr(pl, "running_vs_current", lambda: {
+        "started_commit": "abcd123", "started_subject": "test", "started_at": "t",
+        "current_commit": "abcd123", "stale": False})
+
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/pipeline")
+    assert r.status_code == 200
+    assert "Productie".encode() in r.data
+    assert "abcd123".encode() in r.data
+    assert "Promoveaza".encode() not in r.data
+    assert "Folderul nu exista".encode() not in r.data
 
 
 def test_pipeline_promote_reports_when_push_fails(app, monkeypatch):

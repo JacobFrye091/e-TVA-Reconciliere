@@ -159,6 +159,33 @@ def test_own_environment_none_when_unrecognized(envs, monkeypatch, tmp_path):
     assert pipeline.own_environment() is None
 
 
+def test_own_environment_prefers_etva_env_override(monkeypatch, tmp_path):
+    """A VPS deployment is never a sibling worktree of the other two
+    environments - _repo_paths()/_OWN_REPO matching never resolves there,
+    so the explicit ETVA_ENV signal (set in each systemd unit) must win
+    regardless of what _OWN_REPO happens to be."""
+    monkeypatch.setenv("ETVA_ENV", "productie")
+    monkeypatch.setattr(pipeline, "_OWN_REPO", tmp_path / "opt" / "etva-productie" / "app")
+    assert pipeline.own_environment() == "productie"
+
+
+def test_own_environment_ignores_invalid_etva_env_value(envs, monkeypatch):
+    monkeypatch.setenv("ETVA_ENV", "not-a-real-environment")
+    monkeypatch.setattr(pipeline, "_OWN_REPO", envs["testare"])
+    assert pipeline.own_environment() == "testare"
+
+
+def test_local_pipeline_available_true_when_all_three_exist(envs):
+    assert pipeline.local_pipeline_available() is True
+
+
+def test_local_pipeline_available_false_when_a_worktree_is_missing(
+        envs, monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "_repo_paths", lambda: {
+        **envs, "dev": tmp_path / "does-not-exist"})
+    assert pipeline.local_pipeline_available() is False
+
+
 def test_capture_started_commit_handles_missing_git(monkeypatch):
     def _boom(*a, **kw):
         raise pipeline.PipelineError("git not found")

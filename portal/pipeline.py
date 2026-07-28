@@ -8,6 +8,7 @@ tree files. It never force-overwrites diverged history, and it never
 touches a running server — the operator restarts that environment's
 own launcher afterwards.
 """
+import os
 import pathlib
 import subprocess
 from datetime import datetime, timezone
@@ -98,10 +99,20 @@ def running_vs_current() -> dict:
 
 def own_environment() -> str | None:
     """Which of dev/testare/productie this running process's own worktree
-    is, by matching _OWN_REPO against the known paths - or None if it
-    doesn't resolve to any of them (e.g. a throwaway test/dev data dir).
+    is - or None if it can't be determined.
+
+    Prefers the explicit ETVA_ENV environment variable (set in each VPS
+    systemd unit) when present, since a deployed instance is never a
+    sibling worktree of the other two environments - _repo_paths() only
+    resolves on the local dev machine's DEV/TESTARE/PROD layout, so
+    matching against it would silently always return None on the VPS.
+    Falls back to matching _OWN_REPO against the known local paths (e.g.
+    a throwaway test/dev data dir resolves to None either way).
     Used to hard-block operations (like restoring a backup) that must
     never run against productie, regardless of what the operator uploads."""
+    override = os.environ.get("ETVA_ENV")
+    if override in ENVIRONMENTS:
+        return override
     paths = _repo_paths()
     for env, path in paths.items():
         try:
@@ -110,6 +121,15 @@ def own_environment() -> str | None:
         except OSError:
             continue
     return None
+
+
+def local_pipeline_available() -> bool:
+    """True only on the local dev machine, where DEV/TESTARE/PROD exist
+    side by side as three worktrees of the same repo. A VPS deployment
+    is a single standalone checkout - it can't see (and shouldn't try to
+    read) the other two environments, so the full pipeline dashboard and
+    promotion actions only make sense when this is true."""
+    return all(path.exists() for path in _repo_paths().values())
 
 
 def branch_info(env: str) -> dict:
