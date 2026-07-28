@@ -1,3 +1,4 @@
+import os
 import re
 
 import pytest
@@ -6,9 +7,38 @@ from portal import security as psec
 from etva import anaf_cui
 from etva import esemneaza
 
+# ETVA_TEST_PG=1 ruleaza intreaga suita din acest fisier impotriva unui
+# Postgres local real, in loc de SQLite - vezi planning/migrare-postgres.md.
+# Cere acelasi cluster local (127.0.0.1:54329, rol etva_app, sablon
+# etva_template) ca tests/test_migrare_pg.py; fara acel cluster, aceasta
+# variabila nu trebuie setata (suita implicita ramane pe SQLite).
+_TEST_PG_HOST, _TEST_PG_PORT = "127.0.0.1", 54329
+_TEST_PG_ADMIN_DSN = f"postgresql://postgres@{_TEST_PG_HOST}:{_TEST_PG_PORT}/postgres"
+
+# Backup/restaurare ramane exclusiv SQLite pana la Faza 5 (pg_dump - vezi
+# planning/migrare-postgres.md) - pe Postgres, restaureaza_backup() refuza
+# explicit orice incercare inainte sa ajunga la logica pe care o testeaza
+# aceste cazuri, iar zipul creat de create_backup() nu are ce sa contina
+# (nu exista portal.db pe disc).
+doar_sqlite = pytest.mark.skipif(
+    os.environ.get("ETVA_TEST_PG") == "1",
+    reason="backup/restaurare ramane exclusiv SQLite pana la Faza 5 (pg_dump)")
+
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
+    nume_pg = None
+    if os.environ.get("ETVA_TEST_PG") == "1":
+        import psycopg
+        nume_pg = "etva_test_" + os.urandom(4).hex()
+        with psycopg.connect(_TEST_PG_ADMIN_DSN, autocommit=True) as admin:
+            admin.execute(f"DROP DATABASE IF EXISTS {nume_pg}")
+            admin.execute(f"CREATE DATABASE {nume_pg} TEMPLATE etva_template")
+        monkeypatch.setenv("ETVA_DB", "postgres")
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            f"postgresql://etva_app:etva_test@{_TEST_PG_HOST}:{_TEST_PG_PORT}/{nume_pg}")
+
     a = create_app(str(tmp_path))
     a.config["TESTING"] = True
     # Practica standard flask-wtf pentru teste: restul suitei posteaza
@@ -23,7 +53,17 @@ def app(tmp_path, monkeypatch):
     # (implicit real) are propriile teste, vezi test_contracte_dezactivate_*.
     import portal.app as app_module
     monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", True)
-    return a
+    yield a
+
+    if nume_pg:
+        import psycopg
+        # Conexiunea proprie a aplicatiei (portal_conn) trebuie inchisa
+        # explicit - altfel DROP DATABASE esueaza cu "is being accessed by
+        # other users", fiindca acea conexiune ramane deschisa pana la
+        # garbage collection.
+        a.portal_conn.close()
+        with psycopg.connect(_TEST_PG_ADMIN_DSN, autocommit=True) as admin:
+            admin.execute(f"DROP DATABASE IF EXISTS {nume_pg}")
 
 
 @pytest.fixture(autouse=True)
@@ -2238,13 +2278,20 @@ def test_descarca_factura_pdf_returns_pdf_bytes(app):
 
 def test_next_invoice_number_starts_at_one_and_increments(app):
     from portal import invoicing
+    from etva import dbcompat
     assert invoicing.next_invoice_number(app.portal_conn, "ETVA") == 1
+    # invoices.firm_id are FK spre firms (aplicata pe PG, doar declarata pe
+    # SQLite) - firma trebuie sa existe cu adevarat, nu doar un id inventat.
+    firm_id = dbcompat.insert_id(
+        app.portal_conn,
+        "INSERT INTO firms(name, cui, tip, creat_la) VALUES(?,?,?,?)",
+        ("Test SRL", "RO1", "direct", "2026-01-01T00:00:00+00:00"))
     app.portal_conn.execute(
         "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
         "descriere, data_emiterii, valoare_neta, cota_tva, valoare_tva, "
         "valoare_totala, creat_de, creat_la) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("ETVA", 1, 1, "Test SRL", "RO1", "Test", "2026-01-01", 100, 19, 19,
-         119, "sef", "2026-01-01"))
+        ("ETVA", 1, firm_id, "Test SRL", "RO1", "Test", "2026-01-01", 100, 19,
+         19, 119, "sef", "2026-01-01"))
     assert invoicing.next_invoice_number(app.portal_conn, "ETVA") == 2
 
 
@@ -2653,6 +2700,7 @@ def test_restaureaza_backup_blocked_in_productie(app, monkeypatch):
     assert "dezactivata in productie".encode() in r.data
 
 
+@doar_sqlite
 def test_restaureaza_backup_requires_confirmation(app, monkeypatch):
     monkeypatch.setattr(pl, "own_environment", lambda: "testare")
     _seed_master(app)
@@ -2663,6 +2711,7 @@ def test_restaureaza_backup_requires_confirmation(app, monkeypatch):
     assert "confirmi explicit".encode() in r.data
 
 
+@doar_sqlite
 def test_restaureaza_backup_requires_file(app, monkeypatch):
     monkeypatch.setattr(pl, "own_environment", lambda: "testare")
     _seed_master(app)
@@ -2674,6 +2723,7 @@ def test_restaureaza_backup_requires_file(app, monkeypatch):
     assert "Alege un fisier".encode() in r.data
 
 
+@doar_sqlite
 def test_restaureaza_backup_rejects_invalid_zip(app, monkeypatch):
     import io
     import zipfile
@@ -2693,6 +2743,7 @@ def test_restaureaza_backup_rejects_invalid_zip(app, monkeypatch):
     assert "Restaurare esuata".encode() in r.data
 
 
+@doar_sqlite
 def test_restaureaza_backup_restores_older_state_and_closes_process_connections(app, monkeypatch):
     import io
     import sqlite3
@@ -3243,6 +3294,7 @@ def test_creeaza_backup_requires_master(app):
     assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
 
 
+@doar_sqlite
 def test_creeaza_backup_produces_downloadable_zip_and_logs_action(app):
     import zipfile
     _seed_master(app)
