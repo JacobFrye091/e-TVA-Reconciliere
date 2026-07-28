@@ -5,9 +5,6 @@
 .contract-text { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;
   line-height: 1.6; background: var(--paper); border: 1px solid var(--border);
   border-radius: 8px; padding: 18px; max-height: 420px; overflow-y: auto; }
-.metoda-optiuni { display: flex; gap: 18px; margin: 14px 0; flex-wrap: wrap; }
-.metoda-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px;
-  flex: 1; min-width: 240px; }
 </style>
 {% endblock %}
 {% block continut %}
@@ -24,17 +21,28 @@
   <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
   {% endif %}
 
-  {% if contract %}
+  {% if contract is none %}
+  <div class="card">
+    <p class="sub">Contractul tău e în pregătire — vei fi anunțat când e gata de semnat.</p>
+  </div>
+  {% else %}
   <div class="card">
     <p class="sub">Contract nr. <b>{{ contract['numar'] }}</b>, ciclu de facturare
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[contract['ciclu_facturare']] }}</b>,
       {{ '%.2f'|format(contract['suma']) }} RON.
+      {% if contract['stare'] == 'semnat' %}
       <a href="/panou/contract/pdf" target="_blank">Descarcă PDF</a> ·
-      <a href="/panou/contract/xml">Descarcă XML</a></p>
+      <a href="/panou/contract/xml">Descarcă XML</a>
+      {% endif %}</p>
     <div class="contract-text">{{ continut }}</div>
   </div>
 
-  {% if contract['stare'] == 'in_asteptare' and contract['esemneaza_request_id'] %}
+  {% if contract['stare'] == 'in_asteptare' and not contract['prestator_semnat_la'] %}
+  <div class="card">
+    <p class="sub" style="color:var(--warn)">Contractul așteaptă finalizarea din partea noastră.
+      Pagina verifică automat starea de fiecare dată când o reîncarci.</p>
+  </div>
+  {% elif contract['stare'] == 'in_asteptare' and contract['esemneaza_request_id'] %}
   <div class="card">
     <p class="sub" style="color:var(--warn)">Contractul a fost trimis spre semnare prin
       eSemneaza.ro — verifică emailul primit de la <b>eSemneaza.ro</b> și semnează acolo.
@@ -44,38 +52,13 @@
   </div>
   {% elif contract['stare'] == 'in_asteptare' %}
   <div class="card">
-    <h2>Semnează contractul</h2>
-    <p class="sub">Alege o metodă de semnătură.</p>
-    <div class="metoda-optiuni">
-      <div class="metoda-card">
-        <h3 style="margin-bottom:8px">Semnătură electronică (eSemneaza.ro)</h3>
-        <p class="nota" style="margin:0 0 8px">Vei primi un email de la eSemneaza.ro cu un link
-          securizat de semnare — nicio informație nu se salvează pe telefonul sau
-          computerul tău în afara acelui serviciu.</p>
-        <form method="post" action="/panou/contract/semneaza">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="metoda" value="esemneaza">
-          <button class="btn-lat" type="submit">Semnează cu eSemneaza.ro</button>
-        </form>
-      </div>
-      <div class="metoda-card">
-        <h3 style="margin-bottom:8px">Certificat digital calificat</h3>
-        <p class="nota" style="margin:0 0 8px">Încarcă documentul PDF deja semnat cu propriul
-          certificat calificat — verificăm semnătura încorporată.</p>
-        <form method="post" action="/panou/contract/semneaza" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="metoda" value="certificat">
-          <input type="file" name="semnatura_fisier" accept=".pdf" required>
-          <button class="btn-lat" type="submit" style="margin-top:10px">Încarcă documentul semnat</button>
-        </form>
-      </div>
-    </div>
+    <p class="sub" style="color:var(--warn)">Cererea anterioară a fost respinsă sau anulată —
+      echipa noastră va retrimite contractul.</p>
   </div>
   {% elif contract['stare'] == 'semnat' %}
   <div class="card">
     <p class="sub" style="color:var(--ok)">Contract semnat la {{ contract['semnat_la'][:10] }}
-      ({{ {'esemneaza': 'eSemneaza.ro', 'certificat': 'certificat digital',
-           'mouse': 'semnătură desenată'}[contract['metoda_semnatura']] }}).
+      (eSemneaza.ro).
       {% if contract['esemneaza_certificate_pdf'] %}
       <a href="/panou/contract/certificat" target="_blank">Descarcă certificatul de semnătură</a>
       {% endif %}</p>

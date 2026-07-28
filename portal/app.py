@@ -915,33 +915,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return contract_mod.genereaza_pdf(continut, nota_semnatura=nota)
         return contract_mod.genereaza_pdf(continut)
 
-    def _genereaza_contract(firm) -> "tuple[object, str | None]":
-        """Contractul curent al firmei, generat din nou daca nu exista inca
-        unul sau daca firma si-a schimbat ciclul de facturare de atunci.
-        Intoarce (rand, eroare) - eroare != None daca ANAF nu a putut fi
-        contactat (contractul vechi, daca exista, ramane cel curent)."""
-        existent = _contract_curent(firm["id"])
-        if (existent is not None
-                and existent["ciclu_facturare"] == firm["ciclu_facturare"]):
-            return existent, None
-        try:
-            beneficiar = contract_mod.date_beneficiar(firm["cui"])
-        except contract_mod.ContractError as e:
-            return existent, str(e)
-        suma = _calculeaza_suma_plata(firm, firm["ciclu_facturare"])
-        numar = contract_mod.next_contract_number(conn)
-        cur = conn.execute(
-            "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
-            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
-            "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
-            (firm["id"], numar, firm["ciclu_facturare"], suma,
-             beneficiar["denumire"], beneficiar["cui"], beneficiar["adresa"],
-             pdb.CONTRACT_STARE_IN_ASTEPTARE,
-             datetime.now(timezone.utc).isoformat()))
-        conn.commit()
-        return conn.execute(
-            "SELECT * FROM contracts WHERE id=?", (cur.lastrowid,)).fetchone(), None
-
     def _finalizeaza_contract_esemneaza(contract, request_id: str):
         """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
         documentul final + certificatul primite de la eSemneaza, si ingheata
@@ -1041,20 +1014,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if (user is None or user["is_master"]
                 or not _role_in_firm(user["id"], active_firm_id)):
             return redirect(url_for("login"))
-        firm = conn.execute("SELECT * FROM firms WHERE id=?",
-                            (active_firm_id,)).fetchone()
-        if firm is None or not firm["ciclu_facturare"]:
-            return redirect(url_for(
-                "alege_plan", eroare="Alege intai un ciclu de facturare."))
-        contract, eroare_generare = _genereaza_contract(firm)
+        contract = _contract_curent(active_firm_id)
         contract = _actualizeaza_stare_esemneaza(contract)
         continut = (contract_mod.genereaza_text_din_rand(contract)
                    if contract is not None else None)
         return render_template(
-            "contract_semneaza.html", user=user, firm=firm, contract=contract,
+            "contract_semneaza.html", user=user, contract=contract,
             continut=continut,
-            eroare=eroare_generare or request.args.get("eroare"),
-            mesaj=request.args.get("mesaj"))
+            eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.get("/panou/contract/pdf")
     def descarca_contract_pdf():
@@ -1125,56 +1092,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         metoda = request.form.get("metoda")
         acum = datetime.now(timezone.utc).isoformat()
 
-        if metoda == pdb.CONTRACT_METODA_ESEMNEAZA:
-            if not ESEMNEAZA_API_KEY:
-                return redirect(url_for(
-                    "vezi_contract",
-                    eroare="Semnarea electronica nu este configurata inca pe acest server."))
-            admin = conn.execute(
-                "SELECT u.email FROM user_firms uf JOIN users u ON u.id = uf.user_id "
-                "WHERE uf.firm_id=? AND uf.role='admin' AND u.email IS NOT NULL "
-                "LIMIT 1", (active_firm_id,)).fetchone()
-            if admin is None or not admin["email"]:
-                return redirect(url_for(
-                    "vezi_contract",
-                    eroare="Adminul firmei nu are o adresa de email inregistrata "
-                          "- necesara pentru trimiterea contractului spre semnare."))
-            firm = conn.execute("SELECT * FROM firms WHERE id=?",
-                                (active_firm_id,)).fetchone()
-            continut = contract_mod.genereaza_text_din_rand(contract)
-            # tag_semnatura_esemneaza=True adauga "{{s:1}}" invizibil dupa
-            # BENEFICIAR - eSemneaza il detecteaza singur (extract_tags=True
-            # mai jos) si calculeaza pozitia reala a campului, fara sa
-            # ghicim noi coordonate fixe.
-            pdf_bytes = contract_mod.genereaza_pdf(
-                continut, tag_semnatura_esemneaza=True)
-            try:
-                file_name = esemneaza.upload_document(
-                    ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{contract['numar']}.pdf")
-                # Semnatura PRESTATORULUI (VML) e deja inclusa in textul
-                # contractului la generare (vezi contract.genereaza_text) -
-                # doar BENEFICIARUL semneaza efectiv prin eSemneaza.
-                rezultat = esemneaza.create_sign_request(
-                    ESEMNEAZA_API_KEY, file_name,
-                    recipients=[{"email": admin["email"], "name": firm["name"]}],
-                    sender_name="e-TVA Reconciliere", extract_tags=True)
-            except esemneaza.EsemneazaError as e:
-                return redirect(url_for(
-                    "vezi_contract",
-                    eroare=f"Nu am putut trimite contractul spre semnare: {e}"))
-            conn.execute(
-                "UPDATE contracts SET metoda_semnatura=?, esemneaza_request_id=? "
-                "WHERE id=?",
-                (pdb.CONTRACT_METODA_ESEMNEAZA, rezultat.get("id"), contract["id"]))
-            conn.commit()
-            audit_fc = firm_conn(active_firm_id)
-            audit.log(audit_fc, user["username"], "contract.trimis_spre_semnare",
-                      "contract", str(contract["id"]))
-            return redirect(url_for(
-                "vezi_contract",
-                mesaj=f"Am trimis contractul spre semnare la {admin['email']} - "
-                     f"verifica emailul primit de la eSemneaza.ro."))
-        elif metoda == pdb.CONTRACT_METODA_CERTIFICAT:
+        if metoda == pdb.CONTRACT_METODA_CERTIFICAT:
             fisier = request.files.get("semnatura_fisier")
             if fisier is None or not fisier.filename:
                 return redirect(url_for(

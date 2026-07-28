@@ -3105,54 +3105,73 @@ def test_vezi_contract_requires_login(app):
     assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
 
 
-def test_vezi_contract_requires_ciclu_ales(app):
+def _creeaza_si_trimite_contract_master(app, firm_id, suma="100.00"):
+    """Creeaza si trimite spre semnare un contract prin ruta noua a
+    masterului (Task 4/5) - inlocuieste vechiul flux in care firma insasi
+    declansa generarea/trimiterea din propria pagina (eliminat in acest
+    task, vezi vezi_contract). Rezultatul e in_asteptare, cu ambii
+    semnatari inregistrati la eSemneaza (mock-uit implicit, vezi fixture-ul
+    autouse _mock_esemneaza)."""
+    master = _creeaza_master(app)
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": suma})
+    return master
+
+
+def test_vezi_contract_shows_in_pregatire_when_none_sent(app):
     c = app.test_client()
-    inregistreaza(c, cui="RO301")
-    r = c.get("/panou/contract", follow_redirects=True)
-    assert "Alege intai un ciclu".encode() in r.data
+    inregistreaza(c, cui="RO307")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    r = c.get("/panou/contract")
+    assert "pregătire".encode() in r.data
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts").fetchone()["n"] == 0
 
 
-def test_vezi_contract_genereaza_contract_cu_ambele_parti(app):
+def test_vezi_contract_waits_for_prestator_before_showing_email_message(app, monkeypatch):
+    c = app.test_client()
+    inregistreaza(c, cui="RO308")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO308'").fetchone()["id"]
+    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
+        "recipients": [
+            {"order": 1, "sigStatus": esemneaza.SIGSTATUS_PENDING},
+            {"order": 2, "sigStatus": esemneaza.SIGSTATUS_PENDING}]})
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": "100.00"})
+    r = c.get("/panou/contract")
+    assert "finalizarea din partea noastră".encode() in r.data
+
+
+def test_vezi_contract_shows_contract_text_after_master_sends_it(app):
     c = app.test_client()
     inregistreaza(c, cui="RO302", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO302'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.get("/panou/contract")
     assert r.status_code == 200
     assert "VML EXPERT ADVISOR SRL".encode() in r.data
-    assert "Firma Test".encode() in r.data  # denumirea mock-uita de _mock_anaf_cui
+    assert "Firma Test SRL".encode() in r.data  # denumirea trimisa de master
     row = app.portal_conn.execute(
         "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
         "WHERE f.cui='RO302'").fetchone()
-    assert row["stare"] == "in_asteptare"
     assert row["ciclu_facturare"] == "lunar"
-    assert row["suma"] == 59
-
-
-def test_vezi_contract_regenereaza_daca_ciclul_se_schimba(app):
-    c = app.test_client()
-    inregistreaza(c, cui="RO303", tip="direct")
-    c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO303'").fetchone()["id"]
-    numar_initial = app.portal_conn.execute(
-        "SELECT numar FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()["numar"]
-
-    c.post("/panou/plan", data={"ciclu": "an"})
-    c.get("/panou/contract")
-    contracte = app.portal_conn.execute(
-        "SELECT numar, ciclu_facturare FROM contracts WHERE firm_id=? ORDER BY id",
-        (firm_id,)).fetchall()
-    assert len(contracte) == 2
-    assert contracte[-1]["ciclu_facturare"] == "an"
-    assert contracte[-1]["numar"] != numar_initial
+    assert row["suma"] == 100.00
 
 
 def test_descarca_contract_pdf(app):
     c = app.test_client()
     inregistreaza(c, cui="RO310", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO310'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.get("/panou/contract/pdf")
     assert r.status_code == 200
     assert r.data[:4] == b"%PDF"
@@ -3168,7 +3187,9 @@ def test_descarca_contract_pdf_renders_romanian_diacritics(app):
     c = app.test_client()
     inregistreaza(c, cui="RO314", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO314'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.get("/panou/contract/pdf")
     with pdfplumber.open(io.BytesIO(r.data)) as pdf:
         text = pdf.pages[0].extract_text()
@@ -3206,14 +3227,18 @@ def test_descarca_contract_xml(app):
     c = app.test_client()
     inregistreaza(c, cui="RO315", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO315'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.get("/panou/contract/xml")
     assert r.status_code == 200
     assert r.mimetype == "application/xml"
-    # beneficiar_cui e stocat asa cum vine de la ANAF (normalizat, fara "RO" -
-    # vezi anaf_cui.normalize_cui), nu forma afisata in text.
-    assert b"<cui>315</cui>" in r.data
-    assert b"Firma Test" in r.data  # denumirea mock-uita de _mock_anaf_cui
+    # beneficiar_cui e acum stocat exact cum e in firms.cui (ruta noua a
+    # masterului nu mai re-normalizeaza prin ANAF la trimitere - vezi
+    # trimite_contract_master), deci pastreaza prefixul "RO" trimis la
+    # inregistrare.
+    assert b"<cui>RO315</cui>" in r.data
+    assert b"Firma Test SRL" in r.data  # denumirea trimisa de master
 
 
 def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(
@@ -3226,7 +3251,13 @@ def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(
     c = app.test_client()
     inregistreaza(c, cui="RO316", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO316'").fetchone()["id"]
+    # Nicio interogare GET /panou/contract intre trimitere si semnare cu
+    # certificat - mock-ul _mock_esemneaza raporteaza implicit ambii
+    # semnatari ca APPLIED, ceea ce ar finaliza contractul automat prin
+    # eSemneaza inainte sa apucam sa testam ramura certificat.
+    _creeaza_si_trimite_contract_master(app, firm_id)
     c.post("/panou/contract/semneaza", data={
         "metoda": "certificat",
         "semnatura_fisier": (io.BytesIO(pdf_semnat), "contract_semnat.pdf"),
@@ -3242,69 +3273,19 @@ def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(
     assert "nu este păstrat pe server" in text
 
 
-def test_semneaza_contract_esemneaza_completeaza_semnatura(app):
+def test_semneaza_contract_rejects_esemneaza_method_from_firm(app):
     c = app.test_client()
-    inregistreaza(c, cui="RO304", tip="direct")
+    inregistreaza(c, cui="RO309")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    _semneaza_contract_esemneaza(c)
-    row = app.portal_conn.execute(
-        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
-        "WHERE f.cui='RO304'").fetchone()
-    assert row["stare"] == "semnat"
-    assert row["metoda_semnatura"] == "esemneaza"
-    assert row["semnatura_verificata"] == 1
-    assert bytes(row["esemneaza_document_pdf"]) == b"%PDF-fake-signed-bytes"
-    assert bytes(row["esemneaza_certificate_pdf"]) == b"%PDF-fake-signed-bytes"
-    assert row["semnat_la"] is not None
-
-
-def test_semneaza_contract_esemneaza_requires_api_key(app, monkeypatch):
-    import portal.app as app_module
-    monkeypatch.setattr(app_module, "ESEMNEAZA_API_KEY", None)
-    c = app.test_client()
-    inregistreaza(c, cui="RO314", tip="direct")
-    c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    master = _creeaza_master(app)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO309'").fetchone()["id"]
+    master.post(f"/master/contracte/creeaza/{firm_id}", data={
+        "denumire": "Firma Test SRL", "adresa": "Str. Test 1",
+        "ciclu": "lunar", "suma": "100.00"})
     r = c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"},
               follow_redirects=True)
-    assert "nu este configurata".encode() in r.data
-
-
-def test_semneaza_contract_esemneaza_stays_pending_until_signed(app, monkeypatch):
-    from etva import esemneaza
-    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
-        "status": "IN_PROGRESS",
-        "recipients": [{"order": 1, "sigStatus": esemneaza.SIGSTATUS_PENDING}]})
-    c = app.test_client()
-    inregistreaza(c, cui="RO315", tip="direct")
-    c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
-    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
-    r = c.get("/panou/contract")
-    assert "trimis spre semnare".encode() in r.data.lower()
-    row = app.portal_conn.execute(
-        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
-        "WHERE f.cui='RO315'").fetchone()
-    assert row["stare"] == "in_asteptare"
-    assert row["esemneaza_request_id"] is not None
-
-
-def test_semneaza_contract_esemneaza_rejected_clears_request(app, monkeypatch):
-    from etva import esemneaza
-    monkeypatch.setattr(esemneaza, "get_sign_request", lambda *a, **kw: {
-        "status": "IN_PROGRESS",
-        "recipients": [{"order": 1, "sigStatus": esemneaza.SIGSTATUS_REJECTED}]})
-    c = app.test_client()
-    inregistreaza(c, cui="RO316", tip="direct")
-    c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
-    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
-    c.get("/panou/contract")
-    row = app.portal_conn.execute(
-        "SELECT c.* FROM contracts c JOIN firms f ON f.id=c.firm_id "
-        "WHERE f.cui='RO316'").fetchone()
-    assert row["stare"] == "in_asteptare"
-    assert row["esemneaza_request_id"] is None
+    assert "metoda de semnatura valida".encode() in r.data
 
 
 def test_webhook_esemneaza_requires_secret_header(app):
@@ -3319,8 +3300,9 @@ def test_webhook_esemneaza_finalizes_matching_contract(app, monkeypatch):
     c = app.test_client()
     inregistreaza(c, cui="RO317", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
-    c.post("/panou/contract/semneaza", data={"metoda": "esemneaza"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO317'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     request_id = app.portal_conn.execute(
         "SELECT c.esemneaza_request_id FROM contracts c JOIN firms f "
         "ON f.id=c.firm_id WHERE f.cui='RO317'").fetchone()["esemneaza_request_id"]
@@ -3339,7 +3321,9 @@ def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certi
     c = app.test_client()
     inregistreaza(c, cui="RO305", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO305'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.post("/panou/contract/semneaza", data={
         "metoda": "certificat",
         "semnatura_fisier": (io.BytesIO(pdf_semnat), "contract_semnat.pdf"),
@@ -3363,28 +3347,38 @@ def test_semneaza_contract_certificat_rejects_unsigned_pdf(app):
     c = app.test_client()
     inregistreaza(c, cui="RO311", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO311'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     from reportlab.pdfgen import canvas as _canvas
     buf = io.BytesIO()
     cv = _canvas.Canvas(buf)
     cv.drawString(100, 750, "fara semnatura")
     cv.save()
+    # Nu urmarim redirectul in acelasi apel: pasul urmator (GET /panou/contract)
+    # ar declansa _actualizeaza_stare_esemneaza, care sub mock-ul implicit
+    # _mock_esemneaza ar finaliza contractul prin eSemneaza inainte sa
+    # apucam sa citim starea ramasa dupa incercarea (esuata) cu certificat.
     r = c.post("/panou/contract/semneaza", data={
         "metoda": "certificat",
         "semnatura_fisier": (io.BytesIO(buf.getvalue()), "nesemnat.pdf"),
-    }, content_type="multipart/form-data", follow_redirects=True)
-    assert "nu contine nicio semnatura".encode() in r.data
+    }, content_type="multipart/form-data", follow_redirects=False)
+    assert r.status_code == 302
     row = app.portal_conn.execute(
         "SELECT c.stare FROM contracts c JOIN firms f ON f.id=c.firm_id "
         "WHERE f.cui='RO311'").fetchone()
     assert row["stare"] == "in_asteptare"
+    r2 = c.get(r.headers["Location"])
+    assert "nu contine nicio semnatura".encode() in r2.data
 
 
 def test_semneaza_contract_certificat_rejects_non_pdf_file(app):
     c = app.test_client()
     inregistreaza(c, cui="RO312", tip="direct")
     c.post("/panou/plan", data={"ciclu": "lunar"})
-    c.get("/panou/contract")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO312'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
     r = c.post("/panou/contract/semneaza", data={
         "metoda": "certificat",
         "semnatura_fisier": (io.BytesIO(b"nu e deloc pdf"), "gresit.txt"),
