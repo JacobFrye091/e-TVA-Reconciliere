@@ -1316,10 +1316,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                 datetime.now().isoformat())).fetchone()["n"]
         return render_template("master.html", user=user, firms=firms,
                                versiune=pipeline.running_vs_current(),
+                               mediu=pipeline.own_environment(),
                                n_mesaje_necitite=n_mesaje_necitite,
                                n_cereri_in_asteptare=n_cereri_in_asteptare,
                                n_cereri_intarziate=n_cereri_intarziate,
-                               contracte_active=CONTRACTE_ACTIVE)
+                               contracte_active=CONTRACTE_ACTIVE,
+                               eroare=request.args.get("eroare"),
+                               mesaj=request.args.get("mesaj"))
 
     @app.post("/master/firma/<int:firm_id>/comutare")
     def toggle_firm(firm_id):
@@ -2713,6 +2716,22 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                  f"'git push origin {pipeline.ENVIRONMENTS[target]['branch']}' "
                  f"din folderul {target}.")
         return redirect(url_for("pipeline_dashboard", eroare=eroare))
+
+    @app.post("/master/server/restart")
+    def restart_server():
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        mediu = pipeline.own_environment()
+        if mediu not in ("testare", "productie"):
+            return redirect(url_for(
+                "master",
+                eroare="Repornirea prin buton nu e disponibila in acest mediu."))
+        _log_master_action(user, "server_repornire_solicitata", mediu)
+        pipeline.request_server_restart(data_dir)
+        return redirect(url_for(
+            "master",
+            mesaj="Repornire solicitata - serverul va reporni in cateva secunde."))
 
     # ---------- product API (session-based) ----------
     @app.get("/api/csrf-token")

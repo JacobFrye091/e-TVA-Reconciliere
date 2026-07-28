@@ -14,6 +14,13 @@ a.mic:hover { background:var(--paper); }
 {% endblock %}
 {% block continut %}
 <main>
+  {% if mesaj %}
+  <div class="card"><p class="sub" style="color:var(--ok);margin:0">{{ mesaj }}</p></div>
+  {% endif %}
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
   {% if versiune.started_commit %}
   <div class="mu-versiune {{ 'stale' if versiune.stale else 'ok' }}">
     {% if versiune.stale %}
@@ -25,6 +32,14 @@ a.mic:hover { background:var(--paper); }
     {% else %}
       Server la zi — ruleaza commit-ul <b>{{ versiune.started_commit }}</b>
       ("{{ versiune.started_subject }}"), pornit la {{ versiune.started_at }}.
+    {% endif %}
+    {% if mediu in ('testare', 'productie') %}
+    <form method="post" action="/master/server/restart" class="inline"
+          style="margin-top:10px"
+          onsubmit="return confirm('Sigur repornesti serverul de {{ mediu }}? Sesiunile active vor fi intrerupte cateva secunde.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="mic" type="submit">Repornește serverul</button>
+    </form>
     {% endif %}
   </div>
   {% endif %}

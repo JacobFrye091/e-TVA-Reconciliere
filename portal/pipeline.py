@@ -123,6 +123,26 @@ def own_environment() -> str | None:
     return None
 
 
+RESTART_TRIGGER_NAME = "restart.trigger"
+
+
+def request_server_restart(data_dir: str) -> None:
+    """Ask this environment's own systemd unit to restart the gunicorn
+    process serving this app.
+
+    The VPS units run under NoNewPrivileges with an empty
+    CapabilityBoundingSet (see the hardening pass), so the app itself can
+    never call sudo/systemctl to restart its own process. Instead it
+    writes a trigger file inside the one directory it's allowed to write
+    to (ReadWritePaths=data_dir) - a root-owned systemd .path unit outside
+    the sandbox watches for that file and runs `systemctl restart` on
+    this unit's behalf, deleting the trigger first so it doesn't refire
+    on the next boot.
+    """
+    pathlib.Path(data_dir, RESTART_TRIGGER_NAME).write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+
+
 def local_pipeline_available() -> bool:
     """True only on the local dev machine, where DEV/TESTARE/PROD exist
     side by side as three worktrees of the same repo. A VPS deployment

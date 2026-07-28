@@ -213,6 +213,13 @@ def test_running_vs_current_not_stale_when_commits_match(monkeypatch):
     assert pipeline.running_vs_current()["stale"] is False
 
 
+def test_request_server_restart_writes_trigger_file(tmp_path):
+    pipeline.request_server_restart(str(tmp_path))
+    trigger = tmp_path / pipeline.RESTART_TRIGGER_NAME
+    assert trigger.exists()
+    assert trigger.read_text().strip() != ""
+
+
 def test_running_vs_current_handles_git_unavailable(monkeypatch):
     monkeypatch.setattr(pipeline, "STARTED_AT", {
         "commit": "abc123", "subject": "x", "started_at": "t"})

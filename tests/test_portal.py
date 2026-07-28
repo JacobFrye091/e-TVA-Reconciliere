@@ -1031,6 +1031,66 @@ def test_pipeline_promote_requires_master(app):
     assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
 
 
+# ---------- master: restart-server button (task #91) ----------
+
+def test_restart_server_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/server/restart")
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_restart_server_writes_trigger_and_logs_action(app, monkeypatch, tmp_path):
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/server/restart", follow_redirects=True)
+    assert r.status_code == 200
+    assert "Repornire solicitata".encode() in r.data
+    trigger = tmp_path / pl.RESTART_TRIGGER_NAME
+    assert trigger.exists() and trigger.read_text().strip() != ""
+    log = app.portal_conn.execute(
+        "SELECT actiune, detalii FROM master_actions ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert log["actiune"] == "server_repornire_solicitata"
+    assert log["detalii"] == "testare"
+
+
+def test_restart_server_blocked_outside_testare_productie(app, monkeypatch, tmp_path):
+    """Only a VPS deploy has the root-owned .path unit watching for the
+    trigger file - on the local dev machine (or when own_environment()
+    can't be determined) writing it would silently do nothing, so the
+    route refuses instead."""
+    monkeypatch.setattr(pl, "own_environment", lambda: None)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/server/restart", follow_redirects=True)
+    assert r.status_code == 200
+    assert "nu e disponibila in acest mediu".encode() in r.data
+    assert not (tmp_path / pl.RESTART_TRIGGER_NAME).exists()
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM master_actions").fetchone()["n"] == 0
+
+
+def test_master_page_shows_restart_button_only_in_testare_productie(app, monkeypatch):
+    monkeypatch.setattr(pl, "running_vs_current", lambda: {
+        "started_commit": "abc123", "started_subject": "test",
+        "started_at": "2026-01-01 00:00 UTC", "current_commit": "abc123",
+        "stale": False})
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    monkeypatch.setattr(pl, "own_environment", lambda: "productie")
+    r = c.get("/master")
+    assert "Repornește serverul".encode() in r.data
+
+    monkeypatch.setattr(pl, "own_environment", lambda: None)
+    r2 = c.get("/master")
+    assert "Repornește serverul".encode() not in r2.data
+
+
 # ---------- product API (in-browser app) ----------
 
 import io
