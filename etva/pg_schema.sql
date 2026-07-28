@@ -313,4 +313,10 @@ END $$;
 
 -- ============ drepturi pentru rolul aplicatiei ============
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO etva_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO etva_app;
+-- UPDATE (nu doar USAGE/SELECT) e obligatoriu pentru setval() - fara el,
+-- migrarea datelor (portal/migrare_pg.py, pasul final de resetare a
+-- secventelor peste MAX(id)) esueaza cu "permission denied for sequence"
+-- desi INSERT-urile normale (care doar citesc secventa prin nextval,
+-- acoperit de USAGE) merg perfect - descoperit printr-un test real, nu
+-- teoretic, vezi tests/test_migrare_pg.py.
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO etva_app;
