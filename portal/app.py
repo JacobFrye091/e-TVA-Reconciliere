@@ -872,12 +872,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # prin API-ul FGO (conectat la Netopia Payments) si redirectionat
         # clientul catre acel link, in loc sa marcam direct in_asteptare.
         # Ramane asa pana exista un cont FGO/Netopia real de integrat.
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO payments(firm_id, ciclu_facturare, suma, recurent, "
             "stare, creat_la) VALUES(?,?,?,?,?,?)",
             (active_firm_id, firm["ciclu_facturare"], suma, recurent,
              pdb.PLATA_IN_ASTEPTARE, datetime.now(timezone.utc).isoformat()))
         conn.commit()
+        audit.log(firm_conn(active_firm_id), user["username"], "plata.cerere",
+                  "payment", str(cur.lastrowid))
         return redirect(url_for(
             "alege_plan",
             mesaj="Cererea de plata a fost inregistrata - va fi procesata "
@@ -2884,6 +2886,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         remind_mod.start_scheduler(conn, db_lock, _trimite_email)
 
     app.portal_conn = conn  # exposed for tests/seeding
+    app.firm_conn = firm_conn  # exposed for tests/seeding
     app.portal_secret = secret
     app.get_valid_anaf_access_token = get_valid_anaf_access_token  # exposed for tests
     return app

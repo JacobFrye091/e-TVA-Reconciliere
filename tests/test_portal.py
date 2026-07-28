@@ -2675,6 +2675,25 @@ def test_creeaza_cerere_plata_direct_firm(app):
     assert row["stare"] == "in_asteptare"
 
 
+def test_creeaza_cerere_plata_logs_audit(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO299", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO299")
+    _semneaza_contract_esemneaza(c)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO299'").fetchone()["id"]
+    c.post("/panou/plata", data={})
+    payment_id = app.portal_conn.execute(
+        "SELECT id FROM payments WHERE firm_id=?", (firm_id,)).fetchone()["id"]
+    entry = app.firm_conn(firm_id).execute(
+        "SELECT * FROM audit_log WHERE action='plata.cerere' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    assert entry is not None
+    assert entry["entity"] == "payment"
+    assert entry["entity_id"] == str(payment_id)
+
+
 def test_creeaza_cerere_plata_contabilitate_firm_floors_at_one_client(app):
     """O firma de contabilitate abia inregistrata n-are inca niciun client
     - suma trebuie calculata ca pentru minim 1 client, nu 0 RON."""
