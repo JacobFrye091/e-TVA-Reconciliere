@@ -17,8 +17,17 @@ process (e.g. `--threads N`) is fine: create_app()'s before_request /
 teardown_request hooks already serialize every request around that same
 lock, exactly as they do today under the single-threaded dev server.
 """
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 from portal.app import create_app
 from portal.run import data_dir
 
 app = create_app(data_dir(), enable_backup_scheduler=True,
                  enable_trial_reminder_scheduler=True)
+
+# Apache sits in front of gunicorn and talks to it over plain HTTP on
+# 127.0.0.1, even when the public-facing connection is HTTPS - without this,
+# url_for(..., _external=True) (email verification links) would always
+# render as http://. Trusts X-Forwarded-Proto, which only the productie
+# HTTPS vhost currently sets; harmless no-op everywhere else.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
