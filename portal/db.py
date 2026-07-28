@@ -175,7 +175,9 @@ CREATE TABLE IF NOT EXISTS contracts(
   ramburs_procent REAL,
   esemneaza_request_id TEXT,
   esemneaza_document_pdf BLOB,
-  esemneaza_certificate_pdf BLOB);
+  esemneaza_certificate_pdf BLOB,
+  prestator_semnat_la TEXT,
+  contract_xml_final BLOB);
 CREATE TABLE IF NOT EXISTS login_lockouts(
   identificator TEXT PRIMARY KEY,
   incercari INTEGER NOT NULL DEFAULT 0,
@@ -498,6 +500,23 @@ def _migrate_add_contracts_esemneaza(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_contract_prestator_semnare(conn: sqlite3.Connection) -> None:
+    """Adauga urmarirea separata a semnaturii PRESTATORULUI (recipient 1 la
+    eSemneaza, ordine impusa prin signInOrder) si instantaneul XML inghetat
+    la finalizare - vezi planning/specs/2026-07-28-contract-esemneaza-admin-
+    review-design.md."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "contracts" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(contracts)")}
+    if "prestator_semnat_la" in cols:
+        return
+    conn.execute("ALTER TABLE contracts ADD COLUMN prestator_semnat_la TEXT;")
+    conn.execute("ALTER TABLE contracts ADD COLUMN contract_xml_final BLOB;")
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -708,6 +727,7 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     _migrate_add_contracts_esemneaza(conn)
+    _migrate_add_contract_prestator_semnare(conn)
     _migrate_seed_cota_tva(conn)
     conn.commit()
     return conn

@@ -352,6 +352,26 @@ def test_migrate_setari_tva_converts_old_single_row_shape(tmp_path):
     assert istoric[0]["activa"] == 1
 
 
+def test_migrate_add_contract_prestator_semnare_adds_columns(tmp_path):
+    import sqlite3
+    from portal import db as pdb
+    path = str(tmp_path / "old_portal.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE contracts(id INTEGER PRIMARY KEY, firm_id INTEGER, "
+        "numar INTEGER, ciclu_facturare TEXT, suma REAL, "
+        "beneficiar_denumire TEXT, beneficiar_cui TEXT, beneficiar_adresa TEXT, "
+        "stare TEXT, creat_la TEXT, esemneaza_request_id TEXT, "
+        "esemneaza_document_pdf BLOB, esemneaza_certificate_pdf BLOB)")
+    conn.commit()
+    conn.close()
+
+    reopened = pdb.open_db(path)
+    cols = {r["name"] for r in reopened.execute("PRAGMA table_info(contracts)")}
+    assert "prestator_semnat_la" in cols
+    assert "contract_xml_final" in cols
+
+
 def test_setari_tva_unique_index_rejects_two_active_rows(tmp_path):
     """Indexul unic partial garanteaza la nivel de baza de date ca cel mult
     o cota poate fi activa - nu doar prin disciplina din set_cota_tva."""
