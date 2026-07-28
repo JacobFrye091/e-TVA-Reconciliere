@@ -3198,6 +3198,49 @@ def test_vezi_contract_shows_contract_text_after_master_sends_it(app):
     assert row["suma"] == 100.00
 
 
+def test_trimite_contract_master_sends_prestator_first_sign_in_order_one_click(
+        app, monkeypatch):
+    """Cele doua decizii centrale de design ale intregii functionalitati,
+    confirmate explicit de operatorul uman la momentul designului: PRESTATORUL
+    semneaza primul, apoi BENEFICIARUL (in aceasta ordine stricta, impusa prin
+    sign_in_order), iar ambii primesc campul de semnatura pre-completat prin
+    one_click_sign. Fixture-ul autouse _mock_esemneaza inlocuieste in mod
+    normal create_sign_request cu un lambda care ignora complet argumentele -
+    niciun test din suita nu inspecta ce se trimite de fapt. O regresie care
+    ar inversa ordinea recipientilor, ar scapa sign_in_order sau ar scapa
+    one_click_sign ar trece toata suita neobservata fara acest test (vezi
+    Task 7 review finding 2)."""
+    from portal.invoicing import FURNIZOR
+    apeluri = []
+
+    def _capteaza_create_sign_request(*args, **kwargs):
+        apeluri.append((args, kwargs))
+        return {"id": "fake-request-id", "status": "IN_PROGRESS"}
+
+    monkeypatch.setattr(esemneaza, "create_sign_request",
+                        _capteaza_create_sign_request)
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO321", tip="direct", email="admin321@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO321'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
+
+    assert len(apeluri) == 1
+    _, kwargs = apeluri[0]
+    recipienti = kwargs["recipients"]
+    assert len(recipienti) == 2
+    # Ordinea in lista determina order=1/order=2 la eSemneaza (vezi
+    # etva/esemneaza.py::create_sign_request) - prestatorul (master) trebuie
+    # sa fie primul, beneficiarul (firma) al doilea.
+    assert recipienti[0]["email"] == FURNIZOR["email"]
+    assert recipienti[1]["email"] == "admin321@exemplu.ro"
+    assert kwargs["sign_in_order"] is True
+    assert "one_click_sign" in recipienti[0].get("options", [])
+    assert "one_click_sign" in recipienti[1].get("options", [])
+
+
 def test_descarca_contract_pdf(app):
     c = app.test_client()
     inregistreaza(c, cui="RO310", tip="direct")
@@ -3272,6 +3315,51 @@ def test_descarca_contract_xml(app):
     # inregistrare.
     assert b"<cui>RO315</cui>" in r.data
     assert b"Firma Test SRL" in r.data  # denumirea trimisa de master
+
+
+def test_descarca_contract_xml_serves_frozen_snapshot_not_live_regeneration(app):
+    """Odata contractul complet semnat de ambele parti, _finalizeaza_contract_
+    esemneaza ingheata un instantaneu XML in contracts.contract_xml_final -
+    vezi planning/specs/2026-07-28-contract-esemneaza-admin-review-design.md:
+    "Butonul de download XML existent ... serveste acest instantaneu cand
+    exista, nu mai regenereaza din datele curente ale randului". Ambele rute
+    de descarcare (firma si master) trebuie sa serveasca acei bytes inghetati,
+    nu sa regenereze din randul curent - verificat aici mutand un camp al
+    randului DUPA finalizare si confirmand ca raspunsul tot arata datele VECHI
+    (o simpla comparatie de continut identic n-ar prinde un bug in care
+    regenerarea produce coincidental aceiasi bytes)."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO319", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO319'").fetchone()["id"]
+    master = _creeaza_si_trimite_contract_master(app, firm_id)
+    # Mock-ul implicit (_mock_esemneaza) raporteaza ambii semnatari APPLIED,
+    # deci un singur GET /panou/contract declanseaza finalizarea completa
+    # (vezi test_actualizeaza_stare_esemneaza_marks_prestator_then_completes).
+    c.get("/panou/contract")
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()
+    assert contract["stare"] == "semnat"
+    assert contract["contract_xml_final"] is not None
+    contract_id = contract["id"]
+
+    # Muteaza datele randului DUPA inghetarea instantaneului - regenerarea
+    # din datele curente ar reflecta schimbarea, instantaneul inghetat nu.
+    app.portal_conn.execute(
+        "UPDATE contracts SET beneficiar_denumire=? WHERE id=?",
+        ("Firma MUTATA DUPA SEMNARE SRL", contract_id))
+    app.portal_conn.commit()
+
+    r_firma = c.get("/panou/contract/xml")
+    assert r_firma.status_code == 200
+    assert b"Firma Test SRL" in r_firma.data  # denumirea inghetata la semnare
+    assert b"Firma MUTATA DUPA SEMNARE SRL" not in r_firma.data
+
+    r_master = master.get(f"/master/contracte/{contract_id}/xml")
+    assert r_master.status_code == 200
+    assert b"Firma Test SRL" in r_master.data
+    assert b"Firma MUTATA DUPA SEMNARE SRL" not in r_master.data
 
 
 def test_descarca_contract_pdf_certificat_regenerata_fara_fisierul_original(

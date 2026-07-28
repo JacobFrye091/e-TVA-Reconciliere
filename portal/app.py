@@ -1053,7 +1053,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         contract = _contract_curent(active_firm_id)
         if contract is None:
             return redirect(url_for("vezi_contract"))
-        xml_bytes = contract_mod.date_contract_xml(contract)
+        xml_bytes = (bytes(contract["contract_xml_final"])
+                    if contract["contract_xml_final"] is not None
+                    else contract_mod.date_contract_xml(contract))
         return Response(
             xml_bytes, mimetype="application/xml",
             headers={"Content-Disposition":
@@ -2444,7 +2446,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                 (contract_id,)).fetchone()
         if contract is None:
             return redirect(url_for("master_contracte"))
-        xml_bytes = contract_mod.date_contract_xml(contract)
+        xml_bytes = (bytes(contract["contract_xml_final"])
+                    if contract["contract_xml_final"] is not None
+                    else contract_mod.date_contract_xml(contract))
         return Response(
             xml_bytes, mimetype="application/xml",
             headers={"Content-Disposition":
