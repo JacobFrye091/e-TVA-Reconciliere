@@ -879,6 +879,34 @@ def test_add_firm_rejects_duplicate_cui(app):
     assert "Exista deja o firma".encode() in r.data
 
 
+def test_add_firm_rejected_when_existing_firm_is_direct(app):
+    """O firma/PFA directa reprezinta o singura entitate - nu are sens sa
+    mai adauge alte firme pe cont (spre deosebire de o firma de
+    contabilitate, care gestioneaza mai multi clienti)."""
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    r = c.post("/panou/firme",
+              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct"},
+              follow_redirects=True)
+    assert "firma/PFA directa".encode() in r.data
+    assert not app.portal_conn.execute(
+        "SELECT 1 FROM firms WHERE cui='RO222'").fetchone()
+
+
+def test_panou_hides_add_firm_card_for_direct_firms(app):
+    c = app.test_client()
+    inregistreaza(c, tip="direct")
+    r = c.get("/panou")
+    assert "Adauga o firma".encode() not in r.data
+
+
+def test_panou_shows_add_firm_card_for_contabilitate_firms(app):
+    c = app.test_client()
+    inregistreaza(c, tip="contabilitate")
+    r = c.get("/panou")
+    assert "Adauga o firma".encode() in r.data
+
+
 # ---------- dev/testare/productie pipeline (master dashboard) ----------
 
 from portal import pipeline as pl

@@ -748,9 +748,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             contract_activ = conn.execute(
                 "SELECT * FROM contracts WHERE firm_id=? "
                 "ORDER BY id DESC LIMIT 1", (active["id"],)).fetchone()
+        poate_adauga_firma = not any(f["tip"] == "direct" for f in firms)
         return render_template("panou.html", user=user, firms=firms,
                                active=active, members=members,
                                subroles=FIRM_SUBROLES,
+                               poate_adauga_firma=poate_adauga_firma,
                                eroare=request.args.get("eroare"),
                                mesaj=request.args.get("mesaj"),
                                anunt=_anunt_activ(), anunt_eticheta=ANUNT_ETICHETE,
@@ -766,6 +768,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         user = current_user()
         if user is None or user["is_master"]:
             return redirect(url_for("login"))
+        if any(f["tip"] == "direct" for f in list_user_firms(user["id"])):
+            return redirect(url_for(
+                "panou",
+                eroare="Contul tau este legat de o firma/PFA directa - nu poti "
+                      "adauga alte firme. Doar firmele de contabilitate pot "
+                      "gestiona mai multe firme."))
         name = request.form.get("name", "").strip()
         cui = request.form.get("cui", "").strip()
         tip = request.form.get("tip", "").strip()

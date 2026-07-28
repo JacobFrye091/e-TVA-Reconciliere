@@ -121,6 +121,7 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
   </div>
   {% endif %}
 
+  {% if poate_adauga_firma %}
   <div class="card">
     <h2>Adauga o firma (SRL/PFA)</h2>
     <p class="sub">Completeaza CUI-ul si bifeaza "Cod CUI Completat" ca sa
@@ -205,6 +206,7 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
     });
   })();
   </script>
+  {% endif %}
 
   {% if mesaj %}
   <div class="card">
