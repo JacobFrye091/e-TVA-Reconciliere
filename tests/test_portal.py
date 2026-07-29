@@ -53,6 +53,11 @@ def app(tmp_path, monkeypatch):
     # (implicit real) are propriile teste, vezi test_contracte_dezactivate_*.
     import portal.app as app_module
     monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", True)
+    # Plata e oprita temporar implicit in productie (vezi app_module.
+    # PLATA_ACTIVA) - dar codul ramane complet, asa ca majoritatea testelor
+    # o verifica activa; comportamentul "dezactivat" (implicit real) are
+    # propriile teste, vezi test_plata_dezactivata_*.
+    monkeypatch.setattr(app_module, "PLATA_ACTIVA", True)
     yield a
 
     if nume_pg:
@@ -2980,6 +2985,37 @@ def _multiplicator_tva(app):
     19% -> 21%, in timpul acestui proiect)."""
     from portal import db as pdb
     return 1 + pdb.get_cota_tva(app.portal_conn) / 100
+
+
+def test_alege_plan_shows_unavailable_notice_when_plata_disabled(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "PLATA_ACTIVA", False)
+    c = app.test_client()
+    inregistreaza(c, cui="RO205")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO205")
+    r = c.get("/panou/plan")
+    assert "Plătește acum".encode() not in r.data
+    assert "temporar indisponibilă".encode() in r.data
+
+
+def test_creeaza_cerere_plata_blocked_when_disabled(app, monkeypatch):
+    """PLATA_ACTIVA implicit False in productie (vezi portal/app.py) - ruta
+    redirectioneaza fara sa inregistreze nimic in payments, indiferent daca
+    firma are deja ciclu ales/contract semnat."""
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "PLATA_ACTIVA", False)
+    c = app.test_client()
+    inregistreaza(c, cui="RO206", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO206")
+    _semneaza_contract_esemneaza(app, c)
+    r = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "temporar indisponibilă".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT p.* FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO206'").fetchone()
+    assert row is None
 
 
 def test_creeaza_cerere_plata_direct_firm(app):

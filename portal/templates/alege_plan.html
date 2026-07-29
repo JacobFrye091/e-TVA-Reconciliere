@@ -63,6 +63,7 @@ a.mic:hover { background:var(--paper); }
   {% if arata_plata %}
   <div class="card">
     <h2>Plătește abonamentul</h2>
+    {% if plata_activa %}
     <p class="sub">Ciclul ales:
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>
       {{ '(calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
@@ -81,6 +82,11 @@ a.mic:hover { background:var(--paper); }
     </form>
     <p class="nota">Procesarea efectivă a plății nu e încă automatizată —
       cererea ta e înregistrată și confirmată manual în curând.</p>
+    {% else %}
+    <p class="sub">Plata online este temporar indisponibilă. Te vom contacta
+      noi pentru a stabili modalitatea de plată — nu este nevoie să faci
+      nimic acum.</p>
+    {% endif %}
   </div>
   {% endif %}
 
