@@ -1,7 +1,41 @@
 # Migrarea SQLite/SQLCipher → PostgreSQL
 
-Stare: în lucru (începută 2026-07-28). Fazele și progresul lor: vezi lista de
+Stare: **testare rulează pe Postgres din 2026-07-29** (Faza 3 completă,
+verificată live). Productie rămâne pe SQLite, în așteptarea deciziei
+explicite a lui Andrei (Faza 4). Fazele și progresul lor: vezi lista de
 task-uri a sesiunii (#201–#206) și commit-urile care referă acest document.
+
+## Faza 3 — testare, executată și verificată (2026-07-29)
+
+Secvență reală, în ordine: cod promovat dev→testare (426 teste, 0 eșecuri)
+și deployat pe VPS (încă pe SQLite - doar deploy de cod); copie de
+siguranță suplimentară a `eTVA-Portal-Testare/` pe disc
+(`eTVA-Portal-Testare.pre-postgres-backup-20260729`, în plus față de
+fișierele SQLite care oricum rămân neatinse); `raport_migrare` (dry-run,
+read-only) rulat pe datele reale - 1 firmă (DEDEMAN SRL), 2 utilizatori,
+0 avertismente, țintă goală și schema conformă; `migreaza()` rulat real -
+rezultatul a coincis exact cu raportul; date verificate direct în Postgres
+(id-uri păstrate, `RLS` funcțional pe `app.firm_id`); `EnvironmentFile=-/etc/etva-testare/db.env`
+adăugat în unitatea systemd, `daemon-reload` + `restart` -
+`ETVA_DB=postgres` confirmat în procesul rulat, jurnal curat, HTTP 200.
+
+**Verificare funcțională reală, prin browser, pe site-ul live**
+(testare.ereconciliere.ro): apel live către ANAF (`/api/anaf/denumire?cui=RO35070700`,
+200 OK, denumire preluată corect) și o **înregistrare completă de cont nou**
+dusă până la capăt prin formular - firma nouă (`VML EXPERT ADVISOR SRL`,
+id 2), user nou (`vml-expert-advisor-srl`, id 3) au aterizat corect în
+Postgres: `email_verificat=False` (boolean real, nu 0/1), `trial_expira_la`
+un `timestamptz` aware calculat corect la +30 zile - dovada directă că
+fix-ul de `datetime.now(timezone.utc)` din sweep-ul de compatibilitate era
+real necesar, nu teoretic. Firma existentă (DEDEMAN SRL) și userii ei au
+rămas intacți. Contul de test nu a fost șters - rămâne ca dovadă vie pe
+mediul de testare.
+
+**Notă operațională pentru viitor**: parola reală a rolului `etva_app` nu
+e cunoscută (generată direct pe server, niciodată în chat) - orice comandă
+care are nevoie de `DATABASE_URL` trebuie să o citească din
+`/etc/etva-{env}/db.env` (`set -a && . /etc/etva-{env}/db.env`), nu
+presupusă sau cerută utilizatorului.
 
 ## Decizii de arhitectură (cu motivele lor)
 
