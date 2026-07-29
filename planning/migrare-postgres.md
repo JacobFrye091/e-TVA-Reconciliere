@@ -1,9 +1,11 @@
 # Migrarea SQLite/SQLCipher → PostgreSQL
 
-Stare: **testare rulează pe Postgres din 2026-07-29** (Faza 3 completă,
-verificată live). Productie rămâne pe SQLite, în așteptarea deciziei
-explicite a lui Andrei (Faza 4). Fazele și progresul lor: vezi lista de
-task-uri a sesiunii (#201–#206) și commit-urile care referă acest document.
+Stare: **atât testare cât și productie rulează pe Postgres din 2026-07-29**
+(Fazele 3 și 4 complete, verificate live, cu OK explicit al lui Andrei
+pentru productie: "continua schimbarea si in productie, dai bice"). Rămâne
+doar Faza 5 (backup `pg_dump` + decizia finală despre bazele de pe shared
+hosting). Fazele și progresul lor: vezi lista de task-uri a sesiunii
+(#201–#206) și commit-urile care referă acest document.
 
 ## Faza 3 — testare, executată și verificată (2026-07-29)
 
@@ -36,6 +38,35 @@ e cunoscută (generată direct pe server, niciodată în chat) - orice comandă
 care are nevoie de `DATABASE_URL` trebuie să o citească din
 `/etc/etva-{env}/db.env` (`set -a && . /etc/etva-{env}/db.env`), nu
 presupusă sau cerută utilizatorului.
+
+## Faza 4 — productie, executată și verificată (2026-07-29)
+
+Autorizată explicit de Andrei ("continua schimbarea si in productie, dai
+bice"), imediat după Faza 3. Secvență identică cu testare: cod promovat
+testare→main (426 teste, 0 eșecuri) și deployat (încă SQLite); copie de
+siguranță suplimentară (`eTVA-Portal-Productie.pre-postgres-backup-20260729`);
+`raport_migrare` pe datele reale - **0 firme, 1 utilizator (masterul
+AVASILESCU)**, câteva rânduri de istoric admin (anunțuri/mesaje contact/
+audit master), 0 avertismente, țintă goală, schema conformă; `migreaza()`
+rulat real, rezultat identic cu raportul; date verificate direct (master
+cu `is_master=True`/`active=True`, `setari_tva` la 21% activ); systemd
+actualizat (`EnvironmentFile=-/etc/etva-productie/db.env` adăugat lângă
+`smtp.env`/`esemneaza.env` deja existente), `restart` - `ETVA_DB=postgres`
+confirmat, jurnal curat, HTTP 200 atât local cât și **HTTPS 200 pe
+ereconciliere.ro**.
+
+**Verificare funcțională, deliberat mai conservatoare decât pe testare**:
+apel live către ANAF prin formularul real de înregistrare de pe
+ereconciliere.ro (`checked:true`, denumire preluată corect) - dovadă că
+serverul flip-uit servește corect trafic real prin HTTPS. **Nu s-a dus până
+la capăt o înregistrare completă** (spre deosebire de testare) - decizie
+deliberată, ca să nu rămână un cont de test permanent în baza de date de
+producție reală; codul e identic cu cel deja verificat exhaustiv (înregistrare
+completă + RLS) pe testare, deci riscul acoperit e minim.
+
+Ambele fișiere SQLite (`eTVA-Portal-Testare`/`eTVA-Portal-Productie`) rămân
+neatinse pe disc, plus cele două copii `.pre-postgres-backup-20260729` -
+nimic nu a fost șters.
 
 ## Decizii de arhitectură (cu motivele lor)
 
