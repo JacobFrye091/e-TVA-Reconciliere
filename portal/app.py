@@ -81,6 +81,14 @@ ESEMNEAZA_WEBHOOK_SECRET = os.environ.get("ESEMNEAZA_WEBHOOK_SECRET")
 # fara nicio schimbare de cod, doar cu variabila de mediu CONTRACTE_ACTIVE=1.
 CONTRACTE_ACTIVE = os.environ.get("CONTRACTE_ACTIVE", "0") == "1"
 
+# Optiunea de plata e oprita temporar (2026-07-29, decizie de business) pana
+# exista o integrare reala FGO/Netopia (vezi TODO in creeaza_cerere_plata) si
+# e activata semnatura electronica a contractului (CONTRACTE_ACTIVE) - codul
+# ramane intact, doar ruta si formularul din alege_plan.html sunt blocate. Se
+# reactiveaza fara nicio schimbare de cod, doar cu variabila de mediu
+# PLATA_ACTIVA=1.
+PLATA_ACTIVA = os.environ.get("PLATA_ACTIVA", "0") == "1"
+
 # Implicit dezactivat: emailul de confirmare e singura cale de livrare a
 # link-ului de validare (spre deosebire de formularul de contact, unde o
 # eroare de trimitere nu blocheaza nimic), asa ca blocarea reala a
@@ -844,6 +852,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
             arata_plata=(firm["ciclu_facturare"] and zile_trial is not None
                         and zile_trial <= 1),
+            plata_activa=PLATA_ACTIVA,
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/panou/plan")
@@ -868,6 +877,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         real inca (vezi TODO integrare FGO/Netopia in _calculeaza_suma_plata
         si mai jos). Master valideaza manual incasarea din /master/plati
         dupa ce o confirma pe alta cale, si abia atunci se emite factura."""
+        if not PLATA_ACTIVA:
+            return redirect(url_for(
+                "alege_plan",
+                eroare="Plata este temporar indisponibila."))
         user = current_user()
         active_firm_id = session.get("active_firm_id")
         if (user is None or user["is_master"]
