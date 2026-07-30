@@ -870,6 +870,12 @@ def test_master_uses_app_via_internal_test_firm(app):
     # /app se serveste direct, fara redirect spre login/plan
     r = c.get("/app")
     assert r.status_code == 200
+    # ordinea conteaza (regresie reala din productie, 2026-07-30): intai o
+    # cerere DOAR de citire pe scope-ul firmei (teardown-ul face rollback,
+    # care pe Postgres anula si set_config-ul de app.firm_id), abia apoi
+    # scrierea - cu cache-ul vechi din dbcompat, POST-ul crapa cu
+    # ''::int in politica RLS.
+    assert c.get("/api/clients").get_json() == []
     # masterul poate crea clienti de test si rula prin acelasi API
     cid = c.post("/api/clients", json={
         "cui": "RO7777", "name": "Client Test Master",

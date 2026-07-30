@@ -104,7 +104,6 @@ class ConnCompat:
 
     def __init__(self, pgconn):
         self.raw = pgconn          # pentru etva.pg.verify_schema etc.
-        self._firma_activa = None  # ultimul app.firm_id setat pe sesiune
 
     def execute(self, sql, params=()):
         if params:
@@ -128,12 +127,16 @@ class ConnCompat:
         self.raw.close()
 
     def _seteaza_firma(self, firm_id: int) -> None:
-        if self._firma_activa != firm_id:
-            # set_config(..., is_local=false): valabil pe toata sesiunea,
-            # supravietuieste commit-urilor - nu doar tranzactiei curente.
-            self.raw.execute(
-                "SELECT set_config('app.firm_id', %s, false)", (str(firm_id),))
-            self._firma_activa = firm_id
+        # Emis inaintea FIECAREI comenzi, fara cache: un SET (chiar
+        # session-level) executat intr-o tranzactie care ajunge la rollback
+        # e anulat de acel rollback - iar teardown_request face rollback
+        # dupa fiecare cerere de citire. Un cache Python ar ramane atunci
+        # desincronizat de valoarea reala din sesiune si urmatoarele cereri
+        # ar rula cu scope gol ('' -> ''::int crapa in politica RLS) sau,
+        # mai rau, cu firma anterioara - izolarea intre firme ar fi rupta.
+        # Costul e un set_config local per comanda, neglijabil.
+        self.raw.execute(
+            "SELECT set_config('app.firm_id', %s, false)", (str(firm_id),))
 
 
 class FirmScopedConnection:

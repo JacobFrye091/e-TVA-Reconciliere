@@ -3124,8 +3124,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         fc = firm_conn(ident["firm_id"])
         # O firma directa reconciliaza ca ea insasi, fara client - doar o
         # firma de contabilitate alege un client dintr-o lista.
-        client_id = (None if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT
-                    else int(request.form["client_id"]))
+        client_id = None
+        if ident["firm_tip"] != pdb.FIRM_TIP_DIRECT:
+            brut = request.form.get("client_id", "").strip()
+            if not brut.isdigit():
+                return jsonify({"errors": [
+                    "Alege clientul pentru care rulezi reconcilierea - "
+                    "daca lista e goala, adauga intai clientul in cardul "
+                    "de mai sus."]}), 400
+            client_id = int(brut)
         period = request.form["period"]
         company_files = request.files.getlist("company_file")
         if not company_files:
