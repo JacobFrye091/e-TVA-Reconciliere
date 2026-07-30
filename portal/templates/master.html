@@ -59,6 +59,26 @@ a.mic:hover { background:var(--paper); }
   </div>
 
   <div class="card">
+    <h2>Backup date (OneDrive)</h2>
+    <p class="sub">Face pe loc o copie a bazelor de date (testare + producție),
+      o criptează și o urcă în OneDrive, folderul <b>Backup-eTVA</b>. Nu șterge
+      și nu mută nimic de pe server — datele live rămân neatinse. Rulează
+      independent de backupul automat din fiecare noapte (03:30).</p>
+    {% if stare_backup %}
+    <p class="sub">Ultimul backup pornit din panou:
+      <b>{{ stare_backup['moment'][:16].replace('T', ' ') }} UTC</b> —
+      {% if stare_backup['stare'] == 'ok' %}<span class="chip ok">Reușit</span>
+      {% elif stare_backup['stare'] == 'partial' %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">Parțial</span>
+      {% else %}<span class="chip" style="color:var(--danger);background:var(--danger-bg)">Eșuat</span>{% endif %}
+      <br>{{ stare_backup['mesaj'] }}</p>
+    {% endif %}
+    <form method="post" action="/master/backup-onedrive" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit">Trimite backup în OneDrive acum</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h2>Testare reconciliere (nelimitat)</h2>
     <p class="sub">Deschide aplicatia de reconciliere pe firma interna de
       testare a contului master — fara trial, fara plan de facturare, fara

@@ -885,6 +885,42 @@ def test_master_uses_app_via_internal_test_firm(app):
     assert c.get("/api/me").get_json()["este_master"] is True
 
 
+def test_master_backup_onedrive_scrie_trigger(app, tmp_path):
+    """Butonul de backup la cerere: masterul scrie fisierul-semnal in
+    data_dir (serviciul root il preia de acolo) si actiunea se logheaza;
+    starea ultimului backup (scrisa de serviciul root) apare in panou."""
+    conn = app.portal_conn
+    conn.execute(
+        "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
+        ("sef", psec.hash_password("ParolaMaster123!")))
+    conn.commit()
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef",
+                                   "password": "ParolaMaster123!"})
+    r = c.post("/master/backup-onedrive", follow_redirects=True)
+    assert "Backupul a pornit".encode() in r.data
+    assert (tmp_path / "backup-onedrive.trigger").exists()
+    actiune = conn.execute(
+        "SELECT actiune FROM master_actions ORDER BY id DESC LIMIT 1"
+    ).fetchone()["actiune"]
+    assert actiune == "backup.onedrive_solicitat"
+    # starea scrisa de serviciul root e afisata inapoi in panou
+    (tmp_path / "backup-onedrive.status").write_text(
+        "ok|2026-07-30T19:31:15Z|Ambele baze au fost incarcate in OneDrive.",
+        encoding="utf-8")
+    r = c.get("/master")
+    assert "Ambele baze au fost incarcate in OneDrive.".encode() in r.data
+    assert "Reușit".encode() in r.data
+
+
+def test_master_backup_onedrive_doar_pentru_master(app, tmp_path):
+    c = app.test_client()
+    inregistreaza(c, cui="RO781")
+    r = c.post("/master/backup-onedrive", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+    assert not (tmp_path / "backup-onedrive.trigger").exists()
+
+
 def test_register_rejects_unknown_cui(app, monkeypatch):
     monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: None)
     c = app.test_client()

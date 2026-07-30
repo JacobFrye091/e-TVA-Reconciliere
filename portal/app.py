@@ -96,6 +96,13 @@ PLATA_ACTIVA = os.environ.get("PLATA_ACTIVA", "0") == "1"
 MASTER_TEST_FIRM_CUI = "TESTARE-MASTER"
 MASTER_TEST_FIRM_NAME = "Testare interna (master)"
 
+# Backup la cerere in OneDrive, pornit din panoul master: aplicatia scrie
+# fisierul-semnal in data_dir (acelasi mecanism ca restart.trigger), iar
+# unitatea systemd .path a root-ului ruleaza backupul si lasa rezultatul in
+# fisierul de stare, afisat inapoi in panoul master.
+BACKUP_ONEDRIVE_TRIGGER = "backup-onedrive.trigger"
+BACKUP_ONEDRIVE_STATUS = "backup-onedrive.status"
+
 # Implicit dezactivat: emailul de confirmare e singura cale de livrare a
 # link-ului de validare (spre deosebire de formularul de contact, unde o
 # eroare de trimitere nu blocheaza nimic), asa ca blocarea reala a
@@ -1475,6 +1482,19 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT COUNT(*) AS n FROM deletion_requests WHERE stare=? "
             "AND termen_la<?", (pdb.DELETION_STARE_IN_ASTEPTARE,
                                 datetime.now(timezone.utc).isoformat())).fetchone()["n"]
+        # Rezultatul ultimului backup pornit din panou (scris de serviciul
+        # root dupa ce termina - vezi master_backup_onedrive). Forma:
+        # "stare|moment ISO|mesaj" - un fisier absent sau corupt inseamna
+        # doar ca nu s-a rulat inca nimic din buton.
+        stare_backup = None
+        cale_stare = os.path.join(data_dir, BACKUP_ONEDRIVE_STATUS)
+        try:
+            with open(cale_stare, encoding="utf-8") as f:
+                stare, moment, mesaj_backup = f.read().strip().split("|", 2)
+            stare_backup = {"stare": stare, "moment": moment,
+                            "mesaj": mesaj_backup}
+        except (OSError, ValueError):
+            pass
         return render_template("master.html", user=user, firms=firms,
                                versiune=pipeline.running_vs_current(),
                                mediu=pipeline.own_environment(),
@@ -1482,6 +1502,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                n_cereri_in_asteptare=n_cereri_in_asteptare,
                                n_cereri_intarziate=n_cereri_intarziate,
                                contracte_active=CONTRACTE_ACTIVE,
+                               stare_backup=stare_backup,
                                eroare=request.args.get("eroare"),
                                mesaj=request.args.get("mesaj"))
 
@@ -2949,6 +2970,28 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return redirect(url_for(
             "master",
             mesaj="Repornire solicitata - serverul va reporni in cateva secunde."))
+
+    @app.post("/master/backup-onedrive")
+    def master_backup_onedrive():
+        """Butonul 'Trimite backup in OneDrive acum' din panoul master.
+
+        Aplicatia ruleaza sub NoNewPrivileges (nu poate atinge pg_dump ca
+        postgres, nici configuratia rclone din /root), asa ca foloseste
+        acelasi mecanism ca restartul: scrie un fisier-semnal in data_dir,
+        iar o unitate systemd .path detinuta de root il vede, ruleaza
+        backupul (dump ambele baze + criptare + incarcare OneDrive) si lasa
+        rezultatul in BACKUP_ONEDRIVE_STATUS, afisat inapoi in panou. Nu
+        sterge si nu muta nimic din datele live - doar copiaza."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        pathlib.Path(data_dir, BACKUP_ONEDRIVE_TRIGGER).write_text(
+            datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+        _log_master_action(user, "backup.onedrive_solicitat")
+        return redirect(url_for(
+            "master",
+            mesaj="Backupul a pornit - dureaza sub un minut. Reincarca "
+                 "pagina ca sa vezi rezultatul in cardul de backup."))
 
     # ---------- product API (session-based) ----------
     @app.get("/api/csrf-token")
