@@ -22,6 +22,18 @@
             <span class="nota" style="margin:0">Gestionezi reconcilierea pentru mai multi clienti.</span></span>
         </label>
       </div>
+      <div id="campEstimare" style="display:none">
+        <label for="reconcilieri_estimate">Numar minim estimat de reconcilieri pe luna</label>
+        <input id="reconcilieri_estimate" name="reconcilieri_estimate"
+               type="number" min="1" step="1" placeholder="ex: 20">
+        <p class="nota" style="margin-top:2px">Abonamentul standard include
+          pana la {{ pachet_reconcilieri['reconcilieri_incluse'] }} reconcilieri
+          pe luna. Daca estimarea ta depaseste acest prag, diferenta se
+          tarifeaza in pachete extra de cate
+          {{ pachet_reconcilieri['marime_pachet'] }} reconcilieri
+          ({{ pachet_reconcilieri['pret_pachet_lunar_ron'] }} RON/luna per
+          pachet, fara TVA).</p>
+      </div>
       <label for="cui">CUI</label>
       <input id="cui" name="cui" required autofocus placeholder="ex: RO12345678">
       <label class="optiune-tip" style="margin-top:8px">
@@ -54,6 +66,21 @@
   </div>
 </main>
 <script>
+(function () {
+  // Numarul minim estimat de reconcilieri lunare e cerut doar firmelor
+  // directe (PFA/SRL fara clienti) - firmele de contabilitate platesc per
+  // client, nu pe volum.
+  var campEstimare = document.getElementById('campEstimare');
+  var inputEstimare = document.getElementById('reconcilieri_estimate');
+  document.querySelectorAll('input[name="tip"]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      var eDirecta = radio.value === 'direct' && radio.checked;
+      campEstimare.style.display = eDirecta ? '' : 'none';
+      inputEstimare.required = eDirecta;
+      if (!eDirecta) inputEstimare.value = '';
+    });
+  });
+})();
 (function () {
   var cuiInput = document.getElementById('cui');
   var bifa = document.getElementById('cuiCompletat');

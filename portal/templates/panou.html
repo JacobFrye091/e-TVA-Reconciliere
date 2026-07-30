@@ -141,9 +141,31 @@ textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); 
             <option value="direct">Firma/PFA care isi face singura calculele</option>
             <option value="contabilitate">Firma de contabilitate (mai multi clienti)</option>
           </select></div>
+        <div id="fCampEstimare"><label for="fEstimare">Reconcilieri estimate / luna</label>
+          <input id="fEstimare" name="reconcilieri_estimate" type="number"
+                 min="1" step="1" required placeholder="ex: 20"></div>
         <button type="submit" id="fBtnAdauga" disabled>Adauga</button>
       </div>
     </form>
+    <p class="nota">Pentru o firma/PFA directa, abonamentul standard include
+      pana la {{ pachet_reconcilieri['reconcilieri_incluse'] }} reconcilieri pe
+      luna — peste acest prag, diferenta se tarifeaza in pachete extra (vezi
+      pagina Planul firmei).</p>
+    <script>
+    (function () {
+      var tipSel = document.getElementById('ft');
+      var camp = document.getElementById('fCampEstimare');
+      var input = document.getElementById('fEstimare');
+      function comuta() {
+        var eDirecta = tipSel.value === 'direct';
+        camp.style.display = eDirecta ? '' : 'none';
+        input.required = eDirecta;
+        if (!eDirecta) input.value = '';
+      }
+      tipSel.addEventListener('change', comuta);
+      comuta();
+    })();
+    </script>
     <p class="nota" id="fCuiStare" style="margin-top:2px">
       Bifeaza "Cod CUI Completat" dupa ce introduci CUI-ul.</p>
   </div>

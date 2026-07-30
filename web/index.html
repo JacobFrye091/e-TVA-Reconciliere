@@ -260,8 +260,8 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <div><div class="user-nume" id="numeUser"></div>
       <div class="user-rol">Sesiune activa</div></div>
     </div>
-    <button class="nav-btn" onclick="window.location='/panou'">
-      <span class="ic">⌂</span> Contul firmei</button>
+    <button class="nav-btn" id="btnCont" onclick="window.location='/panou'">
+      <span class="ic">⌂</span> <span id="etichetaCont">Contul firmei</span></button>
     <button class="nav-btn" onclick="logout()"><span class="ic">⏻</span> Iesire</button>
   </div>
 </aside>
@@ -283,6 +283,14 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
           <input id="numeNou" placeholder="Denumire firma" style="max-width:320px">
           <button class="secundar" onclick="adaugaClient()">Adauga client</button>
         </div>
+        <label class="check" style="margin-bottom:0">
+          <input type="checkbox" id="gdprClientNou">
+          <span>Confirm ca firma noastra are un contract / o imputernicire cu
+            acest client care acopera prelucrarea datelor sale (facturi,
+            jurnale de TVA) in aceasta platforma, conform art. 28 GDPR.
+            Confirmarea ramane inregistrata in jurnalul de audit.</span>
+        </label>
+        <p id="clientErr" class="eroare" style="margin-top:6px"></p>
       </div>
     </div>
 
@@ -293,8 +301,18 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         <div class="field" id="campClient"><label for="selClient">Client</label><select id="selClient"></select></div>
         <div class="field"><label for="perioada">Perioada</label>
           <input id="perioada" placeholder="ex: 2026-01"></div>
-        <div class="field"><label for="fisierFirma">Jurnal firma (jurnal vanzari si/sau cumparari — xls / xlsx / csv)</label>
-          <input id="fisierFirma" type="file" accept=".xlsx,.xls,.csv" multiple></div>
+      </div>
+      <div class="grila-2" id="campJurnale">
+        <div class="field"><label for="fisierVanzari">Jurnal de vanzari</label>
+          <input id="fisierVanzari" type="file" accept=".xlsx,.xls,.csv"></div>
+        <div class="field"><label for="fisierCumparari">Jurnal de cumparari</label>
+          <input id="fisierCumparari" type="file" accept=".xlsx,.xls,.csv"></div>
+      </div>
+      <p class="sub" style="margin:-4px 0 14px">Incarca <b>ambele jurnale</b> — si cel de vanzari, si cel de
+        cumparari — pentru o verificare completa. Format acceptat: exportul &bdquo;Jurnal pentru
+        vanzari / cumparari&rdquo; din programul de contabilitate (ex. SAGA), ca fisier Excel
+        <b>.xls</b> (Excel 97&ndash;2003) sau <b>.xlsx</b> (Excel modern), respectiv .csv.</p>
+      <div class="grila-2">
         <div class="field" id="campFisierAnaf"><label for="fisierAnaf">Decont precompletat RO e-TVA (PDF sau JSON de la ANAF) sau fisier ANAF (xlsx / csv)</label>
           <input id="fisierAnaf" type="file" accept=".pdf,.json,.xlsx,.csv"></div>
       </div>
@@ -318,6 +336,9 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
   </div>
 
   <div id="rezultate" class="view">
+    <div class="actiuni" style="margin:0 0 14px;justify-content:space-between">
+      <button id="btnReiaVerificare" class="secundar" onclick="reiaAltaVerificare()">&larr; Reia alta verificare</button>
+    </div>
     <div class="registru" id="registruTotal"></div>
     <div class="card" id="cardNeclasificate" style="display:none">
       <h3>Coduri TVA neclasificate</h3>
@@ -337,6 +358,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <table id="tabelDiferente"></table>
       <div class="actiuni">
         <button id="btnExport" onclick="exporta()">Export raport Excel</button>
+        <button class="secundar" onclick="reiaAltaVerificare()">Reia alta verificare</button>
       </div>
     </div>
   </div>
@@ -450,6 +472,12 @@ async function intraInAplicatie(ident) {
   userCurent = ident.username;
   firmaDirecta = ident.firm_tip === 'direct';
   anafAutorizat = !!ident.anaf_autorizat;
+  if (ident.este_master) {
+    // Masterul intra pe firma interna de testare - drumul lui "acasa" e
+    // panoul master, nu panoul de cont al unei firme.
+    etichetaCont.textContent = 'Panou master';
+    btnCont.onclick = () => window.location = '/master';
+  }
   document.getElementById('campAnafAuto').style.display = anafAutorizat ? '' : 'none';
   numeUser.textContent = userCurent;
   document.querySelector('.user-rol').textContent =
@@ -514,17 +542,21 @@ function pasiiTurului() {
   }
   pasi.push({view: 'dashboard', sel: '#perioada', titlu: 'Perioada',
     text: 'Scrie perioada declaratiei, de exemplu 2026-06.'});
-  pasi.push({view: 'dashboard', sel: '#fisierFirma', titlu: 'Jurnalul firmei',
-    text: 'Incarci aici exportul din programul de contabilitate — vanzari, ' +
-      'cumparari, sau ambele deodata.'});
+  pasi.push({view: 'dashboard', sel: '#campJurnale', titlu: 'Jurnalele firmei',
+    text: 'Incarci aici exporturile din programul de contabilitate: jurnalul de ' +
+      'vanzari SI jurnalul de cumparari (fisiere Excel .xls / .xlsx sau .csv).'});
   pasi.push({view: 'dashboard', sel: '#fisierAnaf', titlu: 'Decontul ANAF',
     text: 'Incarci aici decontul precompletat de la ANAF, descarcat din SPV (PDF sau JSON).'});
   pasi.push({view: 'dashboard', sel: '#btnRuleaza', titlu: 'Ruleaza reconcilierea',
-    text: 'Cand ai ambele fisiere incarcate, apesi aici. Rezultatul apare imediat, cu ' +
+    text: 'Cand ai fisierele incarcate, apesi aici. Rezultatul apare imediat, cu ' +
       'toate diferentele explicate clar' + (poateExport ? ' si un buton de export Excel.' : '.')});
   if (areRezultate) {
     pasi.push({view: 'rezultate', sel: '#registruTotal', titlu: 'Rezultatul reconcilierii',
       text: 'Aici vezi totalurile si numarul de diferente dintr-o privire.'});
+    pasi.push({view: 'rezultate', sel: '#btnReiaVerificare', titlu: 'Reia alta verificare',
+      text: 'De aici pornesti direct o noua verificare, fara sa iesi din aplicatie - ' +
+        'te intorci la formular cu campurile pregatite pentru urmatorul client sau ' +
+        'urmatoarea perioada.'});
     if (poateExport) {
       pasi.push({view: 'rezultate', sel: '#btnExport', titlu: 'Exporta raportul',
         text: 'Descarci un raport Excel gata de atasat la dosarul lunii.'});
@@ -661,9 +693,12 @@ function arataIntrebareGhid() {
 /* ---------- Clients ---------- */
 async function incarcaClienti() {
   const cl = await (await api('/api/clients')).json();
-  listaClienti.innerHTML = '<table><thead><tr><th>CUI</th><th>Denumire</th></tr></thead><tbody>' +
-    (cl.map(c => `<tr><td class="cod">${c.cui}</td><td>${c.name}</td></tr>`).join('') ||
-     '<tr><td colspan="2" class="gol">Niciun client inca. Adauga primul client mai jos.</td></tr>') +
+  listaClienti.innerHTML = '<table><thead><tr><th>CUI</th><th>Denumire</th><th>Acord prelucrare date</th></tr></thead><tbody>' +
+    (cl.map(c => `<tr><td class="cod">${c.cui}</td><td>${c.name}</td>` +
+      `<td>${c.gdpr_confirmat
+             ? '<span class="chip ok">Confirmat</span>'
+             : '<span class="chip atentie">Neconfirmat</span>'}</td></tr>`).join('') ||
+     '<tr><td colspan="3" class="gol">Niciun client inca. Adauga primul client mai jos.</td></tr>') +
     '</tbody></table>';
   const optiuni = cl.map(c =>
     `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
@@ -672,10 +707,23 @@ async function incarcaClienti() {
 }
 
 async function adaugaClient() {
+  clientErr.textContent = '';
+  if (!gdprClientNou.checked) {
+    clientErr.textContent = 'Bifeaza mai intai confirmarea GDPR - fara acordul '
+      + 'clientului tau pentru prelucrarea datelor, nu il putem adauga.';
+    return;
+  }
   const r = await api('/api/clients', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({cui: cuiNou.value, name: numeNou.value})});
-  if (r.ok) { cuiNou.value = ''; numeNou.value = ''; await incarcaClienti(); }
+    body: JSON.stringify({cui: cuiNou.value, name: numeNou.value,
+                          gdpr_confirmat: true})});
+  const body = await r.json();
+  if (r.ok) {
+    cuiNou.value = ''; numeNou.value = ''; gdprClientNou.checked = false;
+    await incarcaClienti();
+  } else {
+    clientErr.textContent = body.error || 'Clientul nu a putut fi adaugat.';
+  }
 }
 
 /* ---------- Reconciliation ---------- */
@@ -683,11 +731,17 @@ async function ruleazaReconciliere() {
   reconErr.textContent = '';
   btnRuleaza.disabled = true; btnRuleaza.textContent = 'Se proceseaza...';
   try {
+    const fisiereJurnal = [...fisierVanzari.files, ...fisierCumparari.files];
+    if (!fisiereJurnal.length) {
+      reconErr.textContent = 'Incarca cel putin un jurnal (de vanzari sau de cumparari) - '
+        + 'ideal pe amandoua, pentru o verificare completa.';
+      return;
+    }
     const fd = new FormData();
     // O firma directa reconciliaza ca ea insasi - fara client_id.
     if (!firmaDirecta) fd.append('client_id', selClient.value);
     fd.append('period', perioada.value);
-    for (const f of fisierFirma.files) fd.append('company_file', f);
+    for (const f of fisiereJurnal) fd.append('company_file', f);
     const preiaAutomat = anafAutorizat && document.getElementById('anafAutoToggle').checked;
     if (preiaAutomat) {
       fd.append('anaf_sursa', 'auto');
@@ -812,6 +866,19 @@ function afiseazaRezultate(b) {
 
 function exporta() {
   window.location = `/api/reconciliations/${reconCurent}/export`;
+}
+
+function reiaAltaVerificare() {
+  // Pregateste formularul pentru urmatoarea verificare fara sa iasa din
+  // aplicatie: fisierele si erorile se golesc, clientul/perioada raman la
+  // indemana pentru corectat.
+  fisierVanzari.value = '';
+  fisierCumparari.value = '';
+  fisierAnaf.value = '';
+  perioada.value = '';
+  reconErr.textContent = '';
+  navigheaza('dashboard');
+  window.scrollTo({top: 0, behavior: 'smooth'});
 }
 
 /* ---------- Alocari ---------- */

@@ -38,7 +38,9 @@ DEFAULT_ROLES = {
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients(
-  id INTEGER PRIMARY KEY, cui TEXT UNIQUE NOT NULL, name TEXT NOT NULL);
+  id INTEGER PRIMARY KEY, cui TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+  gdpr_confirmat INTEGER NOT NULL DEFAULT 0,
+  gdpr_confirmat_de TEXT, gdpr_confirmat_la TEXT);
 CREATE TABLE IF NOT EXISTS client_assignments(
   username TEXT NOT NULL, client_id INTEGER NOT NULL,
   PRIMARY KEY(username, client_id));
@@ -104,7 +106,24 @@ def _migrate_reconciliations_nullable_client(conn) -> None:
     conn.commit()
 
 
+def _migrate_add_clients_gdpr(conn) -> None:
+    """Firm databases created before the GDPR confirmation columns - add
+    them, defaulting existing clients to 0 (neconfirmat): firma de
+    contabilitate nu a declarat nimic pentru ei la adaugare, deci starea
+    reala e 'neconfirmat', nu una inventata. UI-ul o afiseaza ca atare si
+    confirmarile noi se cer doar la clientii adaugati de acum inainte."""
+    cols = {c["name"] for c in conn.execute("PRAGMA table_info(clients)")}
+    if "gdpr_confirmat" in cols:
+        return
+    conn.executescript(
+        "ALTER TABLE clients ADD COLUMN gdpr_confirmat INTEGER NOT NULL DEFAULT 0;"
+        "ALTER TABLE clients ADD COLUMN gdpr_confirmat_de TEXT;"
+        "ALTER TABLE clients ADD COLUMN gdpr_confirmat_la TEXT;")
+    conn.commit()
+
+
 def init_schema(conn) -> None:
     conn.executescript(_SCHEMA)
     _migrate_reconciliations_nullable_client(conn)
+    _migrate_add_clients_gdpr(conn)
     conn.commit()
