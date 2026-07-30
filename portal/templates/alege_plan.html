@@ -33,6 +33,13 @@ a.mic:hover { background:var(--paper); }
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
     {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
 
+    {% if firm['tip'] == 'direct' %}
+    <p class="sub">Abonamentul standard include până la
+      <b>{{ pachet['reconcilieri_incluse'] }}</b> reconcilieri pe lună. Peste
+      acest prag, diferența se tarifează în pachete extra de câte
+      {{ pachet['marime_pachet'] }} reconcilieri, la
+      {{ pachet['pret_pachet_lunar_ron'] }} RON/lună per pachet (fără TVA).</p>
+    {% endif %}
     <form method="post" action="/panou/plan">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="plan-optiuni">
@@ -55,6 +62,19 @@ a.mic:hover { background:var(--paper); }
                  {% if firm['ciclu_facturare'] == 'an' %}checked{% endif %} required> Alege anual</label>
         </div>
       </div>
+      {% if firm['tip'] == 'direct' %}
+      <label for="reconcilieri_estimate">Număr minim estimat de reconcilieri pe lună</label>
+      <input id="reconcilieri_estimate" name="reconcilieri_estimate"
+             type="number" min="1" step="1" required
+             value="{{ firm['reconcilieri_lunare_estimate'] or '' }}"
+             placeholder="ex: 20" style="max-width:180px">
+      {% if n_pachete_extra %}
+      <p class="nota" style="margin-top:4px">Estimarea curentă depășește pragul
+        inclus — se adaugă <b>{{ n_pachete_extra }}</b>
+        {{ 'pachet extra' if n_pachete_extra == 1 else 'pachete extra' }}
+        (+{{ cost_lunar_extra }} RON/lună, fără TVA).</p>
+      {% endif %}
+      {% endif %}
       <button class="btn-lat" type="submit">Salvează alegerea</button>
     </form>
     <p class="nota"><a href="/panou">&larr; Înapoi la panou</a></p>
@@ -66,7 +86,11 @@ a.mic:hover { background:var(--paper); }
     {% if plata_activa %}
     <p class="sub">Ciclul ales:
       <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[firm['ciclu_facturare']] }}</b>
-      {{ '(calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.</p>
+      {{ '(calculat pentru numărul actual de clienți)' if firm['tip'] == 'contabilitate' else '' }}.
+      {% if n_pachete_extra %}Include abonamentul standard și
+      <b>{{ n_pachete_extra }}</b>
+      {{ 'pachet extra de reconcilieri' if n_pachete_extra == 1 else 'pachete extra de reconcilieri' }}
+      (+{{ cost_lunar_extra }} RON/lună, fără TVA).{% endif %}</p>
     <table style="margin:10px 0">
       <tr><td>Preț fără TVA</td><td style="text-align:right">{{ suma_neta_curenta }} RON</td></tr>
       <tr><td>TVA ({{ cota_tva }}%)</td><td style="text-align:right">{{ suma_tva_curenta }} RON</td></tr>

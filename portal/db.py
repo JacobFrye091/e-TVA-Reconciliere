@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS firms(
   trial_expira_la TEXT,
   ciclu_facturare TEXT,
   trial_reminder_ultim_prag INTEGER,
-  arhivata_la TEXT);
+  arhivata_la TEXT,
+  reconcilieri_lunare_estimate INTEGER);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
@@ -189,6 +190,12 @@ CREATE TABLE IF NOT EXISTS setari_tva(
   cota_procent REAL NOT NULL,
   activa INTEGER NOT NULL DEFAULT 0,
   actualizat_de TEXT, actualizat_la TEXT);
+CREATE TABLE IF NOT EXISTS pachete_reconcilieri(
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  reconcilieri_incluse INTEGER NOT NULL,
+  marime_pachet INTEGER NOT NULL,
+  pret_pachet_lunar_ron REAL NOT NULL,
+  actualizat_de TEXT, actualizat_la TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
   ON setari_tva(activa) WHERE activa=1;
 """
@@ -283,6 +290,20 @@ TRIAL_REMINDER_PRAGURI_ZILE = (7, 1, 0)
 _PRETURI_INITIALE_RON = {
     FIRM_TIP_DIRECT: {CICLU_LUNAR: 59, CICLU_6_LUNI: 49, CICLU_AN: 39},
     FIRM_TIP_CONTABILITATE: {CICLU_LUNAR: 25, CICLU_6_LUNI: 20, CICLU_AN: 15},
+}
+
+# Nomenclatorul regandit ca "abonament standard + reconcilieri": abonamentul
+# standard al unei firme directe (PFA/SRL) include un numar de reconcilieri
+# pe luna (pragul de 100, cerut explicit); o firma care isi estimeaza mai
+# multe (firms.reconcilieri_lunare_estimate, cerut la inregistrare) plateste
+# in plus pachete extra de cate `marime_pachet` reconcilieri/luna. Valorile
+# de mai jos doar semeaza tabela pachete_reconcilieri la prima pornire
+# (acelasi pattern ca _PRETURI_INITIALE_RON) - dupa aceea sursa de adevar e
+# tabela, editabila din /master/nomenclator.
+_PACHET_RECONCILIERI_INITIAL = {
+    "reconcilieri_incluse": 100,
+    "marime_pachet": 50,
+    "pret_pachet_lunar_ron": 19,
 }
 
 
@@ -518,6 +539,63 @@ def _migrate_add_contract_prestator_semnare(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_firms_reconcilieri_estimate(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate firms.reconcilieri_lunare_estimate -
+    add it, defaulting existing rows to NULL (necunoscut): firmele
+    inregistrate inainte de aceasta cerinta nu au declarat o estimare,
+    deci nu li se factureaza pachete extra pana nu o completeaza."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "reconcilieri_lunare_estimate" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE firms ADD COLUMN reconcilieri_lunare_estimate INTEGER")
+    conn.commit()
+
+
+def _migrate_seed_pachet_reconcilieri(conn: sqlite3.Connection) -> None:
+    """Semeaza randul unic din pachete_reconcilieri la prima pornire, cu
+    valorile initiale (_PACHET_RECONCILIERI_INITIAL) - doar daca tabela e
+    inca goala, ca un master care le-a modificat deja sa nu le vada
+    resetate la un restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM pachete_reconcilieri").fetchone()["n"]
+    if n:
+        return
+    p = _PACHET_RECONCILIERI_INITIAL
+    conn.execute(
+        "INSERT INTO pachete_reconcilieri(id, reconcilieri_incluse, "
+        "marime_pachet, pret_pachet_lunar_ron, actualizat_de, actualizat_la) "
+        "VALUES (1, ?, ?, ?, ?, ?)",
+        (p["reconcilieri_incluse"], p["marime_pachet"],
+         p["pret_pachet_lunar_ron"], "sistem",
+         datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def get_pachet_reconcilieri(conn: sqlite3.Connection) -> dict:
+    """Setarile curente 'abonament standard + reconcilieri': cate
+    reconcilieri/luna include abonamentul standard, cat de mare e un pachet
+    extra si cat costa pe luna."""
+    return dict(conn.execute(
+        "SELECT * FROM pachete_reconcilieri WHERE id=1").fetchone())
+
+
+def set_pachet_reconcilieri(conn: sqlite3.Connection, reconcilieri_incluse: int,
+                            marime_pachet: int, pret_pachet_lunar_ron: float,
+                            actualizat_de: str) -> None:
+    conn.execute(
+        "UPDATE pachete_reconcilieri SET reconcilieri_incluse=?, "
+        "marime_pachet=?, pret_pachet_lunar_ron=?, actualizat_de=?, "
+        "actualizat_la=? WHERE id=1",
+        (reconcilieri_incluse, marime_pachet, pret_pachet_lunar_ron,
+         actualizat_de, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -724,6 +802,7 @@ def _open_db_postgres():
     conn.rollback()  # verify_schema a deschis o tranzactie de citire
     _migrate_seed_planuri_facturare(conn)
     _migrate_seed_cota_tva(conn)
+    _migrate_seed_pachet_reconcilieri(conn)
     return conn
 
 
@@ -748,10 +827,12 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firms_verificare_trial(conn)
     _migrate_add_firms_trial_reminder(conn)
     _migrate_add_firms_arhivare(conn)
+    _migrate_add_firms_reconcilieri_estimate(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     _migrate_add_contracts_esemneaza(conn)
     _migrate_add_contract_prestator_semnare(conn)
     _migrate_seed_cota_tva(conn)
+    _migrate_seed_pachet_reconcilieri(conn)
     conn.commit()
     return conn

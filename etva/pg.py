@@ -40,6 +40,7 @@ EXPECTED_SCHEMA = {
         "trial_expira_la": "timestamp with time zone",
         "ciclu_facturare": "text", "trial_reminder_ultim_prag": "integer",
         "arhivata_la": "timestamp with time zone",
+        "reconcilieri_lunare_estimate": "integer",
     },
     "users": {
         "id": "integer", "username": "text", "pw_hash": "text",
@@ -124,6 +125,12 @@ EXPECTED_SCHEMA = {
         "actualizat_de": "text",
         "actualizat_la": "timestamp with time zone",
     },
+    "pachete_reconcilieri": {
+        "id": "integer", "reconcilieri_incluse": "integer",
+        "marime_pachet": "integer", "pret_pachet_lunar_ron": "numeric",
+        "actualizat_de": "text",
+        "actualizat_la": "timestamp with time zone",
+    },
     "contracts": {
         "id": "integer", "firm_id": "integer", "numar": "integer",
         "ciclu_facturare": "text", "suma": "numeric",
@@ -143,7 +150,9 @@ EXPECTED_SCHEMA = {
     },
     "clients": {
         "id": "integer", "firm_id": "integer", "cui": "text",
-        "name": "text",
+        "name": "text", "gdpr_confirmat": "boolean",
+        "gdpr_confirmat_de": "text",
+        "gdpr_confirmat_la": "timestamp with time zone",
     },
     "client_assignments": {
         "firm_id": "integer", "username": "text", "client_id": "integer",

@@ -112,11 +112,17 @@ def _mock_esemneaza(monkeypatch):
 
 
 def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate",
-                  email="test@exemplu.ro"):
-    return c.post("/inregistrare", data={
+                  email="test@exemplu.ro", reconcilieri_estimate=None):
+    data = {
         "name": name, "cui": cui, "tip": tip, "email": email,
-        "password": "ParolaLunga123!", "accept_termeni": "on"},
-        follow_redirects=False)
+        "password": "ParolaLunga123!", "accept_termeni": "on"}
+    # Firmele directe declara obligatoriu numarul minim estimat de
+    # reconcilieri lunare (sta la baza tarifarii cu pachete extra).
+    if reconcilieri_estimate is None and tip == "direct":
+        reconcilieri_estimate = 10
+    if reconcilieri_estimate is not None:
+        data["reconcilieri_estimate"] = str(reconcilieri_estimate)
+    return c.post("/inregistrare", data=data, follow_redirects=False)
 
 
 def test_register_redirects_to_app(app):
@@ -671,7 +677,7 @@ def test_add_firm_direct_also_has_no_clients(app):
     c = app.test_client()
     inregistreaza(c, tip="contabilitate")
     c.post("/panou/firme",
-          data={"name": "PFA Ionescu", "cui": "RO222", "tip": "direct"})
+          data={"name": "PFA Ionescu", "cui": "RO222", "tip": "direct", "reconcilieri_estimate": "10"})
     # add_firm() comuta automat pe firma noua
     assert c.get("/api/clients").get_json() == []
 
@@ -679,7 +685,7 @@ def test_add_firm_direct_also_has_no_clients(app):
 def test_direct_firm_rejects_adding_a_client(app):
     c = app.test_client()
     inregistreaza(c, tip="direct")
-    r = c.post("/api/clients", json={"cui": "RO999", "name": "Alta Firma"})
+    r = c.post("/api/clients", json={"cui": "RO999", "name": "Alta Firma", "gdpr_confirmat": True})
     assert r.status_code == 403
     assert c.get("/api/clients").get_json() == []
 
@@ -713,7 +719,7 @@ def test_firm_key_persists_across_app_restart(tmp_path):
     c1 = app1.test_client()
     inregistreaza(c1)
     cid = c1.post("/api/clients",
-                 json={"cui": "RO9", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO9", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     assert cid
 
     app2 = create_app(data_dir)  # simulates a server restart
@@ -834,7 +840,11 @@ def test_master_page_shows_up_to_date_server(app, monkeypatch):
     assert "repornește serverul" not in text
 
 
-def test_master_cannot_use_app_api(app):
+def test_master_uses_app_via_internal_test_firm(app):
+    """Cerut explicit: super-adminul (master) trebuie sa poata testa
+    reconcilierile nelimitat. Primeste o identitate pe firma interna de
+    testare - creata lenes, fara trial si fara ciclu de facturare, deci in
+    afara oricarei facturari/arhivari - cu toate permisiunile."""
     conn = app.portal_conn
     conn.execute(
         "INSERT INTO users(username, pw_hash, is_master) VALUES(?,?,TRUE)",
@@ -843,7 +853,30 @@ def test_master_cannot_use_app_api(app):
     c = app.test_client()
     c.post("/autentificare", data={"cui": "sef",
                                    "password": "ParolaMaster123!"})
-    assert c.get("/api/me").status_code == 401
+    me = c.get("/api/me").get_json()
+    assert me["username"] == "sef"
+    assert me["este_master"] is True
+    assert me["firm_name"] == "Testare interna (master)"
+    assert "reconciliere.creare" in me["permissions"]
+    # firma interna nu intra in trial/facturare (fara trial_expira_la, fara
+    # ciclu) si nu e legata de niciun user in user_firms
+    firma = conn.execute(
+        "SELECT * FROM firms WHERE cui='TESTARE-MASTER'").fetchone()
+    assert firma["trial_expira_la"] is None
+    assert firma["ciclu_facturare"] is None
+    assert bool(firma["email_verificat"])
+    assert conn.execute(
+        "SELECT 1 FROM user_firms WHERE firm_id=?", (firma["id"],)).fetchone() is None
+    # /app se serveste direct, fara redirect spre login/plan
+    r = c.get("/app")
+    assert r.status_code == 200
+    # masterul poate crea clienti de test si rula prin acelasi API
+    cid = c.post("/api/clients", json={
+        "cui": "RO7777", "name": "Client Test Master",
+        "gdpr_confirmat": True}).get_json()["id"]
+    assert cid
+    # un utilizator obisnuit de firma nu e afectat
+    assert c.get("/api/me").get_json()["este_master"] is True
 
 
 def test_register_rejects_unknown_cui(app, monkeypatch):
@@ -869,7 +902,7 @@ def test_user_can_add_second_firm_and_switch(app):
     c = app.test_client()
     inregistreaza(c)
     r = c.post("/panou/firme",
-              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct"},
+              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct", "reconcilieri_estimate": "10"},
               follow_redirects=True)
     assert b"Firma Doi PFA" in r.data
     # a doua firma devine activa automat
@@ -954,7 +987,7 @@ def test_add_firm_rejected_when_existing_firm_is_direct(app):
     c = app.test_client()
     inregistreaza(c, tip="direct")
     r = c.post("/panou/firme",
-              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct"},
+              data={"name": "Firma Doi PFA", "cui": "RO222", "tip": "direct", "reconcilieri_estimate": "10"},
               follow_redirects=True)
     assert "firma/PFA directa".encode() in r.data
     assert not app.portal_conn.execute(
@@ -1167,7 +1200,7 @@ def test_product_flow_in_browser(app):
     me = c.get("/api/me").get_json()
     assert me["firm_name"] == "Firma Unu SRL"
     cid = c.post("/api/clients",
-                 json={"cui": "RO9", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO9", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     anaf = _journal(); anaf.loc[0, "baza"] = "150"
     r = c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-01",
@@ -1195,7 +1228,7 @@ def test_junior_limited_in_product(app):
                                    "password": "ParolaJunior123!"})
     assert c.get("/api/reconciliations/1/export").status_code == 403
     assert c.post("/api/clients",
-                  json={"cui": "RO2", "name": "Y"}).status_code == 403
+                  json={"cui": "RO2", "name": "Y", "gdpr_confirmat": True}).status_code == 403
     assert c.get("/api/clients").get_json() == []  # nimic alocat inca
 
 
@@ -1203,7 +1236,7 @@ def test_assignment_gives_visibility(app):
     c = app.test_client()
     inregistreaza(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO9", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO9", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     c.post("/panou/utilizatori", data={"username": "cont1",
                                        "password": "ParolaContabil123!",
                                        "role": "contabil"})
@@ -1278,7 +1311,7 @@ def test_d300_line_reconciliation_via_pdf_and_saga(app, monkeypatch):
     c = app.test_client()
     inregistreaza(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
 
     r = c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-06",
@@ -1305,7 +1338,7 @@ def test_d300_line_reconciliation_via_anaf_json_and_saga(app):
     c = app.test_client()
     inregistreaza(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
 
     anaf_json = _json.dumps({
         "CIF": "111", "AN": 2026, "LUNA": 6,
@@ -1341,7 +1374,7 @@ def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
     c = app.test_client()
     inregistreaza(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     r = c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-06",
         "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
@@ -1375,7 +1408,7 @@ def test_master_users_shows_everything_about_each_account(app, monkeypatch):
     c = app.test_client()
     inregistreaza(c, name="Firma1", cui="RO111", tip="contabilitate")
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     c.post("/api/assignments", json={"username": "firma1", "client_id": cid})
     c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-06",
@@ -1442,7 +1475,7 @@ def test_master_users_kpis_and_charts(app, monkeypatch):
     c1 = app.test_client()
     inregistreaza(c1, name="Firma1", cui="RO111", tip="contabilitate")
     cid = c1.post("/api/clients",
-                  json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                  json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     c1.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-06",
         "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
@@ -1485,7 +1518,7 @@ def test_master_user_history_lists_actions_across_firms_and_exports_xml(app):
 
     c = app.test_client()
     inregistreaza(c, name="Firma Unu SRL", cui="RO111")
-    c.post("/api/clients", json={"cui": "RO9", "name": "Client X"})
+    c.post("/api/clients", json={"cui": "RO9", "name": "Client X", "gdpr_confirmat": True})
     user_id = conn.execute(
         "SELECT id FROM users WHERE username='firma-unu-srl'").fetchone()["id"]
 
@@ -2070,7 +2103,7 @@ def test_reconciliation_auto_fetch_requires_anaf_authorization(app):
     c = app.test_client()
     inregistreaza(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     r = c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "2026-06", "anaf_sursa": "auto",
         "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
@@ -2088,7 +2121,7 @@ def test_reconciliation_auto_fetch_rejects_bad_period_format(app, monkeypatch):
     inregistreaza(c)
     _stare_anaf(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     r = c.post("/api/reconciliations", data={
         "client_id": str(cid), "period": "iunie-2026", "anaf_sursa": "auto",
         "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
@@ -2106,7 +2139,7 @@ def test_reconciliation_auto_fetch_uses_stored_anaf_token(app, monkeypatch):
     inregistreaza(c)
     _stare_anaf(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
 
     captura = {}
     def _fake_fetch_decont(access_token, cui, an, luna):
@@ -2139,7 +2172,7 @@ def test_reconciliation_auto_fetch_surfaces_anaf_oauth_errors(app, monkeypatch):
     inregistreaza(c)
     _stare_anaf(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
 
     def _boom(*a, **kw):
         raise anaf_oauth.AnafOAuthError("Serviciul ANAF nu a putut fi contactat: boom")
@@ -2162,7 +2195,7 @@ def test_reconciliation_auto_fetch_rejects_malformed_decont(app, monkeypatch):
     inregistreaza(c)
     _stare_anaf(c)
     cid = c.post("/api/clients",
-                 json={"cui": "RO999", "name": "Client X"}).get_json()["id"]
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
     monkeypatch.setattr(anaf_oauth, "fetch_decont", lambda *a, **kw: {"nu": "e decont"})
 
     r = c.post("/api/reconciliations", data={
@@ -2827,7 +2860,7 @@ def test_adauga_firma_pe_cont_existent_nu_cere_reverificare(app):
     c = app.test_client()
     inregistreaza(c, cui="RO901")
     r = c.post("/panou/firme", data={
-        "name": "A Doua Firma SRL", "cui": "RO902", "tip": "direct"})
+        "name": "A Doua Firma SRL", "cui": "RO902", "tip": "direct", "reconcilieri_estimate": "10"})
     row = app.portal_conn.execute(
         "SELECT email_verificat, email_verificare_token FROM firms "
         "WHERE cui='RO902'").fetchone()
@@ -3227,6 +3260,138 @@ def test_updated_nomenclator_price_is_used_by_payment_calculation(app):
         "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
         "WHERE f.cui='RO209'").fetchone()
     assert row["suma"] == round(100 * _multiplicator_tva(app), 2)
+
+
+def test_inregistrare_direct_cere_estimarea_reconcilierilor(app):
+    """O firma directa isi declara la inregistrare numarul minim estimat de
+    reconcilieri lunare - fara el, contul nu se creeaza."""
+    c = app.test_client()
+    r = inregistreaza(c, cui="RO771", tip="direct", reconcilieri_estimate="")
+    assert "numarul minim estimat de reconcilieri".encode() in r.data
+    assert not app.portal_conn.execute(
+        "SELECT 1 FROM firms WHERE cui='RO771'").fetchone()
+
+    r = inregistreaza(c, cui="RO771", tip="direct", reconcilieri_estimate=120)
+    assert r.status_code == 302
+    row = app.portal_conn.execute(
+        "SELECT reconcilieri_lunare_estimate FROM firms WHERE cui='RO771'"
+    ).fetchone()
+    assert row["reconcilieri_lunare_estimate"] == 120
+
+
+def test_inregistrare_contabilitate_nu_cere_estimarea(app):
+    """Firmele de contabilitate platesc per client, nu pe volum - campul de
+    estimare nu li se cere si ramane NULL."""
+    c = app.test_client()
+    r = inregistreaza(c, cui="RO772", tip="contabilitate")
+    assert r.status_code == 302
+    row = app.portal_conn.execute(
+        "SELECT reconcilieri_lunare_estimate FROM firms WHERE cui='RO772'"
+    ).fetchone()
+    assert row["reconcilieri_lunare_estimate"] is None
+
+
+def test_pachete_extra_peste_prag_intra_in_suma_de_plata(app):
+    """Abonament standard + reconcilieri: o firma directa care estimeaza
+    peste pragul inclus (100) plateste pachete extra - cu valorile initiale
+    (pachete de 50 la 19 RON/luna), 180 estimate inseamna 2 pachete."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO773", tip="direct", reconcilieri_estimate=180)
+    c.post("/panou/plan", data={"ciclu": "lunar",
+                                "reconcilieri_estimate": "180"})
+    _apropie_trial_de_final(app, "RO773")
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO773'").fetchone()
+    assert row["suma"] == round((59 + 2 * 19) * _multiplicator_tva(app), 2)
+
+
+def test_pachete_extra_sub_prag_nu_se_factureaza(app):
+    """Sub pragul inclus, firma directa plateste doar abonamentul standard."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO774", tip="direct", reconcilieri_estimate=40)
+    c.post("/panou/plan", data={"ciclu": "lunar",
+                                "reconcilieri_estimate": "40"})
+    _apropie_trial_de_final(app, "RO774")
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO774'").fetchone()
+    assert row["suma"] == round(59 * _multiplicator_tva(app), 2)
+
+
+def test_salveaza_pachet_reconcilieri_din_nomenclator(app):
+    """Masterul poate modifica pragul inclus, marimea pachetului si pretul
+    lui - iar noile valori se reflecta imediat in suma de plata."""
+    from portal import db as pdb
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare",
+                  data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post("/master/nomenclator/pachete", data={
+        "reconcilieri_incluse": "10", "marime_pachet": "20",
+        "pret_pachet_lunar": "5"}, follow_redirects=True)
+    assert "au fost actualizate".encode() in r.data
+    pachet = pdb.get_pachet_reconcilieri(app.portal_conn)
+    assert (pachet["reconcilieri_incluse"], pachet["marime_pachet"],
+            pachet["pret_pachet_lunar_ron"]) == (10, 20, 5)
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO775", tip="direct", reconcilieri_estimate=50)
+    c.post("/panou/plan", data={"ciclu": "lunar",
+                                "reconcilieri_estimate": "50"})
+    _apropie_trial_de_final(app, "RO775")
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    row = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO775'").fetchone()
+    # 50 estimate - 10 incluse = 40 peste prag -> 2 pachete de 20 la 5 RON
+    assert row["suma"] == round((59 + 2 * 5) * _multiplicator_tva(app), 2)
+
+
+def test_salveaza_pachet_reconcilieri_respinge_valori_invalide(app):
+    from portal import db as pdb
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator/pachete", data={
+        "reconcilieri_incluse": "0", "marime_pachet": "50",
+        "pret_pachet_lunar": "19"}, follow_redirects=True)
+    assert "numere intregi pozitive".encode() in r.data
+    assert pdb.get_pachet_reconcilieri(
+        app.portal_conn)["reconcilieri_incluse"] == 100
+
+
+def test_adaugare_client_cere_confirmarea_gdpr(app):
+    """GDPR: firma de contabilitate nu poate adauga un client fara sa
+    confirme ca are mandat de prelucrare a datelor lui; confirmarea ramane
+    pe randul clientului si in jurnalul de audit."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO776", tip="contabilitate")
+    r = c.post("/api/clients", json={"cui": "RO9991", "name": "Fara Acord"})
+    assert r.status_code == 400
+    assert "bifa GDPR" in r.get_json()["error"]
+
+    cid = c.post("/api/clients", json={
+        "cui": "RO9991", "name": "Cu Acord",
+        "gdpr_confirmat": True}).get_json()["id"]
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO776'").fetchone()["id"]
+    fc = app.firm_conn(firm_id)
+    client = fc.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+    assert bool(client["gdpr_confirmat"])
+    assert client["gdpr_confirmat_de"] == "firma-unu-srl"
+    assert client["gdpr_confirmat_la"]
+    actiuni = [r["action"] for r in fc.execute(
+        "SELECT action FROM audit_log WHERE entity_id=?", (str(cid),))]
+    assert "client.gdpr_confirmare" in actiuni
+    # starea apare si in lista de clienti servita SPA-ului
+    lista = c.get("/api/clients").get_json()
+    assert [cl for cl in lista if cl["id"] == cid][0]["gdpr_confirmat"]
 
 
 def test_salveaza_cota_tva_requires_master(app):
@@ -4213,8 +4378,8 @@ def test_master_statistici_counts_and_mrr(app):
     c2 = app.test_client()
     inregistreaza(c2, cui="RO402", tip="contabilitate")
     c2.post("/panou/plan", data={"ciclu": "lunar"})  # 25 RON/luna/client
-    c2.post("/api/clients", json={"cui": "RO4021", "name": "Client Unu"})
-    c2.post("/api/clients", json={"cui": "RO4022", "name": "Client Doi"})
+    c2.post("/api/clients", json={"cui": "RO4021", "name": "Client Unu", "gdpr_confirmat": True})
+    c2.post("/api/clients", json={"cui": "RO4022", "name": "Client Doi", "gdpr_confirmat": True})
 
     c3 = app.test_client()
     inregistreaza(c3, cui="RO403", tip="direct")  # inca in proba, fara ciclu
@@ -4546,7 +4711,7 @@ def test_switch_firm_shows_confirmation_message(app):
     c = app.test_client()
     inregistreaza(c, cui="RO611")
     c.post("/panou/firme",
-          data={"name": "Firma Doisprezece PFA", "cui": "RO612", "tip": "direct"})
+          data={"name": "Firma Doisprezece PFA", "cui": "RO612", "tip": "direct", "reconcilieri_estimate": "10"})
     firm1_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO611'").fetchone()["id"]
     r = c.post("/panou/comutare-firma", data={"firm_id": str(firm1_id)},

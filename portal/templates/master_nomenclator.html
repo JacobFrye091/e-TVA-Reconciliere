@@ -8,7 +8,10 @@
       <p class="sub">Prețurile afișate firmelor la alegerea ciclului de facturare
         (<a href="/panou/plan">/panou/plan</a>) și folosite la calculul sumei de
         plată. Firma de tip „contabilitate" plătește per client gestionat, nu per
-        firmă — prețul de mai jos e per client.</p>
+        firmă — prețul de mai jos e per client. Firma „directă" (PFA/SRL care își
+        face singură calculele) plătește abonamentul standard, care include un
+        număr de reconcilieri pe lună; peste acel prag se adaugă pachete extra —
+        vezi cardul „Abonament standard + reconcilieri" de mai jos.</p>
     </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
@@ -48,6 +51,36 @@
     </form>
     <p class="nota">Prețurile de pe pagina publică (index.html, secțiunea „Prețuri") nu se
       actualizează automat de aici — sunt statice și trebuie ținute manual în sincron.</p>
+  </div>
+
+  <div class="card">
+    <h2>Abonament standard + reconcilieri (firme directe)</h2>
+    <p class="sub">Abonamentul standard al unei firme directe include un număr
+      de reconcilieri pe lună. La înregistrare, firma directă își declară
+      numărul minim estimat de reconcilieri lunare; dacă estimarea depășește
+      pragul inclus, diferența se tarifează în pachete extra, la prețul de mai
+      jos (adăugat lunar peste abonament, exclusiv TVA). Firmele de
+      contabilitate nu sunt afectate — ele plătesc per client.</p>
+    <form method="post" action="/master/nomenclator/pachete">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <table>
+        <tr><th>Reconcilieri incluse / lună</th><th>Mărimea unui pachet extra</th>
+          <th>Preț pachet extra (RON / lună)</th></tr>
+        <tr>
+          <td><input type="number" step="1" min="1" name="reconcilieri_incluse"
+                     value="{{ pachet['reconcilieri_incluse'] }}" required></td>
+          <td><input type="number" step="1" min="1" name="marime_pachet"
+                     value="{{ pachet['marime_pachet'] }}" required></td>
+          <td><input type="number" step="0.01" min="0.01" name="pret_pachet_lunar"
+                     value="{{ pachet['pret_pachet_lunar_ron'] }}" required></td>
+        </tr>
+      </table>
+      <button class="btn-lat" type="submit" style="margin-top:14px">Salvează setările pachetelor</button>
+    </form>
+    <p class="nota">Exemplu: cu {{ pachet['reconcilieri_incluse'] }} incluse și
+      pachete de {{ pachet['marime_pachet'] }}, o firmă care estimează
+      {{ pachet['reconcilieri_incluse'] + pachet['marime_pachet'] + 10 }} reconcilieri/lună
+      plătește abonamentul standard + 2 pachete extra.</p>
   </div>
 
   <div class="card">

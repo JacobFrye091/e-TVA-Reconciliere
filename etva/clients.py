@@ -4,6 +4,8 @@ Visibility: users whose portal permissions include `clienti.creare` or
 `useri.gestionare` (firm admins, managers) see every client; everyone else
 sees only the clients assigned to their username.
 """
+from datetime import datetime, timezone
+
 from etva import dbcompat
 
 
@@ -11,11 +13,22 @@ class ClientError(Exception):
     pass
 
 
-def create_client(conn, cui: str, name: str) -> int:
+def create_client(conn, cui: str, name: str,
+                  gdpr_confirmat_de: "str | None" = None) -> int:
+    """gdpr_confirmat_de: username-ul care confirma, la adaugare, ca firma
+    de contabilitate are un contract/imputernicire cu acest client care
+    acopera prelucrarea datelor lui in platforma (art. 28 GDPR) - cerut
+    obligatoriu de portal/app.py::add_client; pastrat pe rand, cu momentul
+    confirmarii, ca proba."""
     if conn.execute("SELECT 1 FROM clients WHERE cui=?", (cui,)).fetchone():
         raise ClientError("Exista deja un client cu acest CUI.")
     new_id = dbcompat.insert_id(
-        conn, "INSERT INTO clients(cui, name) VALUES(?,?)", (cui, name))
+        conn,
+        "INSERT INTO clients(cui, name, gdpr_confirmat, gdpr_confirmat_de, "
+        "gdpr_confirmat_la) VALUES(?,?,?,?,?)",
+        (cui, name, gdpr_confirmat_de is not None, gdpr_confirmat_de,
+         datetime.now(timezone.utc).isoformat()
+         if gdpr_confirmat_de is not None else None))
     conn.commit()
     return new_id
 

@@ -89,6 +89,13 @@ CONTRACTE_ACTIVE = os.environ.get("CONTRACTE_ACTIVE", "0") == "1"
 # PLATA_ACTIVA=1.
 PLATA_ACTIVA = os.environ.get("PLATA_ACTIVA", "0") == "1"
 
+# Firma interna prin care contul master (super-admin) testeaza reconcilierile
+# din /app - nelimitat, fara trial si fara facturare. CUI-ul nu e un CUI real
+# (nu trece prin verificarea ANAF - firma se creeaza direct in cod, vezi
+# _firma_testare_master) si o identifica fara echivoc in listele master.
+MASTER_TEST_FIRM_CUI = "TESTARE-MASTER"
+MASTER_TEST_FIRM_NAME = "Testare interna (master)"
+
 # Implicit dezactivat: emailul de confirmare e singura cale de livrare a
 # link-ului de validare (spre deosebire de formularul de contact, unde o
 # eroare de trimitere nu blocheaza nimic), asa ca blocarea reala a
@@ -226,10 +233,47 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "WHERE uf.user_id=? AND uf.active=TRUE AND f.active=TRUE "
             "ORDER BY f.name", (user_id,)).fetchall()
 
+    def _firma_testare_master():
+        """Firma interna de testare a contului master - creata lenes la
+        prima folosire. Nu e un cont client: fara trial, fara ciclu de
+        facturare, fara membri in user_firms (masterul nu apartine
+        niciunei firme), deci nu apare in remindere de trial, arhivare
+        sau facturare. Exista doar ca masterul sa poata rula reconcilieri
+        de test, nelimitat, prin exact acelasi cod ca firmele reale."""
+        firma = conn.execute("SELECT * FROM firms WHERE cui=?",
+                             (MASTER_TEST_FIRM_CUI,)).fetchone()
+        if firma is None:
+            firm_id = dbcompat.insert_id(
+                conn,
+                "INSERT INTO firms(name, cui, tip, email_verificat, creat_la) "
+                "VALUES(?,?,?,TRUE,?)",
+                (MASTER_TEST_FIRM_NAME, MASTER_TEST_FIRM_CUI,
+                 pdb.FIRM_TIP_CONTABILITATE,
+                 datetime.now(timezone.utc).isoformat()))
+            conn.execute(
+                "INSERT INTO firm_keys(firm_id, wrapped_key) VALUES(?,?)",
+                (firm_id, psec.wrap_key(secret, os.urandom(32))))
+            conn.commit()
+            firma = conn.execute("SELECT * FROM firms WHERE id=?",
+                                 (firm_id,)).fetchone()
+        return firma
+
     def current_identity():
-        """Active-firm identity for the product API; None for anonymous/master."""
+        """Active-firm identity for the product API; None for anonymous.
+
+        Un master primeste o identitate legata de firma interna de
+        testare (vezi _firma_testare_master) cu toate permisiunile -
+        cerut explicit: super-adminul trebuie sa poata testa
+        reconcilierile nelimitat, fara trial sau plan."""
         user = current_user()
-        if user is None or user["is_master"]:
+        if user is not None and user["is_master"]:
+            firma = _firma_testare_master()
+            return {"username": user["username"], "role": "admin",
+                    "firm_id": firma["id"], "firm_name": firma["name"],
+                    "firm_tip": firma["tip"], "firm_cui": firma["cui"],
+                    "onboarding_completat": True, "este_master": True,
+                    "permissions": pdb.ROLE_PERMISSIONS["admin"]}
+        if user is None:
             return None
         active_firm_id = session.get("active_firm_id")
         if active_firm_id is None:
@@ -247,6 +291,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "firm_tip": row["tip"], "firm_cui": row["cui"],
                 "onboarding_completat": bool(user["onboarding_completat"]),
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
+
+    @app.context_processor
+    def _inject_pachet_reconcilieri():
+        """Pragul de reconcilieri incluse si pachetul extra, disponibile in
+        orice template (inregistrare, alegerea planului) fara sa fie pasate
+        explicit prin fiecare render_template - un singur rand citit din
+        nomenclator, mereu la zi cu ce a setat masterul."""
+        return {"pachet_reconcilieri": pdb.get_pachet_reconcilieri(conn)}
 
     def _log_master_action(user, actiune: str, detalii: str | None = None) -> None:
         conn.execute(
@@ -420,20 +472,40 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     def _luni_pentru_ciclu(ciclu: str) -> int:
         return {pdb.CICLU_LUNAR: 1, pdb.CICLU_6_LUNI: 6, pdb.CICLU_AN: 12}[ciclu]
 
+    def _pachete_extra_lunare(firm) -> tuple[int, float]:
+        """(numar pachete extra, costul lor lunar fara TVA) pentru o firma
+        directa a carei estimare de reconcilieri lunare depaseste ce
+        include abonamentul standard (pragul si marimea/pretul pachetului
+        vin din nomenclator - pdb.get_pachet_reconcilieri). O firma de
+        contabilitate plateste per client, nu pe volum - (0, 0.0)."""
+        if firm["tip"] != pdb.FIRM_TIP_DIRECT:
+            return 0, 0.0
+        estimare = firm["reconcilieri_lunare_estimate"] or 0
+        pachet = pdb.get_pachet_reconcilieri(conn)
+        peste = estimare - pachet["reconcilieri_incluse"]
+        if peste <= 0:
+            return 0, 0.0
+        n = (peste + pachet["marime_pachet"] - 1) // pachet["marime_pachet"]
+        return n, round(n * pachet["pret_pachet_lunar_ron"], 2)
+
     def _calculeaza_suma_plata(firm, ciclu: str) -> float:
         """Pretul de baza, fara TVA - firma 'contabilitate' plateste per
         client gestionat (minim 1, ca o firma abia inregistrata - fara
         clienti inca - sa nu ajunga la o factura de 0 RON); firma 'direct'
-        are tarif fix per firma. Folosit ca atare pentru contracts.suma
-        (contractul afiseaza explicit "exclusiv TVA" langa aceasta suma) -
-        suma efectiv ceruta clientului la plata trece prin _suma_cu_tva."""
+        plateste abonamentul standard plus, daca estimarea ei de
+        reconcilieri lunare depaseste ce include abonamentul, pachetele
+        extra (vezi _pachete_extra_lunare). Folosit ca atare pentru
+        contracts.suma (contractul afiseaza explicit "exclusiv TVA" langa
+        aceasta suma) - suma efectiv ceruta clientului la plata trece prin
+        _suma_cu_tva."""
         pret_lunar = pdb.get_preturi(conn)[firm["tip"]][ciclu]
         luni = _luni_pentru_ciclu(ciclu)
         if firm["tip"] == pdb.FIRM_TIP_CONTABILITATE:
             n_clienti = firm_conn(firm["id"]).execute(
                 "SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
             return round(pret_lunar * luni * max(n_clienti, 1), 2)
-        return round(pret_lunar * luni, 2)
+        _n_pachete, cost_lunar_extra = _pachete_extra_lunare(firm)
+        return round((pret_lunar + cost_lunar_extra) * luni, 2)
 
     def _suma_cu_tva(suma_neta: float) -> float:
         """Suma efectiv ceruta/incasata de la client - pretul de baza
@@ -465,7 +537,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return f"{desired}{n}"
 
     def _create_firm(name: str, cui: str, tip: str, user_id: int, role: str,
-                     email_verificat: bool = False) -> tuple[int, "str | None"]:
+                     email_verificat: bool = False,
+                     reconcilieri_estimate: "int | None" = None
+                     ) -> tuple[int, "str | None"]:
         """Create a firm and link it to user_id with the given role. A
         self-reconciling ('direct') firm has no clients at all - it
         reconciles as itself, not as its own client - so nothing further
@@ -486,10 +560,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         firm_id = dbcompat.insert_id(
             conn,
             "INSERT INTO firms(name, cui, tip, email_verificat, "
-            "email_verificare_token, creat_la, trial_expira_la) "
-            "VALUES(?,?,?,?,?,?,?)",
+            "email_verificare_token, creat_la, trial_expira_la, "
+            "reconcilieri_lunare_estimate) "
+            "VALUES(?,?,?,?,?,?,?,?)",
             (name, cui, tip, email_verificat, token,
-             creat_la, trial_expira_la))
+             creat_la, trial_expira_la, reconcilieri_estimate))
         conn.execute(
             "INSERT INTO user_firms(user_id, firm_id, role, active) "
             "VALUES(?,?,?,TRUE)", (user_id, firm_id, role))
@@ -497,6 +572,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                      (firm_id, psec.wrap_key(secret, os.urandom(32))))
         conn.commit()
         return firm_id, token
+
+    def _parse_reconcilieri_estimate(form, tip: str):
+        """(valoare, eroare) - numarul minim estimat de reconcilieri lunare,
+        cerut la inregistrare firmelor directe (PFA/SRL care isi fac singure
+        calculele); sta la baza tarifarii cu pachete extra peste pragul
+        inclus in abonamentul standard (vezi _pachete_extra_lunare). Firmele
+        de contabilitate platesc per client, nu declara volum - (None, None)."""
+        if tip != pdb.FIRM_TIP_DIRECT:
+            return None, None
+        brut = (form.get("reconcilieri_estimate") or "").strip()
+        try:
+            valoare = int(brut)
+        except ValueError:
+            valoare = -1
+        if valoare < 1:
+            return None, ("Completeaza numarul minim estimat de reconcilieri "
+                          "pe luna (un numar intreg, cel putin 1).")
+        return valoare, None
 
     @app.route("/inregistrare", methods=["GET", "POST"])
     def register():
@@ -523,6 +616,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if len(password) < 10:
             return render_template("inregistrare.html",
                                    eroare="Parola trebuie sa aiba minim 10 caractere.")
+        reconcilieri_estimate, eroare_estimare = _parse_reconcilieri_estimate(f, tip)
+        if eroare_estimare:
+            return render_template("inregistrare.html", eroare=eroare_estimare)
         if conn.execute("SELECT 1 FROM firms WHERE cui=?", (cui,)).fetchone():
             return render_template("inregistrare.html",
                                    eroare="Exista deja o firma cu acest CUI.")
@@ -536,7 +632,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             conn,
             "INSERT INTO users(username, pw_hash, email) VALUES(?,?,?)",
             (username, psec.hash_password(password), email))
-        firm_id, token = _create_firm(name, cui, tip, user_id, "admin")
+        firm_id, token = _create_firm(
+            name, cui, tip, user_id, "admin",
+            reconcilieri_estimate=reconcilieri_estimate)
         if token:
             _trimite_email_verificare(email, name, token)
         session.permanent = True
@@ -808,6 +906,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if not name or not cui or tip not in pdb.FIRM_TIPURI:
             return redirect(url_for(
                 "panou", eroare="Denumirea, CUI-ul si tipul firmei sunt obligatorii."))
+        reconcilieri_estimate, eroare_estimare = _parse_reconcilieri_estimate(
+            request.form, tip)
+        if eroare_estimare:
+            return redirect(url_for("panou", eroare=eroare_estimare))
         if conn.execute("SELECT 1 FROM firms WHERE cui=?", (cui,)).fetchone():
             return redirect(url_for(
                 "panou", eroare="Exista deja o firma cu acest CUI."))
@@ -817,7 +919,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # Deja un cont autentificat (deci deja o adresa de email cunoscuta) -
         # nu mai cerem o a doua confirmare de email pentru firma aditionala.
         firm_id, _token = _create_firm(name, cui, tip, user["id"], "admin",
-                                       email_verificat=True)
+                                       email_verificat=True,
+                                       reconcilieri_estimate=reconcilieri_estimate)
         session["active_firm_id"] = firm_id
         return redirect(url_for("panou"))
 
@@ -844,9 +947,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                        if suma_neta_curenta is not None else None)
         suma_tva_curenta = (round(suma_curenta - suma_neta_curenta, 2)
                            if suma_curenta is not None else None)
+        n_pachete_extra, cost_lunar_extra = _pachete_extra_lunare(firm)
         return render_template(
             "alege_plan.html", user=user, firm=firm,
             preturi=pdb.get_preturi(conn)[firm["tip"]],
+            pachet=pdb.get_pachet_reconcilieri(conn),
+            n_pachete_extra=n_pachete_extra,
+            cost_lunar_extra=cost_lunar_extra,
             zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
             suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
             cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
@@ -866,8 +973,25 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if ciclu not in pdb.CICLURI_FACTURARE:
             return redirect(url_for(
                 "alege_plan", eroare="Alege un ciclu de facturare valid."))
-        conn.execute("UPDATE firms SET ciclu_facturare=? WHERE id=?",
-                    (ciclu, active_firm_id))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (active_firm_id,)).fetchone()
+        # Estimarea e ceruta doar cand formularul o trimite (UI-ul o include
+        # mereu pentru firmele directe) sau cand firma inca nu are una (cont
+        # dinaintea acestei cerinte) - o salvare de ciclu fara camp nu
+        # trebuie sa stearga o estimare deja declarata.
+        reconcilieri_estimate = None
+        if (firm["tip"] == pdb.FIRM_TIP_DIRECT
+                and ("reconcilieri_estimate" in request.form
+                     or firm["reconcilieri_lunare_estimate"] is None)):
+            reconcilieri_estimate, eroare_estimare = _parse_reconcilieri_estimate(
+                request.form, firm["tip"])
+            if eroare_estimare:
+                return redirect(url_for("alege_plan", eroare=eroare_estimare))
+        conn.execute(
+            "UPDATE firms SET ciclu_facturare=?, "
+            "reconcilieri_lunare_estimate=COALESCE(?, reconcilieri_lunare_estimate) "
+            "WHERE id=?",
+            (ciclu, reconcilieri_estimate, active_firm_id))
         conn.commit()
         return redirect(url_for("panou", mesaj="Planul a fost salvat."))
 
@@ -2638,6 +2762,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("login"))
         return render_template(
             "master_nomenclator.html", user=user, preturi=pdb.get_preturi(conn),
+            pachet=pdb.get_pachet_reconcilieri(conn),
             cota_tva=pdb.get_cota_tva(conn), istoric_tva=pdb.listeaza_cote_tva(conn),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
@@ -2673,6 +2798,46 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                      for (tip, ciclu), pret in valori.items()))
         return redirect(url_for(
             "master_nomenclator", mesaj="Preturile au fost actualizate."))
+
+    @app.post("/master/nomenclator/pachete")
+    def salveaza_pachet_reconcilieri():
+        """Nomenclatorul 'abonament standard + reconcilieri': cate
+        reconcilieri/luna include abonamentul standard al firmelor directe,
+        cat de mare e un pachet extra si cat costa pe luna - validate
+        integral inainte de a scrie ceva, ca la salveaza_nomenclator."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+
+        def _intreg(camp):
+            try:
+                return int(request.form.get(camp, "").strip())
+            except ValueError:
+                return None
+
+        incluse = _intreg("reconcilieri_incluse")
+        marime = _intreg("marime_pachet")
+        bruta = request.form.get(
+            "pret_pachet_lunar", "").strip().replace(",", ".")
+        try:
+            pret = float(bruta)
+        except ValueError:
+            pret = None
+        if (incluse is None or incluse < 1 or marime is None or marime < 1
+                or pret is None or pret <= 0):
+            return redirect(url_for(
+                "master_nomenclator",
+                eroare="Reconcilierile incluse si marimea pachetului trebuie "
+                      "sa fie numere intregi pozitive, iar pretul pachetului "
+                      "un numar pozitiv."))
+        pdb.set_pachet_reconcilieri(conn, incluse, marime, pret,
+                                    user["username"])
+        _log_master_action(
+            user, "nomenclator.pachet_reconcilieri",
+            f"incluse={incluse}, pachet={marime}, pret={pret:g} RON/luna")
+        return redirect(url_for(
+            "master_nomenclator",
+            mesaj="Setarile pachetelor de reconcilieri au fost actualizate."))
 
     @app.post("/master/nomenclator/tva")
     def salveaza_cota_tva():
@@ -2806,6 +2971,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                         "firm_tip": ident["firm_tip"],
                         "onboarding_completat": ident["onboarding_completat"],
                         "permissions": sorted(ident["permissions"]),
+                        "este_master": ident.get("este_master", False),
                         "anaf_autorizat": anaf_autorizat})
 
     @app.post("/api/onboarding/completat")
@@ -2840,11 +3006,25 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return jsonify({"error": _EROARE_FIRMA_DIRECTA}), 403
         fc = firm_conn(ident["firm_id"])
         data = request.get_json(force=True)
+        # GDPR: platforma prelucreaza datele clientului firmei de
+        # contabilitate (facturi, jurnale) fara sa aiba vreo relatie
+        # directa cu el - temeiul vine din mandatul firmei de
+        # contabilitate. De aceea adaugarea unui client cere confirmarea
+        # explicita ca acel mandat exista; cine si cand a confirmat ramane
+        # pe randul clientului si in jurnalul de audit, ca proba.
+        if not data.get("gdpr_confirmat"):
+            return jsonify({"error": (
+                "Pentru a adauga clientul, confirma ca firma ta are un "
+                "contract sau o imputernicire cu el care acopera "
+                "prelucrarea datelor sale in platforma (bifa GDPR).")}), 400
         try:
-            cid = clients.create_client(fc, data["cui"], data["name"])
+            cid = clients.create_client(fc, data["cui"], data["name"],
+                                        gdpr_confirmat_de=ident["username"])
         except clients.ClientError as e:
             return jsonify({"error": str(e)}), 400
         audit.log(fc, ident["username"], "client.creare", "client", str(cid))
+        audit.log(fc, ident["username"], "client.gdpr_confirmare", "client",
+                  str(cid))
         return jsonify({"id": cid})
 
     @app.delete("/api/clients/<int:cid>")
