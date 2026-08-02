@@ -143,8 +143,11 @@ class FirmScopedConnection:
     """Vederea unei singure firme peste aceeasi conexiune fizica: fiecare
     comanda se executa cu app.firm_id setat la firma acestui obiect, iar
     politicile RLS (izolare_firma) filtreaza/valideaza randurile. Sigur
-    doar pentru ca toate cererile sunt serializate de db_lock-ul din
-    portal/app.py - doua firme nu executa niciodata simultan."""
+    pentru ca `portal_conn` e fie conexiunea dedicata unui singur fir de
+    executie (teste, scheduler-ele de fundal), fie proxy-ul per-cerere din
+    portal/app.py, care rezolva la conexiunea din pool alocata exclusiv
+    cererii curente - doua firme nu executa niciodata comenzi pe aceeasi
+    conexiune fizica in acelasi timp."""
 
     def __init__(self, portal_conn: ConnCompat, firm_id: int):
         self._portal = portal_conn
@@ -181,6 +184,24 @@ def connect(dsn: str) -> ConnCompat:
 
 def firm_scope(portal_conn: ConnCompat, firm_id: int) -> FirmScopedConnection:
     return FirmScopedConnection(portal_conn, firm_id)
+
+
+def make_pool(dsn: str, min_size: int = 2, max_size: int = 10):
+    """Pool de conexiuni Postgres pentru gestionarea cererilor concurente -
+    fiecare cerere primeste o conexiune fizica proprie in loc sa o
+    partajeze cu tot procesul (vezi proxy-ul per-cerere din
+    portal/app.py). `configure` reproduce initializarea din connect() de
+    mai sus (fus orar UTC) pentru fiecare conexiune noua creata de pool."""
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    def _configure(conn):
+        conn.execute("SET TIME ZONE 'UTC'")
+        conn.commit()
+
+    return ConnectionPool(
+        dsn, min_size=min_size, max_size=max_size, open=True,
+        kwargs={"row_factory": dict_row}, configure=_configure)
 
 
 def insert_id(conn, sql: str, params=()) -> int:

@@ -207,6 +207,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
 # incasarea pe alta cale.
 PLATA_IN_ASTEPTARE = "in_asteptare"
 PLATA_VALIDATA = "validata"
+# Stare tranzitorie: "claim" atomic care rezerva plata inainte de apelul
+# FGO (poate dura pana la 15s), ca doi masteri sa nu poata valida aceeasi
+# plata simultan si emite factura de doua ori - vezi valideaza_plata in
+# portal/app.py.
+PLATA_IN_PROCESARE = "in_procesare"
 
 # Starile contractului de prestari servicii dintre VML si firma abonata -
 # vezi portal/contract.py pentru generarea textului si etva/digital_signature.py

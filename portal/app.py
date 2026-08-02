@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (Flask, request, session, redirect, url_for, jsonify,
-                   render_template, send_file, Response, g)
+                   render_template, send_file, Response, g,
+                   has_request_context)
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 
 from portal import db as pdb
@@ -23,6 +24,7 @@ from portal import backup as backup_mod
 from portal import trial_reminders as remind_mod
 from etva import db as fdb
 from etva import dbcompat
+from etva import pg
 from etva import audit, clients
 from etva import anaf_cui
 from etva import anaf_oauth
@@ -167,6 +169,52 @@ def _donut_segments(counts: list[tuple[str, int]]) -> list[dict]:
     return segments
 
 
+class _ReqScopedConn(dbcompat.ConnCompat):
+    """Proxy folosit ca `conn` in interiorul create_app pe backend
+    Postgres: la fiecare metoda apelata, rezolva dinamic fie catre
+    conexiunea din pool alocata cererii Flask curente (g.db_conn), fie -
+    in afara oricarui context de request (teste care ating direct
+    app.portal_conn, scheduler-ele de fundal din portal/backup.py si
+    portal/trial_reminders.py) - catre o conexiune dedicata, unica pe
+    proces. Asta pastreaza neschimbate toate call-site-urile
+    `conn.execute(...)`/`conn.commit()` din create_app si din firm_conn().
+
+    Mosteneste ConnCompat (fara sa apeleze __init__-ul lui, care cere o
+    conexiune fizica statica) doar ca `isinstance(conn, ConnCompat)` sa
+    ramana adevarat - vezi etva/dbcompat.py::insert_id, care alege ramura
+    Postgres (RETURNING id) exact pe baza acestei verificari."""
+
+    def __init__(self, fallback):
+        self._fallback = fallback  # nu ConnCompat.__init__: nicio conexiune fizica statica aici
+
+    def _current(self):
+        if has_request_context() and "db_conn" in g:
+            return g.db_conn
+        return self._fallback
+
+    @property
+    def raw(self):
+        return self._current().raw
+
+    def execute(self, sql, params=()):
+        return self._current().execute(sql, params)
+
+    def executemany(self, sql, seq_params):
+        return self._current().executemany(sql, seq_params)
+
+    def commit(self):
+        self._current().commit()
+
+    def rollback(self):
+        self._current().rollback()
+
+    def close(self):
+        self._current().close()
+
+    def _seteaza_firma(self, firm_id: int) -> None:
+        self._current()._seteaza_firma(firm_id)
+
+
 def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                enable_trial_reminder_scheduler: bool = False) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
@@ -175,6 +223,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     os.makedirs(firms_dir, exist_ok=True)
     os.makedirs(upload_dir, exist_ok=True)
     conn = pdb.open_db(os.path.join(data_dir, "portal.db"))
+    # Pe Postgres, `conn` de mai sus devine conexiunea de rezerva (folosita
+    # in afara unei cereri) - request-urile primesc fiecare o conexiune
+    # proprie dintr-un pool, ca sa nu mai fie nevoie sa serializam toate
+    # cererile in jurul unei singure conexiuni fizice partajate (vezi
+    # _ReqScopedConn si planning/concurenta-postgres.md).
+    db_pool = None
+    if dbcompat.backend() == "postgres":
+        db_pool = dbcompat.make_pool(pg.dsn_from_env())
+        conn = _ReqScopedConn(conn)
     secret = psec.load_secret(os.path.join(data_dir, "secret.key"))
 
     app = Flask(__name__)
@@ -196,23 +253,43 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     firm_conns = {}
 
-    # portal.db and every firm_conns[...] are single sqlite3/sqlcipher
-    # connections opened once and reused across requests (see portal/db.py,
-    # etva/db.py). check_same_thread=False only lifts sqlite3's same-thread
-    # assertion - it does not make concurrent statement execution on one
-    # connection safe. Interleaved multi-statement writes from two threads
-    # (e.g. two /inregistrare calls) have produced orphaned rows and
-    # lastrowid races in practice, so every request is serialized around
-    # its DB work.
+    # Pe SQLite, portal.db si fiecare firm_conns[...] raman conexiuni
+    # unice, deschise o singura data si reutilizate intre cereri (vezi
+    # portal/db.py, etva/db.py). check_same_thread=False doar ridica
+    # asertiunea same-thread a sqlite3 - nu face executia concurenta de
+    # comenzi pe o conexiune sigura. Scrieri interleaved din doua thread-uri
+    # (ex. doua apeluri /inregistrare) au produs randuri orfane si erori
+    # de lastrowid in practica, deci pe aceasta ramura fiecare cerere e
+    # serializata in jurul lucrului cu DB-ul, exact ca inainte.
+    #
+    # Pe Postgres, fiecare cerere are propria conexiune fizica (din
+    # db_pool), asa ca nu mai e nevoie de un lock global - exclusivitatea
+    # vine din pool, nu dintr-un mutex la nivel de proces. db_lock ramane
+    # folosit punctual doar pentru operatii care ating fisiere locale
+    # partajate (backup-ul, vezi creeaza_backup si portal/backup.py).
     db_lock = threading.RLock()
 
     @app.before_request
     def _acquire_db_lock():
+        if db_pool is not None:
+            g.db_conn = dbcompat.ConnCompat(db_pool.getconn())
+            return
         db_lock.acquire()
         g.db_lock_acquired = True
 
     @app.teardown_request
     def _release_db_lock(exc=None):
+        if db_pool is not None:
+            db_conn = g.pop("db_conn", None)
+            if db_conn is not None:
+                # Un simplu SELECT deschide o tranzactie pe Postgres, care
+                # altfel ar ramane atarnata cand conexiunea se intoarce in
+                # pool; scrierile legitime au facut deja commit in cursul
+                # cererii, deci rollback-ul de aici curata doar tranzactii
+                # de citire sau lucru abandonat de o exceptie.
+                db_conn.rollback()
+                db_pool.putconn(db_conn.raw)
+            return
         # teardown_request ruleaza mereu, chiar daca before_request-ul de
         # mai sus n-a apucat sa ruleze (ex: CSRFProtect isi inregistreaza
         # propriul before_request, care poate respinge cererea cu 400
@@ -220,13 +297,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # eliberarea unui lock neachizitionat de cererea curenta arunca
         # RuntimeError.
         if g.pop("db_lock_acquired", False):
-            if dbcompat.backend() == "postgres":
-                # Pe Postgres si un simplu SELECT deschide o tranzactie
-                # care altfel ar ramane atarnata pe conexiunea unica
-                # partajata; scrierile legitime au facut deja commit in
-                # cursul cererii, deci rollback-ul de aici curata doar
-                # tranzactii de citire sau lucru abandonat de o exceptie.
-                conn.rollback()
             db_lock.release()
 
     if enable_backup_scheduler:
@@ -2272,11 +2342,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         try:
-            # Already inside the per-request db_lock (see _acquire_db_lock),
-            # so portal.db and every open firm connection are quiet for the
-            # duration of the zip.
-            path = backup_mod.create_backup(data_dir)
-            backup_mod.prune_old_backups(data_dir)
+            # db_lock nu mai e tinut implicit pe toata durata cererii pe
+            # Postgres (vezi _acquire_db_lock) - il achizitionam explicit
+            # aici, ca zip-ul sa nu prinda fisiere locale (uploads, chei)
+            # la jumatatea unei scrieri, la fel ca scheduler-ul din
+            # portal/backup.py.
+            with db_lock:
+                path = backup_mod.create_backup(data_dir)
+                backup_mod.prune_old_backups(data_dir)
         except OSError as e:
             return redirect(url_for("master_backup", eroare=f"Backup esuat: {e}"))
         _log_master_action(user, "backup_creat", path.name)
@@ -2425,14 +2498,30 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if judet not in ROMANIA_JUDETE:
             return redirect(url_for(
                 "master_plati", eroare="Alege un judet valid (cerut de e-Factura)."))
-        plata = conn.execute("SELECT * FROM payments WHERE id=?",
-                             (plata_id,)).fetchone()
-        if plata is None or plata["stare"] == pdb.PLATA_VALIDATA:
+        # Claim atomic: fara lock-ul global de request de dinainte, doi
+        # masteri (sau un dublu-click) ar putea trece amandoi de o simpla
+        # verificare SELECT inainte sa apuce vreunul sa scrie, si emite
+        # factura de doua ori pentru aceeasi incasare. UPDATE ... RETURNING
+        # rezerva plata atomic - daca nu s-a modificat niciun rand,
+        # altcineva a apucat-o deja (sau nu exista/e deja validata).
+        plata = conn.execute(
+            "UPDATE payments SET stare=? WHERE id=? AND stare=? RETURNING *",
+            (pdb.PLATA_IN_PROCESARE, plata_id, pdb.PLATA_IN_ASTEPTARE)).fetchone()
+        conn.commit()
+        if plata is None:
             return redirect(url_for(
-                "master_plati", eroare="Plata nu exista sau e deja validata."))
+                "master_plati",
+                eroare="Plata nu exista, e deja validata sau e in curs de procesare."))
+
+        def _elibereaza_claim():
+            conn.execute("UPDATE payments SET stare=? WHERE id=?",
+                        (pdb.PLATA_IN_ASTEPTARE, plata_id))
+            conn.commit()
+
         firma = conn.execute("SELECT * FROM firms WHERE id=?",
                              (plata["firm_id"],)).fetchone()
         if firma is None:
+            _elibereaza_claim()
             return redirect(url_for("master_plati", eroare="Firma nu a fost gasita."))
         eticheta_ciclu = {"lunar": "lunar", "6luni": "la 6 luni",
                          "an": "anual"}[plata["ciclu_facturare"]]
@@ -2450,7 +2539,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 user, firma, f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
                 valoare_neta, cota_tva, judet)
         except fgo.FgoError as e:
+            _elibereaza_claim()
             return redirect(url_for("master_plati", eroare=f"FGO: {e}"))
+        except Exception:
+            # Orice alta eroare neasteptata (ex. INSERT-ul facturii esuat
+            # dupa un raspuns FGO valid) nu trebuie sa lase plata blocata
+            # permanent in 'in_procesare' - eliberam claim-ul si propagam,
+            # ca masterul sa poata incerca din nou (dupa investigare).
+            _elibereaza_claim()
+            raise
         acum = datetime.now(timezone.utc)
         conn.execute(
             "UPDATE payments SET stare=?, validat_de=?, validat_la=?, "
@@ -3291,6 +3388,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     app.portal_conn = conn  # exposed for tests/seeding
     app.firm_conn = firm_conn  # exposed for tests/seeding
+    app.db_pool = db_pool  # exposed for tests - None pe SQLite
     app.portal_secret = secret
     app.get_valid_anaf_access_token = get_valid_anaf_access_token  # exposed for tests
     return app
