@@ -129,7 +129,20 @@ def emite_factura(cod_unic: str, cheie_privata: str, platforma_url: str, mediu: 
     Intoarce direct result["Factura"]: {"Numar", "Serie", "Link",
     "LinkPlata"} - astea sunt seria/numarul REALE atribuite de FGO (poate
     genera Numar automat daca lipseste) - persista-le pe alea in
-    `invoices`, nu o numerotare locala separata."""
+    `invoices`, nu o numerotare locala separata.
+
+    CONFIRMAT EMPIRIC (2026-08-02): `Continut[i][CotaTVA]` trimis ca float
+    intreg (ex. 21.0, cum il produce Python dintr-un form field parsat cu
+    type=float) e RESPINS de FGO cu "CotaTVA ... nu a fost transmisa sau
+    valoarea 21,0 nu exista in nomenclator" - trebuie trimis ca 21 (int).
+    Normalizat mai jos, ca apelantul sa nu trebuiasca sa stie de asta."""
+    continut_normalizat = []
+    for linie in continut:
+        linie = dict(linie)
+        cota = linie.get("CotaTVA")
+        if isinstance(cota, float) and cota.is_integer():
+            linie["CotaTVA"] = int(cota)
+        continut_normalizat.append(linie)
     body = {
         "CodUnic": cod_unic,
         "Hash": _hash_emitere(cod_unic, cheie_privata, client["Denumire"]),
@@ -138,7 +151,7 @@ def emite_factura(cod_unic: str, cheie_privata: str, platforma_url: str, mediu: 
         "Valuta": valuta,
         "TipFactura": tip_factura,
         "Client": client,
-        "Continut": continut,
+        "Continut": continut_normalizat,
     }
     if numar:
         body["Numar"] = numar
