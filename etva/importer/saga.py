@@ -58,7 +58,12 @@ def _cell(df, r, c):
 
 def _read_raw(path: str) -> pd.DataFrame:
     engine = "xlrd" if path.lower().endswith(".xls") else None
-    return pd.read_excel(path, header=None, engine=engine)
+    try:
+        return pd.read_excel(path, header=None, engine=engine)
+    except Exception as e:
+        raise NotSagaFormat(
+            "Fisierul nu a putut fi citit ca Excel (.xls/.xlsx) - verifica "
+            "formatul fisierului.") from e
 
 
 def _find_header_row(df: pd.DataFrame) -> int:

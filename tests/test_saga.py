@@ -104,3 +104,17 @@ def test_non_saga_file_raises(tmp_path):
         path, index=False, engine="openpyxl")
     with pytest.raises(NotSagaFormat):
         parse_saga_journal(str(path))
+
+
+def test_corrupt_xlsx_raises_not_saga_format_not_500(tmp_path):
+    path = tmp_path / "corupt.xlsx"
+    path.write_bytes(b"nu este un fisier excel valid")
+    with pytest.raises(NotSagaFormat, match="nu a putut fi citit"):
+        parse_saga_journal(str(path))
+
+
+def test_csv_file_raises_not_saga_format_not_500(tmp_path):
+    path = tmp_path / "jurnal.csv"
+    path.write_text("cui_partener,nr_factura\nRO1,F1\n", encoding="utf-8")
+    with pytest.raises(NotSagaFormat):
+        parse_saga_journal(str(path))

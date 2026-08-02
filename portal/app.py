@@ -4,7 +4,7 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import json, os, pathlib, re, secrets, smtplib, threading
+import io, json, os, pathlib, re, secrets, smtplib, threading
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
@@ -33,10 +33,12 @@ from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
 from etva.importer.saga import parse_saga_journal, NotSagaFormat
+from etva.importer.model import (parse_model_journal, NotModelFormat,
+                                 build_model_template)
 from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
 from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
                                           NotAnafP300Json)
-from etva.d300 import classify_legend, expand_derived_lines
+from etva.d300 import classify_legend, expand_derived_lines, D300_LINES
 from etva.engine import reconcile, reconcile_d300
 from etva.advisor import suggest_d300, suggest_d300_lines
 
@@ -49,6 +51,10 @@ _CONFIDENTIALITATE = _ROOT / "docs" / "confidentialitate.html"
 _COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
 _CONTACT = _ROOT / "docs" / "contact.html"
 _SPA = _ROOT / "web" / "index.html"
+
+_HINT_MODEL = ("Daca jurnalul nu provine din SAGA, alege in formular 'Alt "
+              "program de contabilitate' si foloseste modelul e-TVA "
+              "descarcat din aplicatie.")
 
 CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "office@ereconciliere.ro")
 
@@ -3161,6 +3167,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             payload["unmapped"] = unmapped
         return payload
 
+    @app.get("/api/sabloane/jurnal/<directie>")
+    @require()
+    def descarca_sablon_jurnal(ident, directie):
+        if directie not in ("vanzari", "cumparari"):
+            return jsonify({"error": "Directie necunoscuta."}), 404
+        buf = io.BytesIO()
+        build_model_template(directie).save(buf)
+        return Response(
+            buf.getvalue(),
+            mimetype="application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet",
+            headers={"Content-Disposition":
+                    f'attachment; filename="model_jurnal_{directie}_etva.xlsx"'})
+
     @app.post("/api/reconciliations")
     @require("reconciliere.creare")
     def new_reconciliation(ident):
@@ -3177,6 +3197,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     "de mai sus."]}), 400
             client_id = int(brut)
         period = request.form["period"]
+        format_jurnal = request.form.get("format_jurnal", "saga")
         company_files = request.files.getlist("company_file")
         if not company_files:
             return jsonify({"errors": ["Lipseste jurnalul firmei."]}), 400
@@ -3227,9 +3248,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             unmapped = []
             try:
                 for f in company_files:
-                    journal = parse_saga_journal(_save_upload(f))
+                    saved_path = _save_upload(f)
+                    if format_jurnal == "model":
+                        journal = parse_model_journal(saved_path)
+                        overrides = {
+                            **{cod: cod for cod in journal.legend
+                              if cod in D300_LINES},
+                            **(cod_mapping or {})}
+                    else:
+                        journal = parse_saga_journal(saved_path)
+                        overrides = cod_mapping
                     mapped, unmapped_here = classify_legend(
-                        journal.direction, journal.legend, cod_mapping)
+                        journal.direction, journal.legend, overrides)
                     unmapped.extend(unmapped_here)
                     for line_no, v in mapped.items():
                         acc = company_lines.setdefault(
@@ -3237,6 +3267,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                         acc["base"] += v["base"]
                         acc["vat"] += v["vat"]
             except NotSagaFormat as e:
+                return jsonify({"errors": [str(e), _HINT_MODEL]}), 400
+            except NotModelFormat as e:
                 return jsonify({"errors": [str(e)]}), 400
             company_lines = expand_derived_lines(company_lines)
 
@@ -3246,6 +3278,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                       "reconciliation", str(rid))
             return jsonify(_result_payload_lines(
                 fc, rid, company_lines, anaf_doc.lines, unmapped))
+
+        if format_jurnal == "model":
+            return jsonify({"errors": [
+                "Modelul e-TVA se foloseste impreuna cu decontul precompletat "
+                "ANAF (PDF/JSON) sau cu preluarea automata din ANAF - nu cu "
+                "un fisier ANAF xlsx/csv."]}), 400
 
         mapping = None
         if request.form.get("anaf_mapping"):

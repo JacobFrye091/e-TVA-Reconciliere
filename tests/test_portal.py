@@ -1427,6 +1427,186 @@ def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
                                  "base": 42.0, "vat": 0.0}]
 
 
+# ---------- Model e-TVA journal format (alternativa la SAGA) ----------
+
+def _model_bytes(directie, randuri):
+    from etva.importer.model import build_model_template, FIRST_DATA_ROW_EXCEL
+    wb = build_model_template(directie)
+    ws = wb["Jurnal"]
+    for i, rand in enumerate(randuri):
+        for c, val in enumerate(rand):
+            ws.cell(row=FIRST_DATA_ROW_EXCEL + i, column=c + 1, value=val)
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _eticheta_model(directie, linie):
+    from etva.importer.model import TIPURI_OPERATIUNE
+    for et, ln in TIPURI_OPERATIUNE[directie]:
+        if ln == linie:
+            return et
+    raise KeyError(linie)
+
+
+def test_descarca_sablon_jurnal_ambele_directii(app):
+    c = app.test_client()
+    inregistreaza(c)
+    for directie in ("vanzari", "cumparari"):
+        r = c.get(f"/api/sabloane/jurnal/{directie}")
+        assert r.status_code == 200
+        assert r.data[:2] == b"PK"
+        assert (f"model_jurnal_{directie}_etva.xlsx"
+               in r.headers["Content-Disposition"])
+
+
+def test_descarca_sablon_jurnal_directie_invalida(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.get("/api/sabloane/jurnal/altceva")
+    assert r.status_code == 404
+
+
+def test_descarca_sablon_jurnal_neautentificat(app):
+    c = app.test_client()
+    r = c.get("/api/sabloane/jurnal/vanzari")
+    assert r.status_code == 401
+
+
+def test_d300_reconciliation_cu_model_vanzari(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    anaf_json = _json.dumps({
+        "CIF": "111", "AN": 2026, "LUNA": 6,
+        "RD9_VAL": 1000.0, "RD9_TVA": 210.0,
+    }).encode()
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client X", "RO999", 1000, 210,
+         _eticheta_model("vanzari", "9")),
+    ])
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["mode"] == "d300_lines"
+    assert body["totals_company"]["9"] == {"base": 1000.0, "vat": 210.0}
+    assert body["differences"] == []
+
+
+def test_d300_reconciliation_cu_model_cumparari_linii_derivate(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6}).encode()
+    company_file = _model_bytes("cumparari", [
+        ("2026-06-02", "FZ1", "Furnizor UE", "IE9999999X", 500, 0,
+         _eticheta_model("cumparari", "20.1")),
+    ])
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "cumparari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    for linie in ("20.1", "5.1", "20", "5"):
+        assert body["totals_company"][linie]["base"] == 500.0
+
+
+def test_saga_incarcat_cu_format_model_da_eroare_prietenoasa(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "MODEL e-TVA" in r.get_json()["errors"][0]
+
+
+def test_fisier_necitibil_cu_format_implicit_da_hint_model(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"nu e un fisier excel"), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    errors = r.get_json()["errors"]
+    assert len(errors) == 2
+    assert "Alt program de contabilitate" in errors[1]
+
+
+def test_format_model_cu_fisier_anaf_xlsx_vechi_da_eroare(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client X", "RO999", 1000, 210,
+         _eticheta_model("vanzari", "9")),
+    ])
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"cui_partener,nr_factura\n"), "anaf.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+
+
+def test_eticheta_libera_model_apare_in_unmapped(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client X", "RO999", 400, 84,
+         "Operatiune neclara, de verificat manual"),
+    ])
+
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    body = r.get_json()
+    assert any(u["cod"] == "Operatiune neclara, de verificat manual"
+              for u in body["unmapped"])
+
+
 def test_master_users_page_requires_master(app):
     c = app.test_client()
     inregistreaza(c)
