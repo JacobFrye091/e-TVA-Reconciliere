@@ -6,10 +6,6 @@ a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
   color:var(--accent); border:1px solid var(--border); border-radius:7px;
   text-decoration:none; display:inline-block; }
 a.mic:hover { background:var(--paper); }
-.chip.stare-netrimisa { color: var(--muted); background: var(--paper); }
-.chip.stare-in_procesare { color: var(--warn); background: var(--warn-bg); }
-.chip.stare-acceptata { color: var(--ok); background: var(--ok-bg); }
-.chip.stare-respinsa { color: var(--danger); background: var(--danger-bg); }
 </style>
 {% endblock %}
 {% block continut %}
@@ -18,10 +14,9 @@ a.mic:hover { background:var(--paper); }
     <div>
       <h2>Facturi</h2>
       <p class="sub">Facturile emise de e-TVA Reconciliere firmelor care
-        plătesc pentru platformă. Mediul ANAF activ acum:
-        <b>{{ 'sandbox (test)' if mediu_anaf == 'test' else 'producție' }}</b>.
-        Trimiterea la ANAF necesită ca firma emitentului (VML) să fi
-        autorizat accesul ANAF din panoul ei, la fel ca orice altă firmă.</p>
+        plătesc pentru platformă, prin FGO. Trimiterea la SPV/e-Factura e
+        automată, configurată în contul FGO — nu necesită niciun pas
+        suplimentar aici.</p>
     </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
@@ -45,7 +40,14 @@ a.mic:hover { background:var(--paper); }
         <div><label for="fValoare">Valoare netă (RON)</label>
           <input id="fValoare" name="valoare_neta" type="number" step="0.01" min="0.01" required></div>
         <div><label for="fCota">Cotă TVA (%)</label>
-          <input id="fCota" name="cota_tva" type="number" step="1" min="0" value="19" required></div>
+          <input id="fCota" name="cota_tva" type="number" step="1" min="0" value="21" required></div>
+        <div><label for="fJudet">Județul clientului</label>
+          <select id="fJudet" name="judet" required>
+            <option value="">Alege județul</option>
+            {% for j in judete %}
+            <option value="{{ j }}">{{ j }}</option>
+            {% endfor %}
+          </select></div>
       </div>
       <label for="fDescriere">Descriere</label>
       <input id="fDescriere" name="descriere" required
@@ -66,40 +68,19 @@ a.mic:hover { background:var(--paper); }
   <div class="card">
     <h2>Toate facturile</h2>
     <table>
-      <tr><th>Serie / Nr.</th><th>Firma</th><th>Data emiterii</th><th>Total</th><th>Stare ANAF</th><th></th></tr>
+      <tr><th>Serie / Nr.</th><th>Firma</th><th>Data emiterii</th><th>Total</th><th></th></tr>
       {% for f in facturi %}
       <tr>
-        <td class="cod">{{ f['serie'] }} {{ f['numar'] }}</td>
+        <td class="cod">{{ f['fgo_serie'] or f['serie'] }} {{ f['fgo_numar'] or f['numar'] }}</td>
         <td>{{ f['firm_name'] }}<br><span class="nota" style="margin:0">{{ f['firm_cui'] }}</span></td>
         <td>{{ f['data_emiterii'][:10] }}</td>
         <td>{{ '%.2f'|format(f['valoare_totala']) }} {{ f['moneda'] }}</td>
-        <td>
-          {% if f['anaf_stare'] == 'netrimisa' %}<span class="chip stare-netrimisa">Netrimisă</span>
-          {% elif f['anaf_stare'] == 'in_procesare' %}<span class="chip stare-in_procesare">În procesare</span>
-          {% elif f['anaf_stare'] == 'acceptata' %}<span class="chip stare-acceptata">Acceptată</span>
-          {% else %}<span class="chip stare-respinsa">Respinsă</span>{% endif %}
-        </td>
         <td style="text-align:right">
           <a class="mic" href="/master/facturi/{{ f['id'] }}/pdf">PDF</a>
-          <a class="mic" href="/master/facturi/{{ f['id'] }}/xml">XML</a>
-          {% if f['anaf_stare'] == 'netrimisa' %}
-          <form class="inline" method="post" action="/master/facturi/{{ f['id'] }}/trimite-anaf">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="mic" type="submit">Trimite la ANAF</button>
-          </form>
-          {% elif f['anaf_stare'] == 'in_procesare' %}
-          <form class="inline" method="post" action="/master/facturi/{{ f['id'] }}/verifica-stare">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="mic" type="submit">Verifică starea</button>
-          </form>
-          {% endif %}
-          {% if f['anaf_raspuns'] %}
-          <a class="mic" href="/master/facturi/{{ f['id'] }}/raspuns-anaf">Răspuns ANAF</a>
-          {% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" style="color:var(--muted)">Nicio factură emisă inca.</td></tr>
+      <tr><td colspan="5" style="color:var(--muted)">Nicio factură emisă inca.</td></tr>
       {% endfor %}
     </table>
   </div>

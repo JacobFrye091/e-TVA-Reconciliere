@@ -27,8 +27,8 @@ from etva import audit, clients
 from etva import anaf_cui
 from etva import anaf_oauth
 from etva import digital_signature
-from etva import efactura_xml
 from etva import esemneaza
+from etva import fgo
 from etva import export as export_mod
 from etva.importer.company import parse_company_journal, ImportError_
 from etva.importer.anaf import FileAnafDataSource
@@ -64,10 +64,31 @@ ANAF_OAUTH_REDIRECT_URI = os.environ.get(
     "ANAF_OAUTH_REDIRECT_URI", "https://ereconciliere.ro/api/anaf/callback")
 ANAF_TOKEN_VALIDITY_ZILE = 90
 
-# "test" (implicit) foloseste sandbox-ul ANAF (api.anaf.ro/test/FCTEL) - nu
-# trimite nimic cu valoare legala. Se schimba explicit in "prod" abia dupa
-# ce un XML de test a fost validat cu adevarat impotriva sandbox-ului.
-ANAF_EFACTURA_MEDIU = os.environ.get("ANAF_EFACTURA_MEDIU", "test")
+# FGO (fgo.ro) - facturare proprie catre firme + trimitere automata la SPV
+# (configurata manual in contul FGO, vezi etva/fgo.py). Mediile test/
+# productie FGO sunt conturi complet separate (nu sincronizeaza date) -
+# fostul ANAF_EFACTURA_MEDIU (sandbox-ul FCTEL folosit de vechiul upload
+# XML direct catre ANAF) a devenit inutil, inlocuit de acest flux.
+FGO_COD_UNIC = os.environ.get("FGO_COD_UNIC")
+FGO_CHEIE_PRIVATA = os.environ.get("FGO_CHEIE_PRIVATA")
+FGO_MEDIU = os.environ.get("FGO_MEDIU", "test")
+FGO_SERIE = os.environ.get("FGO_SERIE", "VML")
+FGO_PLATFORMA_URL = os.environ.get("FGO_PLATFORMA_URL", "https://ereconciliere.ro")
+
+# Judetele Romaniei, exact cum le intoarce FGO la GET /nomenclator/judet
+# (confirmat live 2026-08-02, fara diacritice) - lista stabila, nu se
+# schimba, de-asta e hardcodata aici in loc sa fie interogata la fiecare
+# incarcare a formularului de facturare. Necesara pentru Client[Judet],
+# obligatoriu la e-Factura pentru clienti din Romania.
+ROMANIA_JUDETE = sorted([
+    "Alba", "Arad", "Arges", "Bacau", "Bihor", "Bistrita-Nasaud", "Botosani",
+    "Braila", "Brasov", "Bucuresti", "Buzau", "Calarasi", "Caras-Severin",
+    "Cluj", "Constanta", "Covasna", "Dambovita", "Dolj", "Galati", "Giurgiu",
+    "Gorj", "Harghita", "Hunedoara", "Ialomita", "Iasi", "Ilfov",
+    "Maramures", "Mehedinti", "Mures", "Neamt", "Olt", "Prahova",
+    "Satu Mare", "Salaj", "Sibiu", "Suceava", "Teleorman", "Timis",
+    "Tulcea", "Valcea", "Vaslui", "Vrancea",
+])
 
 # Semnarea contractului de prestari servicii (vezi semneaza_contract) - fara
 # aceasta cheie, optiunea de semnare ramane indisponibila (mesaj explicit,
@@ -2086,12 +2107,66 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT id, name, cui FROM firms WHERE active=TRUE ORDER BY name"
         ).fetchall()
         return render_template("master_facturi.html", user=user, facturi=facturi,
-                               firme=firme, eroare=request.args.get("eroare"),
-                               mesaj=request.args.get("mesaj"),
-                               mediu_anaf=ANAF_EFACTURA_MEDIU)
+                               firme=firme, judete=ROMANIA_JUDETE,
+                               eroare=request.args.get("eroare"),
+                               mesaj=request.args.get("mesaj"))
 
     def _suma_scurta(valoare: float) -> str:
         return f"{valoare:.2f}"
+
+    def _emite_factura_fgo(user, firma, descriere, valoare_neta, cota_tva, judet, *,
+                           perioada_inceput=None, perioada_sfarsit=None,
+                           data_scadentei=None):
+        """Emite o factura reala prin FGO (creare + declansarea trimiterii
+        automate la SPV, configurata o singura data in contul FGO - vezi
+        etva/fgo.py) si o persista in `invoices`. Ridica fgo.FgoError daca
+        FGO refuza cererea - apelantul decide ce mesaj arata; nu se scrie
+        nimic in DB daca esueaza. Reutilizata de creeaza_factura (manual)
+        si valideaza_plata (automat la validarea unei incasari)."""
+        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
+        valoare_totala = round(valoare_neta + valoare_tva, 2)
+        client = {
+            "Denumire": firma["name"],
+            "CodUnic": str(anaf_cui.normalize_cui(firma["cui"])),
+            "Tara": "RO",
+            "Judet": judet,
+            "Tip": "PJ",
+        }
+        continut = [{
+            "Denumire": descriere,
+            "CodArticol": "ABONAMENT",
+            "NrProduse": 1,
+            "UM": "BUC",
+            "CotaTVA": cota_tva,
+            "PretUnitar": valoare_neta,
+        }]
+        factura_fgo = fgo.emite_factura(
+            FGO_COD_UNIC, FGO_CHEIE_PRIVATA, FGO_PLATFORMA_URL, FGO_MEDIU,
+            serie=FGO_SERIE, valuta="RON", tip_factura="Factura",
+            client=client, continut=continut, data_scadenta=data_scadentei)
+        # numar/serie locale raman doar cheia interna de randare (UNIQUE in
+        # schema) - fgo_serie/fgo_numar de mai jos sunt cele REALE, afisate
+        # firmei si folosite pe PDF-ul legal (fgo_link_pdf).
+        numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
+        acum = datetime.now(timezone.utc)
+        invoice_id = dbcompat.insert_id(
+            conn,
+            "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
+            "descriere, perioada_inceput, perioada_sfarsit, data_emiterii, "
+            "data_scadentei, valoare_neta, cota_tva, valoare_tva, "
+            "valoare_totala, creat_de, creat_la, fgo_serie, fgo_numar, "
+            "fgo_link_pdf) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pdb.FACTURA_SERIE, numar, firma["id"], firma["name"], firma["cui"],
+             descriere, perioada_inceput, perioada_sfarsit, acum.isoformat(),
+             data_scadentei, valoare_neta, cota_tva, valoare_tva,
+             valoare_totala, user["username"], acum.isoformat(),
+             factura_fgo["Serie"], factura_fgo["Numar"], factura_fgo.get("Link")))
+        conn.commit()
+        _log_master_action(
+            user, "factura.emitere",
+            f"{factura_fgo['Serie']} {factura_fgo['Numar']} -> {firma['name']} "
+            f"({_suma_scurta(valoare_totala)} RON)")
+        return invoice_id
 
     @app.post("/master/facturi")
     def creeaza_factura():
@@ -2103,6 +2178,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         descriere = f.get("descriere", "").strip()
         valoare_neta = f.get("valoare_neta", type=float)
         cota_tva = f.get("cota_tva", type=float)
+        judet = f.get("judet", "").strip()
         perioada_inceput = f.get("perioada_inceput", "").strip() or None
         perioada_sfarsit = f.get("perioada_sfarsit", "").strip() or None
         data_scadentei = f.get("data_scadentei", "").strip() or None
@@ -2111,31 +2187,19 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "master_facturi",
                 eroare="Firma, descrierea si o valoare neta pozitiva sunt obligatorii."))
+        if judet not in ROMANIA_JUDETE:
+            return redirect(url_for(
+                "master_facturi", eroare="Alege un judet valid (cerut de e-Factura)."))
         firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if firma is None:
             return redirect(url_for("master_facturi", eroare="Firma nu a fost gasita."))
-        numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
-        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
-        valoare_totala = round(valoare_neta + valoare_tva, 2)
-        # aware: data_emiterii/creat_la sunt timestamptz pe PG - un timestamp
-        # naiv ar fi reinterpretat de server ca UTC (vezi SET TIME ZONE din
-        # dbcompat.connect), deplasand ora reala de emitere a facturii.
-        acum = datetime.now(timezone.utc)
-        conn.execute(
-            "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
-            "descriere, perioada_inceput, perioada_sfarsit, data_emiterii, "
-            "data_scadentei, valoare_neta, cota_tva, valoare_tva, "
-            "valoare_totala, creat_de, creat_la) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (pdb.FACTURA_SERIE, numar, firm_id, firma["name"], firma["cui"],
-             descriere, perioada_inceput, perioada_sfarsit, acum.isoformat(),
-             data_scadentei, valoare_neta, cota_tva, valoare_tva,
-             valoare_totala, user["username"], acum.isoformat()))
-        conn.commit()
-        _log_master_action(
-            user, "factura.emitere",
-            f"{pdb.FACTURA_SERIE} {numar} -> {firma['name']} "
-            f"({_suma_scurta(valoare_totala)} RON)")
+        try:
+            _emite_factura_fgo(
+                user, firma, descriere, valoare_neta, cota_tva, judet,
+                perioada_inceput=perioada_inceput, perioada_sfarsit=perioada_sfarsit,
+                data_scadentei=data_scadentei)
+        except fgo.FgoError as e:
+            return redirect(url_for("master_facturi", eroare=f"FGO: {e}"))
         return redirect(url_for("master_facturi"))
 
     @app.get("/master/facturi/<int:factura_id>/pdf")
@@ -2147,136 +2211,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                (factura_id,)).fetchone()
         if factura is None:
             return redirect(url_for("master_facturi"))
+        if factura["fgo_link_pdf"]:
+            return redirect(factura["fgo_link_pdf"])
         pdf_bytes = invoicing.generate_pdf(dict(factura))
         nume_fisier = f"factura_{factura['serie']}{factura['numar']}.pdf"
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
 
-    @app.get("/master/facturi/<int:factura_id>/xml")
-    def descarca_factura_xml(factura_id):
-        user = current_user()
-        if user is None or not user["is_master"]:
-            return redirect(url_for("login"))
-        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
-                               (factura_id,)).fetchone()
-        if factura is None:
-            return redirect(url_for("master_facturi"))
-        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
-        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.xml"
-        return Response(
-            xml_bytes, mimetype="application/xml",
-            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
-
-    def _vml_firm_id():
-        """Firma emitentului insusi (VML) trebuie sa fie inregistrata ca
-        firma in platforma si sa fi trecut prin /panou/anaf/autorizare cu
-        propriul ei certificat digital, la fel ca orice alta firma - nu
-        exista un mecanism separat de autorizare doar pentru emitere."""
-        row = conn.execute("SELECT id FROM firms WHERE cui=?",
-                           (invoicing.FURNIZOR["cui"],)).fetchone()
-        return row["id"] if row else None
-
-    @app.post("/master/facturi/<int:factura_id>/trimite-anaf")
-    def trimite_factura_anaf(factura_id):
-        user = current_user()
-        if user is None or not user["is_master"]:
-            return redirect(url_for("login"))
-        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
-                               (factura_id,)).fetchone()
-        if factura is None:
-            return redirect(url_for("master_facturi"))
-        vml_firm_id = _vml_firm_id()
-        access_token = get_valid_anaf_access_token(vml_firm_id) if vml_firm_id else None
-        if access_token is None:
-            return redirect(url_for(
-                "master_facturi",
-                eroare="Contul VML (emitentul) nu are acces ANAF autorizat inca "
-                      "- autorizeaza-l din panoul acelei firme, la fel ca la "
-                      "orice alta firma."))
-        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
-        cif = str(anaf_cui.normalize_cui(invoicing.FURNIZOR["cui"]))
-        try:
-            rezultat = anaf_oauth.upload_invoice(
-                access_token, cif, xml_bytes, mediu=ANAF_EFACTURA_MEDIU)
-        except anaf_oauth.AnafOAuthError as e:
-            return redirect(url_for("master_facturi", eroare=f"ANAF: {e}"))
-        conn.execute(
-            "UPDATE invoices SET anaf_index_incarcare=?, anaf_stare=?, "
-            "anaf_trimis_la=? WHERE id=?",
-            (rezultat["index_incarcare"], pdb.EFACTURA_IN_PROCESARE,
-             datetime.now().isoformat(), factura_id))
-        conn.commit()
-        _log_master_action(
-            user, "factura.trimitere_anaf",
-            f"{factura['serie']} {factura['numar']} -> index "
-            f"{rezultat['index_incarcare']} ({ANAF_EFACTURA_MEDIU})")
-        return redirect(url_for(
-            "master_facturi",
-            mesaj="Factura a fost trimisa la ANAF. Verifica starea peste "
-                  "cateva minute."))
-
-    @app.post("/master/facturi/<int:factura_id>/verifica-stare")
-    def verifica_stare_factura_anaf(factura_id):
-        user = current_user()
-        if user is None or not user["is_master"]:
-            return redirect(url_for("login"))
-        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
-                               (factura_id,)).fetchone()
-        if factura is None or not factura["anaf_index_incarcare"]:
-            return redirect(url_for("master_facturi"))
-        vml_firm_id = _vml_firm_id()
-        access_token = get_valid_anaf_access_token(vml_firm_id) if vml_firm_id else None
-        if access_token is None:
-            return redirect(url_for(
-                "master_facturi", eroare="Contul VML nu mai are acces ANAF autorizat."))
-        try:
-            stare = anaf_oauth.check_upload_status(
-                access_token, factura["anaf_index_incarcare"], mediu=ANAF_EFACTURA_MEDIU)
-        except anaf_oauth.AnafOAuthError as e:
-            return redirect(url_for("master_facturi", eroare=f"ANAF: {e}"))
-        if stare["stare"] == "in prelucrare":
-            return redirect(url_for(
-                "master_facturi", mesaj="Factura e inca in procesare la ANAF."))
-        noua_stare = (pdb.EFACTURA_ACCEPTATA if stare["stare"] == "ok"
-                     else pdb.EFACTURA_RESPINSA)
-        raspuns = None
-        if stare.get("id_descarcare"):
-            try:
-                raspuns = anaf_oauth.download_response(
-                    access_token, stare["id_descarcare"], mediu=ANAF_EFACTURA_MEDIU)
-            except anaf_oauth.AnafOAuthError:
-                raspuns = None
-        conn.execute(
-            "UPDATE invoices SET anaf_stare=?, anaf_id_descarcare=?, "
-            "anaf_raspuns=? WHERE id=?",
-            (noua_stare, stare.get("id_descarcare"), raspuns, factura_id))
-        conn.commit()
-        _log_master_action(
-            user, "factura.verificare_stare",
-            f"{factura['serie']} {factura['numar']} -> {noua_stare}")
-        mesaj = ("Factura a fost acceptata de ANAF." if noua_stare == pdb.EFACTURA_ACCEPTATA
-                else "Factura a fost respinsa de ANAF - vezi raspunsul descarcat.")
-        return redirect(url_for("master_facturi", mesaj=mesaj))
-
-    @app.get("/master/facturi/<int:factura_id>/raspuns-anaf")
-    def descarca_raspuns_anaf(factura_id):
-        user = current_user()
-        if user is None or not user["is_master"]:
-            return redirect(url_for("login"))
-        factura = conn.execute("SELECT * FROM invoices WHERE id=?",
-                               (factura_id,)).fetchone()
-        if factura is None or not factura["anaf_raspuns"]:
-            return redirect(url_for("master_facturi"))
-        nume_fisier = f"raspuns_anaf_{factura['serie']}{factura['numar']}.zip"
-        return Response(
-            factura["anaf_raspuns"], mimetype="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
-
     # ---------- firma: facturile proprii (doar vizualizare/descarcare) ----------
-    # Firma nu poate crea/trimite/verifica facturi (asta ramane exclusiv
-    # master, vezi rutele /master/facturi* de mai sus) - poate doar sa vada
-    # si sa descarce facturile pe care VML i le-a emis ei insasi.
+    # Firma nu poate crea facturi (asta ramane exclusiv master, vezi ruta
+    # /master/facturi de mai sus) - poate doar sa vada si sa descarce
+    # facturile pe care VML i le-a emis ea insasi.
 
     def _factura_proprie(factura_id: int, active_firm_id: int | None):
         """Intoarce factura DOAR daca apartine firmei active din sesiune -
@@ -2301,41 +2247,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         factura = _factura_proprie(factura_id, active_firm_id)
         if factura is None:
             return redirect(url_for("alege_plan"))
+        if factura["fgo_link_pdf"]:
+            return redirect(factura["fgo_link_pdf"])
         pdf_bytes = invoicing.generate_pdf(dict(factura))
         nume_fisier = f"factura_{factura['serie']}{factura['numar']}.pdf"
         return Response(
             pdf_bytes, mimetype="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
-
-    @app.get("/panou/factura/<int:factura_id>/xml")
-    def descarca_factura_proprie_xml(factura_id):
-        user = current_user()
-        active_firm_id = session.get("active_firm_id")
-        if (user is None or user["is_master"]
-                or not _role_in_firm(user["id"], active_firm_id)):
-            return redirect(url_for("login"))
-        factura = _factura_proprie(factura_id, active_firm_id)
-        if factura is None:
-            return redirect(url_for("alege_plan"))
-        xml_bytes = efactura_xml.build_invoice_xml(dict(factura), invoicing.FURNIZOR)
-        nume_fisier = f"factura_{factura['serie']}{factura['numar']}.xml"
-        return Response(
-            xml_bytes, mimetype="application/xml",
-            headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
-
-    @app.get("/panou/factura/<int:factura_id>/raspuns-anaf")
-    def descarca_raspuns_anaf_propriu(factura_id):
-        user = current_user()
-        active_firm_id = session.get("active_firm_id")
-        if (user is None or user["is_master"]
-                or not _role_in_firm(user["id"], active_firm_id)):
-            return redirect(url_for("login"))
-        factura = _factura_proprie(factura_id, active_firm_id)
-        if factura is None or not factura["anaf_raspuns"]:
-            return redirect(url_for("alege_plan"))
-        nume_fisier = f"raspuns_anaf_{factura['serie']}{factura['numar']}.zip"
-        return Response(
-            factura["anaf_raspuns"], mimetype="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
 
     # ---------- master: backup date productie ----------
@@ -2492,18 +2409,22 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT p.*, f.name AS firm_name, f.cui AS firm_cui FROM payments p "
             "JOIN firms f ON f.id = p.firm_id ORDER BY p.creat_la DESC").fetchall()
         return render_template(
-            "master_plati.html", user=user, plati=plati,
+            "master_plati.html", user=user, plati=plati, judete=ROMANIA_JUDETE,
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/master/plati/<int:plata_id>/valideaza")
     def valideaza_plata(plata_id):
         """Confirma manual o incasare (nu exista inca procesare automata -
         vezi TODO FGO in creeaza_cerere_plata) si emite automat factura
-        aferenta, reutilizand exact acelasi tabel/numerotare ca facturile
+        aferenta prin FGO, reutilizand exact acelasi helper ca facturile
         create manual din /master/facturi."""
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
+        judet = request.form.get("judet", "").strip()
+        if judet not in ROMANIA_JUDETE:
+            return redirect(url_for(
+                "master_plati", eroare="Alege un judet valid (cerut de e-Factura)."))
         plata = conn.execute("SELECT * FROM payments WHERE id=?",
                              (plata_id,)).fetchone()
         if plata is None or plata["stare"] == pdb.PLATA_VALIDATA:
@@ -2515,7 +2436,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("master_plati", eroare="Firma nu a fost gasita."))
         eticheta_ciclu = {"lunar": "lunar", "6luni": "la 6 luni",
                          "an": "anual"}[plata["ciclu_facturare"]]
-        numar = invoicing.next_invoice_number(conn, pdb.FACTURA_SERIE)
         # payments.suma e deja suma cu TVA inclus (vezi _suma_cu_tva) - cea
         # chiar ceruta/incasata de la client - asa ca aici desprindem
         # baza/TVA din ea, nu mai adaugam TVA peste, ca sa nu-l numaram de
@@ -2525,18 +2445,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         cota_tva = pdb.get_cota_tva(conn)
         valoare_totala = plata["suma"]
         valoare_neta = round(valoare_totala / (1 + cota_tva / 100), 2)
-        valoare_tva = round(valoare_totala - valoare_neta, 2)
-        # aware - acelasi motiv ca la creeaza_factura de mai sus.
+        try:
+            invoice_id = _emite_factura_fgo(
+                user, firma, f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
+                valoare_neta, cota_tva, judet)
+        except fgo.FgoError as e:
+            return redirect(url_for("master_plati", eroare=f"FGO: {e}"))
         acum = datetime.now(timezone.utc)
-        invoice_id = dbcompat.insert_id(
-            conn,
-            "INSERT INTO invoices(serie, numar, firm_id, firm_name, firm_cui, "
-            "descriere, data_emiterii, valoare_neta, cota_tva, valoare_tva, "
-            "valoare_totala, creat_de, creat_la) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (pdb.FACTURA_SERIE, numar, firma["id"], firma["name"], firma["cui"],
-             f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
-             acum.isoformat(), valoare_neta, cota_tva, valoare_tva,
-             valoare_totala, user["username"], acum.isoformat()))
         conn.execute(
             "UPDATE payments SET stare=?, validat_de=?, validat_la=?, "
             "invoice_id=? WHERE id=?",
@@ -2551,7 +2466,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         _log_master_action(
             user, "plata.validare",
             f"{firma['name']} - {eticheta_ciclu} ({_suma_scurta(valoare_totala)} RON) "
-            f"-> factura {pdb.FACTURA_SERIE} {numar}")
+            f"-> factura #{invoice_id}")
         return redirect(url_for(
             "master_plati",
             mesaj="Incasarea a fost validata si factura a fost emisa."))

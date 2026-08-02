@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS invoices(
   creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
   anaf_index_incarcare TEXT, anaf_stare TEXT NOT NULL DEFAULT 'netrimisa',
   anaf_id_descarcare TEXT, anaf_raspuns BLOB, anaf_trimis_la TEXT,
+  fgo_serie TEXT, fgo_numar TEXT, fgo_link_pdf TEXT,
   UNIQUE(serie, numar));
 CREATE TABLE IF NOT EXISTS payments(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,13 +200,6 @@ CREATE TABLE IF NOT EXISTS pachete_reconcilieri(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
   ON setari_tva(activa) WHERE activa=1;
 """
-
-# Starile posibile ale unei facturi in raport cu RO e-Factura - vezi
-# etva/anaf_oauth.py (upload_invoice/check_upload_status/download_response).
-EFACTURA_NETRIMISA = "netrimisa"
-EFACTURA_IN_PROCESARE = "in_procesare"
-EFACTURA_ACCEPTATA = "acceptata"
-EFACTURA_RESPINSA = "respinsa"
 
 # O cerere de plata e auto-declarata de firma (fara procesator de plati
 # integrat inca - vezi TODO-ul din portal/app.py despre FGO/Netopia) si
@@ -393,6 +387,25 @@ def _migrate_add_efactura_columns(conn: sqlite3.Connection) -> None:
         "ALTER TABLE invoices ADD COLUMN anaf_id_descarcare TEXT;"
         "ALTER TABLE invoices ADD COLUMN anaf_raspuns BLOB;"
         "ALTER TABLE invoices ADD COLUMN anaf_trimis_la TEXT;")
+    conn.commit()
+
+
+def _migrate_add_fgo_columns(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate integrarea FGO - adauga seria/numarul
+    REALE atribuite de FGO la factura/emitere (afisate firmei) + linkul
+    catre PDF-ul FGO. serie/numar raman coloanele DB interne (id-ul de
+    randare unic, generat local), neschimbate."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "invoices" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+    if "fgo_serie" in cols:
+        return
+    conn.executescript(
+        "ALTER TABLE invoices ADD COLUMN fgo_serie TEXT;"
+        "ALTER TABLE invoices ADD COLUMN fgo_numar TEXT;"
+        "ALTER TABLE invoices ADD COLUMN fgo_link_pdf TEXT;")
     conn.commit()
 
 
@@ -823,6 +836,7 @@ def open_db(path: str) -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     _migrate_firms_autoincrement(conn)
     _migrate_add_efactura_columns(conn)
+    _migrate_add_fgo_columns(conn)
     _migrate_add_users_email(conn)
     _migrate_add_firms_verificare_trial(conn)
     _migrate_add_firms_trial_reminder(conn)

@@ -6,6 +6,7 @@ from portal.app import create_app
 from portal import security as psec
 from etva import anaf_cui
 from etva import esemneaza
+from etva import fgo
 
 # ETVA_TEST_PG=1 ruleaza intreaga suita din acest fisier impotriva unui
 # Postgres local real, in loc de SQLite - vezi planning/migrare-postgres.md.
@@ -109,6 +110,25 @@ def _mock_esemneaza(monkeypatch):
                         lambda *a, **kw: {"certificateUrl": "https://fake/cert"})
     monkeypatch.setattr(esemneaza, "fetch_url_bytes",
                         lambda url: b"%PDF-fake-signed-bytes")
+
+
+@pytest.fixture(autouse=True)
+def _mock_fgo(monkeypatch):
+    """Facturarea proprie (creeaza_factura/valideaza_plata) trece prin FGO
+    (etva/fgo.py) - testele nu ating serviciul real. Raspuns structural
+    valid, cu Numar incrementat per apel (fiecare test porneste cu propriul
+    app/DB, deci nu conteaza consistenta intre teste). Teste specifice care
+    vor sa verifice tratarea erorii (fgo.FgoError) suprascriu explicit
+    fgo.emite_factura."""
+    contor = {"n": 0}
+
+    def _fake_emite_factura(cod_unic, cheie_privata, platforma_url, mediu, *,
+                            serie, **kw):
+        contor["n"] += 1
+        return {"Numar": str(contor["n"]).zfill(4), "Serie": serie,
+                "Link": f"https://fgo.testuat/n/p/fake-{contor['n']}",
+                "LinkPlata": None}
+    monkeypatch.setattr(fgo, "emite_factura", _fake_emite_factura)
 
 
 def inregistreaza(c, name="Firma Unu SRL", cui="RO111", tip="contabilitate",
@@ -2486,16 +2506,19 @@ def test_creeaza_factura_computes_totals_and_increments_numbering(app):
 
     c_master.post("/master/facturi", data={
         "firm_id": firm_id, "descriere": "Abonament iunie",
-        "valoare_neta": "100", "cota_tva": "19"})
+        "valoare_neta": "100", "cota_tva": "19", "judet": "Bucuresti"})
     c_master.post("/master/facturi", data={
         "firm_id": firm_id, "descriere": "Abonament iulie",
-        "valoare_neta": "50", "cota_tva": "19"})
+        "valoare_neta": "50", "cota_tva": "19", "judet": "Bucuresti"})
 
     rows = app.portal_conn.execute(
         "SELECT * FROM invoices ORDER BY numar").fetchall()
     assert len(rows) == 2
     assert rows[0]["numar"] == 1 and rows[1]["numar"] == 2
+    # serie/numar raman doar cheia interna de randare - fgo_serie/fgo_numar
+    # sunt cele REALE (vezi _mock_fgo), afisate firmei.
     assert rows[0]["serie"] == "ETVA"
+    assert rows[0]["fgo_serie"] == "VML" and rows[0]["fgo_numar"] == "0001"
     assert rows[0]["firm_name"] == "Firma Unu SRL" and rows[0]["firm_cui"] == "RO111"
     assert rows[0]["valoare_tva"] == 19.0
     assert rows[0]["valoare_totala"] == 119.0
@@ -2511,7 +2534,7 @@ def test_descarca_factura_pdf_requires_master(app):
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     c_master.post("/master/facturi", data={
         "firm_id": firm_id, "descriere": "Abonament", "valoare_neta": "100",
-        "cota_tva": "19"})
+        "cota_tva": "19", "judet": "Bucuresti"})
     factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
 
     r = c.get(f"/master/facturi/{factura_id}/pdf", follow_redirects=False)
@@ -2519,6 +2542,9 @@ def test_descarca_factura_pdf_requires_master(app):
 
 
 def test_descarca_factura_pdf_returns_pdf_bytes(app):
+    """"Returns pdf bytes" istoric - de cand PDF-ul vine de la FGO
+    (Factura.Link), ruta redirectioneaza acolo in loc sa serveasca bytes
+    direct; vezi _mock_fgo pentru link-ul fals folosit in teste."""
     _seed_master(app)
     c = app.test_client()
     inregistreaza(c, cui="RO111")
@@ -2527,13 +2553,12 @@ def test_descarca_factura_pdf_returns_pdf_bytes(app):
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     c_master.post("/master/facturi", data={
         "firm_id": firm_id, "descriere": "Abonament e-TVA Reconciliere",
-        "valoare_neta": "100", "cota_tva": "19"})
+        "valoare_neta": "100", "cota_tva": "19", "judet": "Bucuresti"})
     factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
 
-    r = c_master.get(f"/master/facturi/{factura_id}/pdf")
-    assert r.status_code == 200
-    assert r.mimetype == "application/pdf"
-    assert r.data[:4] == b"%PDF"
+    r = c_master.get(f"/master/facturi/{factura_id}/pdf", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].startswith("https://fgo.testuat/")
 
 
 def test_next_invoice_number_starts_at_one_and_increments(app):
@@ -2555,232 +2580,15 @@ def test_next_invoice_number_starts_at_one_and_increments(app):
     assert invoicing.next_invoice_number(app.portal_conn, "ETVA") == 2
 
 
-# ---------- facturare: XML e-Factura + trimitere ANAF ----------
+# ---------- facturare: emitere prin FGO (vezi _mock_fgo) ----------
 
-def _creeaza_factura(app, client_master, firm_id, descriere="Abonament"):
+def _creeaza_factura(app, client_master, firm_id, descriere="Abonament",
+                     judet="Bucuresti"):
     client_master.post("/master/facturi", data={
         "firm_id": firm_id, "descriere": descriere,
-        "valoare_neta": "100", "cota_tva": "19"})
+        "valoare_neta": "100", "cota_tva": "19", "judet": judet})
     return app.portal_conn.execute(
         "SELECT id FROM invoices ORDER BY id DESC LIMIT 1").fetchone()["id"]
-
-
-def _autorizeaza_vml_anaf(app, monkeypatch, tokens=None):
-    """Inregistreaza firma emitentului insusi (VML, acelasi CUI ca
-    portal.invoicing.FURNIZOR) si o trece prin fluxul de autorizare ANAF -
-    exact ca orice alta firma, doar ca acum CUI-ul coincide cu emitentul."""
-    from portal import invoicing
-    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
-    monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")
-    monkeypatch.setattr(anaf_oauth, "exchange_code_for_tokens",
-                        lambda *a, **kw: tokens or {"access_token": "VML-TOKEN",
-                                                    "refresh_token": "VML-REFRESH"})
-    c = app.test_client()
-    inregistreaza(c, name="VML EXPERT ADVISOR SRL", cui=invoicing.FURNIZOR["cui"],
-                  tip="direct")
-    _stare_anaf(c)
-    return c
-
-
-def test_descarca_factura_xml_requires_master(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, cui="RO111")
-    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    c_master.post("/master/facturi", data={
-        "firm_id": firm_id, "descriere": "Abonament", "valoare_neta": "100",
-        "cota_tva": "19"})
-    factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
-
-    r = c.get(f"/master/facturi/{factura_id}/xml", follow_redirects=False)
-    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
-
-
-def test_descarca_factura_xml_returns_valid_xml(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Unu SRL", cui="RO111")
-    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    c_master.post("/master/facturi", data={
-        "firm_id": firm_id, "descriere": "Abonament iunie", "valoare_neta": "100",
-        "cota_tva": "19"})
-    factura_id = app.portal_conn.execute("SELECT id FROM invoices").fetchone()["id"]
-
-    r = c_master.get(f"/master/facturi/{factura_id}/xml")
-    assert r.status_code == 200
-    assert r.mimetype == "application/xml"
-    assert b"<?xml" in r.data
-    assert b"Firma Unu SRL" in r.data
-
-
-def test_trimite_factura_anaf_requires_vml_own_authorization(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, cui="RO111")
-    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    r = c_master.post(f"/master/facturi/{factura_id}/trimite-anaf",
-                      follow_redirects=True)
-    assert "nu are acces ANAF autorizat".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT anaf_stare FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "netrimisa"
-
-
-def test_trimite_factura_anaf_uploads_and_updates_state(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Doi SRL", cui="RO222")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO222'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    monkeypatch.setattr(anaf_oauth, "upload_invoice",
-                        lambda *a, **kw: {"index_incarcare": "999888"})
-    r = c_master.post(f"/master/facturi/{factura_id}/trimite-anaf",
-                      follow_redirects=True)
-    assert "trimisa la ANAF".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT * FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "in_procesare"
-    assert row["anaf_index_incarcare"] == "999888"
-    assert row["anaf_trimis_la"] is not None
-
-
-def test_trimite_factura_anaf_surfaces_anaf_rejection(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Doi SRL", cui="RO222")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO222'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    def _boom(*a, **kw):
-        raise anaf_oauth.AnafOAuthError("XML invalid")
-    monkeypatch.setattr(anaf_oauth, "upload_invoice", _boom)
-    r = c_master.post(f"/master/facturi/{factura_id}/trimite-anaf",
-                      follow_redirects=True)
-    assert "XML invalid".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT anaf_stare FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "netrimisa"
-
-
-def test_verifica_stare_still_processing(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Doi SRL", cui="RO222")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO222'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-    monkeypatch.setattr(anaf_oauth, "upload_invoice",
-                        lambda *a, **kw: {"index_incarcare": "999888"})
-    c_master.post(f"/master/facturi/{factura_id}/trimite-anaf")
-
-    monkeypatch.setattr(anaf_oauth, "check_upload_status",
-                        lambda *a, **kw: {"stare": "in prelucrare", "id_descarcare": None})
-    r = c_master.post(f"/master/facturi/{factura_id}/verifica-stare",
-                      follow_redirects=True)
-    assert "inca in procesare".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT anaf_stare FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "in_procesare"
-
-
-def test_verifica_stare_accepted_downloads_and_stores_sealed_response(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Doi SRL", cui="RO222")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO222'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-    monkeypatch.setattr(anaf_oauth, "upload_invoice",
-                        lambda *a, **kw: {"index_incarcare": "999888"})
-    c_master.post(f"/master/facturi/{factura_id}/trimite-anaf")
-
-    monkeypatch.setattr(anaf_oauth, "check_upload_status",
-                        lambda *a, **kw: {"stare": "ok", "id_descarcare": "111222"})
-    monkeypatch.setattr(anaf_oauth, "download_response",
-                        lambda *a, **kw: b"PK\x03\x04semnat-de-anaf")
-    r = c_master.post(f"/master/facturi/{factura_id}/verifica-stare",
-                      follow_redirects=True)
-    assert "acceptata de ANAF".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT * FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "acceptata"
-    assert row["anaf_id_descarcare"] == "111222"
-    assert row["anaf_raspuns"] == b"PK\x03\x04semnat-de-anaf"
-
-
-def test_verifica_stare_rejected(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Doi SRL", cui="RO222")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO222'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-    monkeypatch.setattr(anaf_oauth, "upload_invoice",
-                        lambda *a, **kw: {"index_incarcare": "999888"})
-    c_master.post(f"/master/facturi/{factura_id}/trimite-anaf")
-
-    monkeypatch.setattr(anaf_oauth, "check_upload_status",
-                        lambda *a, **kw: {"stare": "nok", "id_descarcare": "333444"})
-    monkeypatch.setattr(anaf_oauth, "download_response",
-                        lambda *a, **kw: b"PK\x03\x04eroare")
-    r = c_master.post(f"/master/facturi/{factura_id}/verifica-stare",
-                      follow_redirects=True)
-    assert "respinsa de ANAF".encode() in r.data
-    row = app.portal_conn.execute(
-        "SELECT anaf_stare FROM invoices WHERE id=?", (factura_id,)).fetchone()
-    assert row["anaf_stare"] == "respinsa"
-
-
-def test_descarca_raspuns_anaf_requires_master(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, cui="RO111")
-    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    r = c.get(f"/master/facturi/{factura_id}/raspuns-anaf", follow_redirects=False)
-    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
-
-
-def test_descarca_raspuns_anaf_returns_none_when_not_yet_available(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, cui="RO111")
-    firm_id = app.portal_conn.execute("SELECT id FROM firms").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    r = c_master.get(f"/master/facturi/{factura_id}/raspuns-anaf", follow_redirects=False)
-    assert r.status_code == 302 and "/master/facturi" in r.headers["Location"]
 
 
 # ---------- facturare: vizibilitate firma (facturile ei proprii) ----------
@@ -2797,7 +2605,9 @@ def test_alege_plan_shows_own_invoices(app):
 
     r = c.get("/panou/plan")
     assert "Facturile mele".encode() in r.data
-    assert "ETVA".encode() in r.data
+    # Seria/numarul afisate sunt cele REALE, atribuite de FGO (vezi
+    # _mock_fgo) - nu vechea numerotare locala "ETVA".
+    assert "VML".encode() in r.data
     assert "119.00".encode() in r.data or "119.0".encode() in r.data
 
 
@@ -2817,6 +2627,8 @@ def test_descarca_factura_proprie_pdf_requires_login(app):
 
 
 def test_descarca_factura_proprie_pdf_returns_own_invoice(app):
+    """PDF-ul vine de la FGO (Factura.Link) - ruta redirectioneaza acolo,
+    vezi _mock_fgo pentru link-ul fals folosit in teste."""
     _seed_master(app)
     c = app.test_client()
     inregistreaza(c, name="Firma Proprie SRL", cui="RO310")
@@ -2826,66 +2638,9 @@ def test_descarca_factura_proprie_pdf_returns_own_invoice(app):
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     factura_id = _creeaza_factura(app, c_master, firm_id)
 
-    r = c.get(f"/panou/factura/{factura_id}/pdf")
-    assert r.status_code == 200
-    assert r.mimetype == "application/pdf"
-    assert r.data[:4] == b"%PDF"
-
-
-def test_descarca_factura_proprie_xml_returns_own_invoice(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Proprie SRL", cui="RO311")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO311'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id, descriere="Abonament")
-
-    r = c.get(f"/panou/factura/{factura_id}/xml")
-    assert r.status_code == 200
-    assert r.mimetype == "application/xml"
-    assert b"<?xml" in r.data
-    assert b"Firma Proprie SRL" in r.data
-
-
-def test_descarca_raspuns_anaf_propriu_returns_none_when_not_yet_available(app):
-    _seed_master(app)
-    c = app.test_client()
-    inregistreaza(c, cui="RO312")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO312'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-
-    r = c.get(f"/panou/factura/{factura_id}/raspuns-anaf", follow_redirects=False)
-    assert r.status_code == 302 and "/panou/plan" in r.headers["Location"]
-
-
-def test_descarca_raspuns_anaf_propriu_returns_zip_when_available(app, monkeypatch):
-    _seed_master(app)
-    _autorizeaza_vml_anaf(app, monkeypatch)
-    c = app.test_client()
-    inregistreaza(c, name="Firma Cinci SRL", cui="RO313")
-    firm_id = app.portal_conn.execute(
-        "SELECT id FROM firms WHERE cui='RO313'").fetchone()["id"]
-    c_master = app.test_client()
-    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    factura_id = _creeaza_factura(app, c_master, firm_id)
-    monkeypatch.setattr(anaf_oauth, "upload_invoice",
-                        lambda *a, **kw: {"index_incarcare": "999888"})
-    c_master.post(f"/master/facturi/{factura_id}/trimite-anaf")
-    monkeypatch.setattr(anaf_oauth, "check_upload_status",
-                        lambda *a, **kw: {"stare": "ok", "id_descarcare": "111222"})
-    monkeypatch.setattr(anaf_oauth, "download_response",
-                        lambda *a, **kw: b"PK\x03\x04semnat-de-anaf")
-    c_master.post(f"/master/facturi/{factura_id}/verifica-stare")
-
-    r = c.get(f"/panou/factura/{factura_id}/raspuns-anaf")
-    assert r.status_code == 200
-    assert r.mimetype == "application/zip"
-    assert r.data == b"PK\x03\x04semnat-de-anaf"
+    r = c.get(f"/panou/factura/{factura_id}/pdf", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].startswith("https://fgo.testuat/")
 
 
 def test_firma_nu_poate_accesa_factura_altei_firme_prin_id_ghicit(app):
@@ -2928,17 +2683,11 @@ def test_firma_nu_poate_accesa_factura_altei_firme_prin_id_ghicit(app):
     r_pdf = c_a.get(f"/panou/factura/{factura_b_id}/pdf", follow_redirects=False)
     assert r_pdf.status_code == 302 and "/panou/plan" in r_pdf.headers["Location"]
 
-    r_xml = c_a.get(f"/panou/factura/{factura_b_id}/xml", follow_redirects=False)
-    assert r_xml.status_code == 302 and "/panou/plan" in r_xml.headers["Location"]
-
-    r_raspuns = c_a.get(f"/panou/factura/{factura_b_id}/raspuns-anaf",
-                        follow_redirects=False)
-    assert r_raspuns.status_code == 302 and "/panou/plan" in r_raspuns.headers["Location"]
-
     # Firma B insasi tot poate accesa propria factura - confirmam ca
     # respingerea de mai sus e specifica firmei A, nu o ruta stricata.
-    r_ok = c_b.get(f"/panou/factura/{factura_b_id}/pdf")
-    assert r_ok.status_code == 200 and r_ok.data[:4] == b"%PDF"
+    r_ok = c_b.get(f"/panou/factura/{factura_b_id}/pdf", follow_redirects=False)
+    assert r_ok.status_code == 302
+    assert r_ok.headers["Location"].startswith("https://fgo.testuat/")
 
 
 # ---------- backup date productie ----------
@@ -3352,7 +3101,8 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
 
     c_master = app.test_client()
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    r = c_master.post(f"/master/plati/{plata_id}/valideaza", follow_redirects=True)
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"}, follow_redirects=True)
     assert "Incasarea a fost validata".encode() in r.data
 
     row = app.portal_conn.execute(
@@ -3387,8 +3137,9 @@ def test_valideaza_plata_rejects_already_validated(app):
 
     c_master = app.test_client()
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    c_master.post(f"/master/plati/{plata_id}/valideaza")
-    r = c_master.post(f"/master/plati/{plata_id}/valideaza", follow_redirects=True)
+    c_master.post(f"/master/plati/{plata_id}/valideaza", data={"judet": "Bucuresti"})
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"}, follow_redirects=True)
     assert "deja validata".encode() in r.data
 
 
@@ -4918,7 +4669,7 @@ def test_valideaza_plata_reactivates_archived_firm(app):
         "SELECT id FROM payments WHERE firm_id=?", (firm_id,)).fetchone()["id"]
     c_master = app.test_client()
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
-    c_master.post(f"/master/plati/{plata_id}/valideaza")
+    c_master.post(f"/master/plati/{plata_id}/valideaza", data={"judet": "Bucuresti"})
 
     row = app.portal_conn.execute(
         "SELECT arhivata_la FROM firms WHERE id=?", (firm_id,)).fetchone()

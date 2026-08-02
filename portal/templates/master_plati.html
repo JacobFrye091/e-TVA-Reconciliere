@@ -16,7 +16,8 @@ a.mic:hover { background:var(--paper); }
       <p class="sub">Cererile de plată trimise de firme — validează manual
         odată ce confirmi încasarea pe altă cale (nu există încă procesare
         automată prin FGO/Netopia). Validarea emite automat factura
-        aferentă, disponibilă apoi în <a href="/master/facturi">Facturi</a>.</p>
+        aferentă prin FGO (cu trimitere automată la SPV), disponibilă apoi
+        în <a href="/master/facturi">Facturi</a>.</p>
     </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
@@ -44,8 +45,15 @@ a.mic:hover { background:var(--paper); }
         </td>
         <td style="text-align:right">
           {% if p['stare'] != 'validata' %}
-          <form class="inline" method="post" action="/master/plati/{{ p['id'] }}/valideaza">
+          <form class="inline" method="post" action="/master/plati/{{ p['id'] }}/valideaza"
+                style="display:flex;gap:6px;align-items:center;justify-content:flex-end">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="judet" required style="font-size:12.5px;padding:4px">
+              <option value="">Județ (client)</option>
+              {% for j in judete %}
+              <option value="{{ j }}">{{ j }}</option>
+              {% endfor %}
+            </select>
             <button class="mic" type="submit">Validează încasarea</button>
           </form>
           {% else %}

@@ -144,15 +144,11 @@ a.mic:hover { background:var(--paper); }
       <tr><th>Serie / Nr.</th><th>Data emiterii</th><th>Total</th><th></th></tr>
       {% for f in facturi %}
       <tr>
-        <td class="cod">{{ f['serie'] }} {{ f['numar'] }}</td>
+        <td class="cod">{{ f['fgo_serie'] or f['serie'] }} {{ f['fgo_numar'] or f['numar'] }}</td>
         <td>{{ f['data_emiterii'][:10] }}</td>
         <td>{{ '%.2f'|format(f['valoare_totala']) }} {{ f['moneda'] }}</td>
         <td style="text-align:right">
           <a class="mic" href="/panou/factura/{{ f['id'] }}/pdf">PDF</a>
-          <a class="mic" href="/panou/factura/{{ f['id'] }}/xml">XML</a>
-          {% if f['anaf_raspuns'] %}
-          <a class="mic" href="/panou/factura/{{ f['id'] }}/raspuns-anaf">Răspuns ANAF</a>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}

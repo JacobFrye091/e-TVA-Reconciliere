@@ -107,6 +107,7 @@ EXPECTED_SCHEMA = {
         "anaf_index_incarcare": "text", "anaf_stare": "text",
         "anaf_id_descarcare": "text", "anaf_raspuns": "bytea",
         "anaf_trimis_la": "timestamp with time zone",
+        "fgo_serie": "text", "fgo_numar": "text", "fgo_link_pdf": "text",
     },
     "payments": {
         "id": "integer", "firm_id": "integer", "ciclu_facturare": "text",
