@@ -101,6 +101,9 @@ def test_sablon_structura():
     assert len(dvs) == 1
     assert dvs[0].formula1 == "=Liste!$A$1:$A$7"
     assert "G5:G1000" in str(dvs[0].sqref)
+    # showErrorMessage trebuie sa fie True - altfel error/errorTitle raman
+    # definite in XML dar Excel nu le afiseaza niciodata (showErrorMessage="0").
+    assert dvs[0].showErrorMessage is True
 
 
 # Etichetele din dropdown trebuie sa fie fara ambiguitate pentru

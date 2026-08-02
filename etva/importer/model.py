@@ -94,6 +94,7 @@ def build_model_template(directie: str) -> Workbook:
     dv = DataValidation(type="list", formula1="=Liste!$A$1:$A$7", allow_blank=True)
     dv.error = "Alege o valoare din lista pentru 'Tip operatiune'."
     dv.errorTitle = "Tip operatiune invalid"
+    dv.showErrorMessage = True
     ws.add_data_validation(dv)
     dv.add(f"G{FIRST_DATA_ROW_EXCEL}:G1000")
 
