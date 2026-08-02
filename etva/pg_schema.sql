@@ -345,6 +345,28 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ============ indecsi de suport pentru filtrarea RLS pe firm_id ============
+-- Politica RLS de mai sus filtreaza firm_id la FIECARE interogare pe cele 7
+-- tabele; doar clients avea deja un index care sa acopere asta
+-- (idx_clients_firm_cui). Fara indecsi pe celelalte, fiecare interogare
+-- scaneaza tabela intreaga ca sa aplice filtrul RLS - inclusiv pe cel mai
+-- folosit flux din aplicatie (vizualizare/export rezultate reconciliere,
+-- vezi _load_rows/_load_lines in portal/app.py). CONCURRENTLY: nu blocheaza
+-- scrieri/citiri cat timp se construieste indexul, deci sigur de aplicat pe
+-- o baza cu trafic live, fara fereastra de mentenanta. Nu poate rula
+-- intr-un bloc de tranzactie - de asta sunt declaratii separate aici, nu in
+-- DO $$ ... $$ de mai sus.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_reconciliations_firm_created_by
+  ON reconciliations(firm_id, created_by);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_invoices_company_recon
+  ON invoices_company(reconciliation_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_invoices_anaf_recon
+  ON invoices_anaf(reconciliation_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_differences_recon
+  ON differences(reconciliation_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_log_firm_user_ts
+  ON audit_log(firm_id, user_id, ts DESC);
+
 -- ============ drepturi pentru rolul aplicatiei ============
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO etva_app;
 -- UPDATE (nu doar USAGE/SELECT) e obligatoriu pentru setval() - fara el,
