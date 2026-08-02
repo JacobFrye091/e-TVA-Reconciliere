@@ -92,6 +92,17 @@ button.discret:hover { background: var(--bg); color: var(--text); }
 }
 label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 12px 0; cursor: pointer; }
 label.check input { width: auto; margin-top: 2px; }
+.optiuni-format { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.optiune-tip { display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+  cursor: pointer; font-size: 14px; font-weight: 400; color: var(--text);
+  margin: 0; }
+.optiune-tip:has(input:checked) { border-color: var(--accent); background: var(--ok-bg); }
+.optiune-tip input { width: auto; margin-top: 3px; }
+.link-descarca { display: inline-block; padding: 9px 16px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-weight: 600; text-decoration: none; font-size: 14px; }
+.link-descarca:hover { background: var(--bg); }
 
 /* ---------- App shell ---------- */
 .shell { display: none; min-height: 100vh; }
@@ -302,16 +313,38 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         <div class="field"><label for="perioada">Perioada</label>
           <input id="perioada" placeholder="ex: 2026-01"></div>
       </div>
+      <div class="field" id="campFormatJurnal">
+        <label>Format jurnal firma</label>
+        <div class="optiuni-format">
+          <label class="optiune-tip">
+            <input type="radio" name="formatJurnal" value="saga" checked onchange="comutaFormatJurnal()">
+            <span><b>Export SAGA</b> — jurnalul de vanzari/cumparari exportat direct din SAGA.</span>
+          </label>
+          <label class="optiune-tip">
+            <input type="radio" name="formatJurnal" value="model" onchange="comutaFormatJurnal()">
+            <span><b>Alt program de contabilitate</b> — completezi modelul e-TVA descarcat mai jos.</span>
+          </label>
+        </div>
+        <div id="panouModel" style="display:none">
+          <p class="sub" style="margin:0 0 8px">Descarca modelul, completeaza cate un rand pe factura
+            (coloana &bdquo;Tip operatiune&rdquo; se alege dintr-o lista derulanta) si incarca-l mai jos,
+            in locul exportului SAGA.</p>
+          <div class="actiuni" style="margin:0 0 4px">
+            <a class="link-descarca" href="/api/sabloane/jurnal/vanzari">Descarca modelul de vanzari</a>
+            <a class="link-descarca" href="/api/sabloane/jurnal/cumparari">Descarca modelul de cumparari</a>
+          </div>
+        </div>
+      </div>
       <div class="grila-2" id="campJurnale">
         <div class="field"><label for="fisierVanzari">Jurnal de vanzari</label>
-          <input id="fisierVanzari" type="file" accept=".xlsx,.xls,.csv"></div>
+          <input id="fisierVanzari" type="file" accept=".xlsx,.xls"></div>
         <div class="field"><label for="fisierCumparari">Jurnal de cumparari</label>
-          <input id="fisierCumparari" type="file" accept=".xlsx,.xls,.csv"></div>
+          <input id="fisierCumparari" type="file" accept=".xlsx,.xls"></div>
       </div>
       <p class="sub" style="margin:-4px 0 14px">Incarca <b>ambele jurnale</b> — si cel de vanzari, si cel de
-        cumparari — pentru o verificare completa. Format acceptat: exportul &bdquo;Jurnal pentru
-        vanzari / cumparari&rdquo; din programul de contabilitate (ex. SAGA), ca fisier Excel
-        <b>.xls</b> (Excel 97&ndash;2003) sau <b>.xlsx</b> (Excel modern), respectiv .csv.</p>
+        cumparari — pentru o verificare completa. Format acceptat: exportul SAGA sau modelul e-TVA
+        completat (alege formatul mai sus), ca fisier Excel <b>.xls</b> (Excel 97&ndash;2003) sau
+        <b>.xlsx</b> (Excel modern).</p>
       <div class="grila-2">
         <div class="field" id="campFisierAnaf"><label for="fisierAnaf">Decont precompletat RO e-TVA (PDF sau JSON de la ANAF) sau fisier ANAF (xlsx / csv)</label>
           <input id="fisierAnaf" type="file" accept=".pdf,.json,.xlsx,.csv"></div>
@@ -401,6 +434,15 @@ let anafAutorizat = false;
 function comutaSursaAnaf() {
   const auto = document.getElementById('anafAutoToggle').checked;
   document.getElementById('campFisierAnaf').style.display = auto ? 'none' : '';
+}
+
+function formatJurnal() {
+  return document.querySelector('input[name="formatJurnal"]:checked').value;
+}
+
+function comutaFormatJurnal() {
+  document.getElementById('panouModel').style.display =
+    formatJurnal() === 'model' ? '' : 'none';
 }
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
@@ -542,9 +584,13 @@ function pasiiTurului() {
   }
   pasi.push({view: 'dashboard', sel: '#perioada', titlu: 'Perioada',
     text: 'Scrie perioada declaratiei, de exemplu 2026-06.'});
+  pasi.push({view: 'dashboard', sel: '#campFormatJurnal', titlu: 'Formatul jurnalului',
+    text: 'Implicit, aplicatia citeste exportul SAGA. Daca folosesti alt program de ' +
+      'contabilitate, alege "Alt program", descarca modelul e-TVA (vanzari si ' +
+      'cumparari), completeaza-l si incarca-l in locul exportului SAGA.'});
   pasi.push({view: 'dashboard', sel: '#campJurnale', titlu: 'Jurnalele firmei',
-    text: 'Incarci aici exporturile din programul de contabilitate: jurnalul de ' +
-      'vanzari SI jurnalul de cumparari (fisiere Excel .xls / .xlsx sau .csv).'});
+    text: 'Incarci aici jurnalul de vanzari SI jurnalul de cumparari (fisiere Excel ' +
+      '.xls / .xlsx, in formatul ales mai sus).'});
   pasi.push({view: 'dashboard', sel: '#fisierAnaf', titlu: 'Decontul ANAF',
     text: 'Incarci aici decontul precompletat de la ANAF, descarcat din SPV (PDF sau JSON).'});
   pasi.push({view: 'dashboard', sel: '#btnRuleaza', titlu: 'Ruleaza reconcilierea',
@@ -741,6 +787,7 @@ async function ruleazaReconciliere() {
     // O firma directa reconciliaza ca ea insasi - fara client_id.
     if (!firmaDirecta) fd.append('client_id', selClient.value);
     fd.append('period', perioada.value);
+    fd.append('format_jurnal', formatJurnal());
     for (const f of fisiereJurnal) fd.append('company_file', f);
     const preiaAutomat = anafAutorizat && document.getElementById('anafAutoToggle').checked;
     if (preiaAutomat) {
@@ -871,7 +918,9 @@ function exporta() {
 function reiaAltaVerificare() {
   // Pregateste formularul pentru urmatoarea verificare fara sa iasa din
   // aplicatie: fisierele si erorile se golesc, clientul/perioada raman la
-  // indemana pentru corectat.
+  // indemana pentru corectat. Formatul de jurnal ales (SAGA / model) ramane
+  // neschimbat intentionat - un contabil care nu foloseste SAGA nu ar trebui
+  // sa reselecteze optiunea la fiecare verificare noua.
   fisierVanzari.value = '';
   fisierCumparari.value = '';
   fisierAnaf.value = '';
