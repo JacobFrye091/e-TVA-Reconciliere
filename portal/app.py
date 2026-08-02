@@ -324,10 +324,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     if enable_backup_scheduler or enable_trial_reminder_scheduler:
         scheduler_lock_fd = _is_scheduler_leader(data_dir)
         app._scheduler_lock_fd = scheduler_lock_fd  # tinut deschis cat traieste procesul
+        # flush=True: stdout e block-buffered sub gunicorn/systemd (nu e un
+        # TTY), altfel acest mesaj ar ramane invizibil in jurnal pana la
+        # umplerea bufferului sau iesirea procesului.
         print(f"[scheduler] pid {os.getpid()}: "
               + ("lider - pornesc firele de fundal (backup/remindere trial)"
                  if scheduler_lock_fd else
-                 "nu sunt lider - firele de fundal nu pornesc in acest proces"))
+                 "nu sunt lider - firele de fundal nu pornesc in acest proces"),
+              flush=True)
 
     if enable_backup_scheduler and scheduler_lock_fd:
         backup_mod.start_scheduler(data_dir, db_lock)
