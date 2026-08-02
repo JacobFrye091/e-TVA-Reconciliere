@@ -4634,6 +4634,62 @@ def test_arhiveaza_firme_neplatitoare_is_idempotent(app):
     assert remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn) == 0
 
 
+@pytest.mark.skipif(
+    os.environ.get("ETVA_TEST_PG") != "1",
+    reason="verifica starea reala a tranzactiei Postgres (idle in transaction)")
+def test_verifica_si_trimite_and_arhiveaza_do_not_leave_transaction_open_when_empty(app):
+    """Regresie: descoperit direct pe testare si productie - firul de fundal
+    a lasat o tranzactie 'idle in transaction' agatata 5+ ore dupa un ciclu
+    fara nicio firma de procesat (fetchall gol -> bucla nu ajunge niciodata
+    la commit()), destul cat sa blocheze un CREATE INDEX CONCURRENTLY."""
+    import psycopg
+    from portal import trial_reminders as remind_mod
+    n1 = remind_mod.verifica_si_trimite(app.portal_conn, lambda *a: None)
+    n2 = remind_mod.arhiveaza_firme_neplatitoare(app.portal_conn)
+    assert (n1, n2) == (0, 0)  # aplicatie noua de test, fara firme in proba
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as diag:
+        idle = diag.execute(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE state = 'idle in transaction' AND pid <> pg_backend_pid()"
+        ).fetchone()[0]
+    assert idle == 0
+
+
+def test_scheduler_leader_lock_is_exclusive_per_data_dir(tmp_path):
+    """Cu --workers > 1, fiecare proces gunicorn apeleaza create_app separat
+    - fara asta, firele de fundal (backup, remindere trial) ar porni cate
+    unul per proces si ar face treaba de doua ori (ex. email de reminder
+    trimis de doua ori la boot). _is_scheduler_leader e mecanismul de
+    excludere: primul "proces" (fd deschis) castiga, urmatorul asupra
+    aceluiasi data_dir pierde, pana cand primul elibereaza (inchide fd-ul -
+    echivalentul unui restart de proces real)."""
+    from portal.app import _is_scheduler_leader
+    fd1 = _is_scheduler_leader(str(tmp_path))
+    assert fd1 is not None
+    fd2 = _is_scheduler_leader(str(tmp_path))
+    assert fd2 is None
+    fd1.close()
+    fd3 = _is_scheduler_leader(str(tmp_path))
+    assert fd3 is not None
+    fd3.close()
+
+
+def test_create_app_second_instance_on_same_data_dir_is_not_scheduler_leader(tmp_path):
+    """Nivelul de integrare al testului de mai sus: doua create_app() cu
+    scheduler-ele pornite, pe acelasi data_dir (simuleaza doi workeri
+    gunicorn) - doar primul primeste un _scheduler_lock_fd real."""
+    from portal.app import create_app
+    app1 = create_app(str(tmp_path), enable_backup_scheduler=True,
+                      enable_trial_reminder_scheduler=True)
+    app2 = create_app(str(tmp_path), enable_backup_scheduler=True,
+                      enable_trial_reminder_scheduler=True)
+    try:
+        assert app1._scheduler_lock_fd is not None
+        assert app2._scheduler_lock_fd is None
+    finally:
+        app1._scheduler_lock_fd.close()
+
+
 def test_arhiveaza_firme_trial_route_requires_master(app):
     c = app.test_client()
     r = c.post("/master/remindere-trial/arhiveaza", follow_redirects=False)

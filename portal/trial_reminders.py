@@ -84,6 +84,13 @@ def verifica_si_trimite(conn, trimite_email_fn) -> int:
         "SELECT id, name, trial_expira_la, trial_reminder_ultim_prag "
         "FROM firms WHERE active=TRUE AND ciclu_facturare IS NULL "
         "AND trial_expira_la IS NOT NULL").fetchall()
+    # commit imediat: randurile sunt deja materializate in Python (fetchall),
+    # deci nu mai e nevoie sa tinem deschisa tranzactia implicita a acestui
+    # SELECT. Fara asta, cand firme e goala (sau toate randurile sunt sarite
+    # mai jos), conexiunea ramane "idle in transaction" pana la urmatorul
+    # ciclu (6h) - descoperit direct: a blocat CREATE INDEX CONCURRENTLY pe
+    # testare si productie dupa 5+ ore agatata.
+    conn.commit()
     n_trimise = 0
     for firma in firme:
         zile_ramase = zile_ramase_trial(firma["trial_expira_la"])
@@ -117,6 +124,8 @@ def arhiveaza_firme_neplatitoare(conn) -> int:
         "SELECT id, trial_expira_la FROM firms WHERE active=TRUE "
         "AND ciclu_facturare IS NULL AND arhivata_la IS NULL "
         "AND trial_expira_la IS NOT NULL").fetchall()
+    # Vezi comentariul din verifica_si_trimite mai sus - acelasi motiv.
+    conn.commit()
     n_arhivate = 0
     for firma in firme:
         if zile_ramase_trial(firma["trial_expira_la"]) > 0:
