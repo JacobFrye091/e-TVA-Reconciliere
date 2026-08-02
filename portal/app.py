@@ -4,7 +4,7 @@ One Flask app: public landing + firm accounts + the full reconciliation
 product served in the browser. Each firm's working data lives in its own
 SQLCipher-encrypted database on the server, opened with the firm's data key.
 """
-import io, json, os, pathlib, re, secrets, smtplib, threading
+import fcntl, io, json, os, pathlib, re, secrets, smtplib, threading
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
@@ -170,6 +170,26 @@ def _donut_segments(counts: list[tuple[str, int]]) -> list[dict]:
     return segments
 
 
+def _is_scheduler_leader(data_dir: str) -> "io.TextIOWrapper | None":
+    """True (fd deschis) doar pentru primul proces care apuca acest lock de
+    fisier - restul workerilor gunicorn (--workers > 1) nu mai pornesc
+    firele de fundal (backup, remindere trial), ca sa nu ruleze duplicat
+    (ex. emailuri de reminder trimise de doua ori la boot, cand toti
+    workerii pornesc simultan). fcntl.flock e per-proces, nu per-conexiune
+    DB, deci functioneaza identic pe SQLite si Postgres, fara cod separat
+    pe backend. Fd-ul returnat trebuie tinut deschis (atasat pe `app`) cat
+    traieste procesul - inchiderea lui elibereaza lock-ul. La restart de
+    serviciu, toate conexiunile se inchid si urmatorii workeri realeg un
+    lider."""
+    fd = open(os.path.join(data_dir, ".scheduler-leader.lock"), "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.close()
+        return None
+    return fd
+
+
 class _ReqScopedConn(dbcompat.ConnCompat):
     """Proxy folosit ca `conn` in interiorul create_app pe backend
     Postgres: la fiecare metoda apelata, rezolva dinamic fie catre
@@ -300,7 +320,20 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if g.pop("db_lock_acquired", False):
             db_lock.release()
 
-    if enable_backup_scheduler:
+    scheduler_lock_fd = None
+    if enable_backup_scheduler or enable_trial_reminder_scheduler:
+        scheduler_lock_fd = _is_scheduler_leader(data_dir)
+        app._scheduler_lock_fd = scheduler_lock_fd  # tinut deschis cat traieste procesul
+        # flush=True: stdout e block-buffered sub gunicorn/systemd (nu e un
+        # TTY), altfel acest mesaj ar ramane invizibil in jurnal pana la
+        # umplerea bufferului sau iesirea procesului.
+        print(f"[scheduler] pid {os.getpid()}: "
+              + ("lider - pornesc firele de fundal (backup/remindere trial)"
+                 if scheduler_lock_fd else
+                 "nu sunt lider - firele de fundal nu pornesc in acest proces"),
+              flush=True)
+
+    if enable_backup_scheduler and scheduler_lock_fd:
         backup_mod.start_scheduler(data_dir, db_lock)
 
     def firm_conn(firm_id: int):
@@ -3404,9 +3437,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     def audit_view(ident):
         return jsonify(audit.entries(firm_conn(ident["firm_id"])))
 
-    if enable_trial_reminder_scheduler:
+    if enable_trial_reminder_scheduler and scheduler_lock_fd:
         # Dupa _trimite_email (mai sus in fisier) - fir-ul de fundal are
-        # nevoie de closure-ul ei, deja legat de app.logger si SMTP.
+        # nevoie de closure-ul ei, deja legat de app.logger si SMTP. Gatingul
+        # pe scheduler_lock_fd e explicat langa _is_scheduler_leader mai sus.
         remind_mod.start_scheduler(conn, db_lock, _trimite_email)
 
     app.portal_conn = conn  # exposed for tests/seeding
