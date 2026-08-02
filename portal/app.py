@@ -52,6 +52,7 @@ _TERMENI = _ROOT / "docs" / "termeni.html"
 _CONFIDENTIALITATE = _ROOT / "docs" / "confidentialitate.html"
 _COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
 _CONTACT = _ROOT / "docs" / "contact.html"
+_SITEMAP = _ROOT / "docs" / "sitemap.xml"
 _SPA = _ROOT / "web" / "index.html"
 
 _HINT_MODEL = ("Daca jurnalul nu provine din SAGA, alege in formular 'Alt "
@@ -454,6 +455,28 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     @app.get("/contact.html")
     def contact_page():
         return send_file(_CONTACT)
+
+    @app.get("/sitemap.xml")
+    def sitemap():
+        return send_file(_SITEMAP, mimetype="application/xml")
+
+    @app.get("/robots.txt")
+    def robots():
+        # Sitemap-ul si paginile publice au mereu domeniul de productie
+        # hardcodat (docs/sitemap.xml) - nu vrem niciodata ca Google sa
+        # indexeze testare/dev, indiferent pe ce domeniu ruleaza acest cod.
+        # Doar mediul productie confirmat explicit (ETVA_ENV) permite
+        # crawling; orice alt caz (testare, dev, necunoscut) blocheaza tot.
+        if pipeline.own_environment() == "productie":
+            corp = ("User-agent: *\n"
+                   "Allow: /\n"
+                   "Disallow: /master/\n"
+                   "Disallow: /panou/\n"
+                   "\n"
+                   "Sitemap: https://ereconciliere.ro/sitemap.xml\n")
+        else:
+            corp = "User-agent: *\nDisallow: /\n"
+        return Response(corp, mimetype="text/plain")
 
     def _anaf_lookup(cui: str) -> tuple[dict | None, str | None]:
         """Look up a CUI at ANAF. Returns (info, None) on success, or
