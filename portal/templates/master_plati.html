@@ -41,10 +41,11 @@ a.mic:hover { background:var(--paper); }
         <td>{{ p['creat_la'][:10] }}</td>
         <td>
           {% if p['stare'] == 'validata' %}<span class="chip ok">Validată</span>
+          {% elif p['stare'] == 'in_procesare' %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În procesare</span>
           {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
         </td>
         <td style="text-align:right">
-          {% if p['stare'] != 'validata' %}
+          {% if p['stare'] == 'in_asteptare' %}
           <form class="inline" method="post" action="/master/plati/{{ p['id'] }}/valideaza"
                 style="display:flex;gap:6px;align-items:center;justify-content:flex-end">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

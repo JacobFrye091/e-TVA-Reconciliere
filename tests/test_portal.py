@@ -63,11 +63,12 @@ def app(tmp_path, monkeypatch):
 
     if nume_pg:
         import psycopg
-        # Conexiunea proprie a aplicatiei (portal_conn) trebuie inchisa
-        # explicit - altfel DROP DATABASE esueaza cu "is being accessed by
-        # other users", fiindca acea conexiune ramane deschisa pana la
-        # garbage collection.
+        # Conexiunea de rezerva a aplicatiei (portal_conn) si toate
+        # conexiunile din pool-ul per-cerere trebuie inchise explicit -
+        # altfel DROP DATABASE esueaza cu "is being accessed by other
+        # users", fiindca raman deschise pana la garbage collection.
         a.portal_conn.close()
+        a.db_pool.close()
         with psycopg.connect(_TEST_PG_ADMIN_DSN, autocommit=True) as admin:
             admin.execute(f"DROP DATABASE IF EXISTS {nume_pg}")
 
@@ -3141,6 +3142,49 @@ def test_valideaza_plata_rejects_already_validated(app):
     r = c_master.post(f"/master/plati/{plata_id}/valideaza",
                       data={"judet": "Bucuresti"}, follow_redirects=True)
     assert "deja validata".encode() in r.data
+
+
+def test_postgres_pool_serves_concurrent_checkouts_without_blocking(app):
+    """Dovada directa a fix-ului de concurenta: inainte de introducerea
+    pool-ului, exista o singura conexiune Postgres pentru tot procesul,
+    serializata de un lock global de request - o operatie lenta (ex.
+    apelul FGO din valideaza_plata) bloca literalmente orice alta cerere.
+    Acum fiecare cerere primeste propria conexiune din pool, deci o
+    conexiune tinuta ocupata multa vreme de un thread nu mai intarzie o
+    a doua conexiune ceruta de alt thread."""
+    if os.environ.get("ETVA_TEST_PG") != "1":
+        pytest.skip("pool-ul de conexiuni exista doar pe backend-ul Postgres")
+    import threading
+    import time
+
+    pool = app.db_pool
+    slow_checked_out = threading.Event()
+
+    def _tine_conexiunea_ocupata():
+        conn = pool.getconn()
+        try:
+            slow_checked_out.set()
+            time.sleep(0.6)
+            conn.execute("SELECT 1")
+        finally:
+            pool.putconn(conn)
+
+    t = threading.Thread(target=_tine_conexiunea_ocupata)
+    t.start()
+    assert slow_checked_out.wait(timeout=2), "thread-ul lent nu a apucat conexiunea"
+
+    inceput = time.monotonic()
+    conn2 = pool.getconn()
+    try:
+        conn2.execute("SELECT 1")
+    finally:
+        pool.putconn(conn2)
+    durata = time.monotonic() - inceput
+
+    t.join(timeout=2)
+    assert durata < 0.3, (
+        f"a doua conexiune a asteptat {durata:.2f}s dupa cea lenta - "
+        "pool-ul serializeaza cererile in loc sa le izoleze")
 
 
 def test_alege_plan_shows_12_month_payment_history(app):
