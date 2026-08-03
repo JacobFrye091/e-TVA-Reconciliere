@@ -60,6 +60,13 @@ _HINT_MODEL = ("Daca jurnalul nu provine din SAGA, alege in formular 'Alt "
               "descarcat din aplicatie.")
 
 CONTACT_EMAIL_TO = os.environ.get("CONTACT_EMAIL_TO", "office@ereconciliere.ro")
+# Emailurile de verificare a contului sunt automate, fara asteptare de
+# raspuns - o adresa no-reply e mai potrivita decat office@ (care sugereaza
+# o cutie monitorizata). Doar cele doua emailuri din fluxul de verificare
+# (link initial + confirmare) folosesc asta; restul (contact, remindere,
+# notificari interne) raman pe SMTP_FROM/CONTACT_EMAIL_TO ca inainte.
+EMAIL_VERIFICARE_FROM = os.environ.get(
+    "SMTP_FROM_VERIFICARE", "no-reply@ereconciliere.ro")
 
 ANAF_OAUTH_CLIENT_ID = os.environ.get("ANAF_OAUTH_CLIENT_ID")
 ANAF_OAUTH_CLIENT_SECRET = os.environ.get("ANAF_OAUTH_CLIENT_SECRET")
@@ -823,7 +830,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             _trimite_email(
                 admin["email"], "Contul tau e-TVA Reconciliere e confirmat",
                 f"Salut,\n\nContul firmei {firm['name']} a fost confirmat cu "
-                f"succes. Te poti autentifica oricand pe platforma.")
+                f"succes. Te poti autentifica oricand pe platforma.",
+                remitent=EMAIL_VERIFICARE_FROM)
         _trimite_email(
             CONTACT_EMAIL_TO, "[e-TVA] Cont nou confirmat",
             f"Firma {firm['name']} (CUI {firm['cui']}) si-a confirmat adresa de email.")
@@ -2050,19 +2058,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     }
 
     def _trimite_email(destinatar: str, subiect: str, continut: str,
-                       reply_to: str | None = None) -> None:
+                       reply_to: str | None = None,
+                       remitent: str | None = None) -> None:
         """Trimite un email simplu prin SMTP, daca serverul are configurate
         variabilele de mediu SMTP_HOST/SMTP_USER/SMTP_PASSWORD - altfel nu
         face nimic. Apelantii care depind de livrare (verificarea de email)
         trebuie sa tina cont ca fara SMTP configurat, aceasta functie e un
-        no-op tacut - vezi EMAIL_VERIFICARE_OBLIGATORIE."""
+        no-op tacut - vezi EMAIL_VERIFICARE_OBLIGATORIE.
+
+        `remitent` suprascrie adresa From implicita (SMTP_FROM) - folosit de
+        fluxul de verificare a contului, care trimite de pe
+        EMAIL_VERIFICARE_FROM (no-reply)."""
         host = os.environ.get("SMTP_HOST")
         if not host:
             return
         try:
             msg = EmailMessage()
             msg["Subject"] = subiect
-            msg["From"] = os.environ.get("SMTP_FROM", CONTACT_EMAIL_TO)
+            msg["From"] = remitent or os.environ.get("SMTP_FROM", CONTACT_EMAIL_TO)
             msg["To"] = destinatar
             if reply_to:
                 msg["Reply-To"] = reply_to
@@ -2098,7 +2111,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             f"Salut,\n\nCa sa activezi contul firmei {nume_firma} pe "
             f"e-TVA Reconciliere, confirma adresa de email accesand linkul "
             f"de mai jos:\n\n{link}\n\nDaca nu ai creat tu acest cont, "
-            f"poti ignora acest mesaj.")
+            f"poti ignora acest mesaj.",
+            remitent=EMAIL_VERIFICARE_FROM)
 
     @app.post("/api/contact")
     @csrf.exempt
