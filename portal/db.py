@@ -581,6 +581,14 @@ def _migrate_seed_pachet_reconcilieri(conn: sqlite3.Connection) -> None:
     resetate la un restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
     n = conn.execute(
         "SELECT COUNT(*) AS n FROM pachete_reconcilieri").fetchone()["n"]
+    # commit imediat: randul e deja materializat in Python - fara asta,
+    # cand tabela nu e goala (cazul obisnuit dupa prima pornire), tranzactia
+    # implicita a SELECT-ului ramane deschisa pe conexiunea de rezerva a
+    # procesului pana la urmatoarea scriere pe ea, care poate sa nu vina
+    # niciodata (workerii non-lider n-o mai folosesc dupa pornire) - acelasi
+    # tipar care a blocat CREATE INDEX CONCURRENTLY, vezi commit-ul din
+    # trial_reminders.py.
+    conn.commit()
     if n:
         return
     p = _PACHET_RECONCILIERI_INITIAL
@@ -621,6 +629,8 @@ def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     resetate la valorile istorice la un restart."""
     n = conn.execute(
         "SELECT COUNT(*) AS n FROM planuri_facturare").fetchone()["n"]
+    # Vezi comentariul din _migrate_seed_pachet_reconcilieri mai sus - acelasi motiv.
+    conn.commit()
     if n:
         return
     acum = datetime.now(timezone.utc).isoformat()
@@ -733,6 +743,8 @@ def _migrate_seed_cota_tva(conn: sqlite3.Connection) -> None:
     goala, ca un master care a adaugat deja cote sa nu le vada resetate la
     un restart (acelasi pattern ca _migrate_seed_planuri_facturare)."""
     n = conn.execute("SELECT COUNT(*) AS n FROM setari_tva").fetchone()["n"]
+    # Vezi comentariul din _migrate_seed_pachet_reconcilieri mai sus - acelasi motiv.
+    conn.commit()
     if n:
         return
     conn.execute(
