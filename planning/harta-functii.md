@@ -6,6 +6,12 @@ fluxuri. Generat prin scanarea completa a codului la 2026-08-02 (branch
 `main`/`testare`/`dev`, commit `29ec879`). Actualizeaza-l manual daca
 schimbi semnificativ un flux - nu se regenereaza automat.
 
+Actualizat manual 2026-08-04 pe `main` (productie, go2): adaugata
+notificarea de finalizare contract (`invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL`,
+commit `4e02684`). Nota: `testare` are in plus doua rute noi in panoul
+`/master/pipeline` (promovare cod catre productie direct din VPS) care
+inca nu exista pe `main` - vezi harta din branch-ul `testare` pentru ele.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
@@ -579,7 +585,7 @@ folosite de mai multe handlere:
 | `_role_in_firm(user_id, firm_id)` | Rolul userului in firma |
 | `_contract_curent(firm_id)` | Cel mai recent contract al firmei |
 | `_regenereaza_pdf_contract(contract)` | Reconstruieste PDF-ul contractului dupa metoda de semnatura |
-| `_finalizeaza_contract_esemneaza` / `_actualizeaza_stare_esemneaza` | Polling + finalizare semnare eSemneaza.ro |
+| `_finalizeaza_contract_esemneaza` / `_actualizeaza_stare_esemneaza` | Polling + finalizare semnare eSemneaza.ro; `_finalizeaza_contract_esemneaza` trimite si un `_trimite_email` catre `invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` cand ambele parti au semnat |
 | `_istoric_utilizator` / `_istoric_la_xml` / `_istoric_master` | Agregare istoric audit pentru afisare/export XML |
 | `_anunt_activ()` | Anuntul activ curent (fereastra de timp) |
 | `_trimite_email` / `_trimite_email_contact` / `_trimite_email_verificare` | SMTP; no-op daca `SMTP_HOST` nelipsit |
@@ -839,6 +845,14 @@ reporneste procesul singur).
 `next_invoice_number(conn, serie)` (sub `db_lock`). `generate_pdf(invoice)`
 -> `pdf_fonts.asigura_fonturi()` -> `SimpleDocTemplate`/`Table`/`Paragraph`
 (reportlab) -> `_suma()`. Constanta `FURNIZOR` reutilizata de `contract.py`.
+
+Constanta `NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` (adaugata 2026-08-04) -
+destinatarul emailului trimis de `_finalizeaza_contract_esemneaza`
+(`portal/app.py`) cand un contract e semnat de ambele parti prin
+eSemneaza - separata intentionat de `FURNIZOR['email']` (folosit pentru
+cererea initiala de semnatura), ca sa nu depinda de cine verifica inboxul
+de office in momentul respectiv. **De verificat**: valoarea curenta pare
+o adresa personala, nu una de firma - posibil ramasa dintr-un test.
 
 ### 6.6 portal/contract.py
 
