@@ -1220,30 +1220,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
             (firm_id,)).fetchone()
 
-    def _regenereaza_pdf_contract(contract) -> bytes:
-        """PDF-ul contractului. Pentru eSemneaza, documentul semnat e un
-        artefact real primit de la un tert - servit exact cum a fost primit,
-        NU regenerat (spre deosebire de celelalte metode, unde nu exista
-        niciun fisier original de pastrat). Pentru semnatura cu mouse-ul (
-        metoda veche, pastrata doar pentru contracte semnate inainte de
-        eSemneaza) re-embedam PNG-ul desenat; pentru semnatura cu certificat
-        nu mai exista fisierul original incarcat, asa ca atasam in schimb
-        rezultatul verificarii facute la momentul semnarii."""
-        if (contract["metoda_semnatura"] == pdb.CONTRACT_METODA_ESEMNEAZA
-                and contract["esemneaza_document_pdf"]):
-            return bytes(contract["esemneaza_document_pdf"])
-        continut = contract_mod.genereaza_text_din_rand(contract)
-        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_MOUSE:
-            semnatura_img = (bytes(contract["semnatura_mouse_img"])
-                             if contract["semnatura_mouse_img"] else None)
-            return contract_mod.genereaza_pdf(continut, semnatura_img=semnatura_img)
-        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_CERTIFICAT:
-            detalii = json.loads(contract["semnatura_detalii"] or "{}")
-            nota = contract_mod.nota_verificare_certificat(
-                detalii, contract["semnat_la"])
-            return contract_mod.genereaza_pdf(continut, nota_semnatura=nota)
-        return contract_mod.genereaza_pdf(continut)
-
     def _finalizeaza_contract_esemneaza(contract, request_id: str):
         """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
         documentul final + certificatul primite de la eSemneaza, si ingheata
@@ -1364,7 +1340,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         contract = _contract_curent(active_firm_id)
         if contract is None:
             return redirect(url_for("vezi_contract"))
-        pdf_bytes = _regenereaza_pdf_contract(contract)
+        pdf_bytes = contract_mod.pdf_final(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
@@ -2785,7 +2761,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                 (contract_id,)).fetchone()
         if contract is None:
             return redirect(url_for("master_contracte"))
-        pdf_bytes = _regenereaza_pdf_contract(contract)
+        pdf_bytes = contract_mod.pdf_final(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
