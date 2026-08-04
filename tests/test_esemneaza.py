@@ -86,6 +86,44 @@ def test_create_sign_request_sends_expected_body(monkeypatch):
     assert field["required"] is True
 
 
+def test_create_sign_request_includes_subject_and_message_when_given(monkeypatch):
+    captured = {}
+
+    def handler(req):
+        captured["body"] = json.loads(req.data)
+        return json.dumps({"id": "req-2"}).encode()
+
+    _install_fake_urlopen(monkeypatch, handler)
+    esemneaza.create_sign_request(
+        "key-123", "contract-2__abc.pdf",
+        recipients=[{"email": "admin@exemplu.ro", "name": "Firma Exemplu SRL",
+                    "field_page": 1}],
+        subject="Contract nr. 2 - Firma Exemplu SRL",
+        message="Aveți de semnat un contract.")
+
+    body = captured["body"]
+    assert body["subject"] == "Contract nr. 2 - Firma Exemplu SRL"
+    assert body["message"] == "Aveți de semnat un contract."
+
+
+def test_create_sign_request_omits_subject_and_message_when_not_given(monkeypatch):
+    captured = {}
+
+    def handler(req):
+        captured["body"] = json.loads(req.data)
+        return json.dumps({"id": "req-2b"}).encode()
+
+    _install_fake_urlopen(monkeypatch, handler)
+    esemneaza.create_sign_request(
+        "key-123", "contract-2b.pdf",
+        recipients=[{"email": "admin@exemplu.ro", "name": "Firma Exemplu SRL",
+                    "field_page": 1}])
+
+    body = captured["body"]
+    assert "subject" not in body
+    assert "message" not in body
+
+
 def test_create_sign_request_with_extract_tags_omits_fields(monkeypatch):
     captured = {}
 

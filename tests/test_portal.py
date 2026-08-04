@@ -3727,6 +3727,12 @@ def test_trimite_contract_master_sends_prestator_first_sign_in_order_one_click(
     assert recipienti[1]["email"] == "admin321@exemplu.ro"
     assert kwargs["sign_in_order"] is True
     assert "one_click_sign" in recipienti[0].get("options", [])
+
+    numar = app.portal_conn.execute(
+        "SELECT numar FROM contracts WHERE firm_id=?", (firm_id,)).fetchone()["numar"]
+    assert kwargs["subject"] == f"Contract nr. {numar} - Firma Test SRL"
+    assert "e-TVA Reconciliere" in kwargs["message"]
+    assert "VML" in kwargs["message"]
     assert "one_click_sign" in recipienti[1].get("options", [])
 
 
