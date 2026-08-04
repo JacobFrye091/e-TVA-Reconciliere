@@ -6,17 +6,17 @@ fluxuri. Generat prin scanarea completa a codului la 2026-08-02 (branch
 `main`/`testare`/`dev`, commit `29ec879`). Actualizeaza-l manual daca
 schimbi semnificativ un flux - nu se regenereaza automat.
 
-Actualizat manual 2026-08-04 pe `main` (productie, go2): adaugata
-notificarea de finalizare contract (`invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL`,
-commit `4e02684`).
-
-Actualizat manual 2026-08-04 pe `testare` (serverul vechi): productia
-s-a mutat pe un VPS separat (go2) - adaugate in `/master/pipeline`,
-vizibile doar pe mediul `testare`, doua rute noi de promovare a codului
+Actualizat manual 2026-08-04: adaugata notificarea de finalizare contract
+(`invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL`) si, in `/master/pipeline`
+(vizibile doar pe mediul `testare`), doua rute noi de promovare a codului
 direct din panoul web (§3p, §6.4), fiindca pipeline-ul local existent
-(DEV/TESTARE/PROD alaturi) nu functioneaza de pe un VPS deployat. Nota:
-aceste doua rute inca nu exista pe `main` (branch-urile au divergat -
-vezi [[etva-capacitate-server]] pentru context).
+(DEV/TESTARE/PROD alaturi) nu functioneaza de pe un VPS deployat.
+
+Nota istorica: `main` si `testare` au divergat azi (acelasi fix de
+notificare aplicat separat pe doua checkout-uri, commit-uri diferite cu
+continut identic) - rezolvat printr-un merge `main` -> `testare`, urmat
+de promovarea rezultatului unificat inapoi pe `main` (vezi
+[[etva-capacitate-server]] pentru context complet).
 
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
