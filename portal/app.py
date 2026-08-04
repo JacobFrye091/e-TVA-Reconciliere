@@ -1290,6 +1290,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             (pdb.CONTRACT_STARE_SEMNAT, semnatura_detalii, acum, pdf_bytes,
              cert_bytes, xml_final, contract["id"]))
         conn.commit()
+        _trimite_email(
+            invoicing.FURNIZOR["email"],
+            f"Contract nr. {contract['numar']} semnat de ambele parti",
+            f"Contractul nr. {contract['numar']} ({contract['beneficiar_denumire']}, "
+            f"CUI {contract['beneficiar_cui']}) a fost semnat electronic de ambele "
+            "parti prin eSemneaza.ro si este acum activ.\n\n"
+            f"Detalii: {url_for('master_contracte', _external=True)}")
 
     def _actualizeaza_stare_esemneaza(contract):
         """Interogheaza starea reala la eSemneaza (sursa de adevar - vezi
