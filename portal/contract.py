@@ -311,19 +311,41 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
             # pentru aliniere si arata urat, in loc sa pastreze cele doua
             # blocuri separate vizual).
             stanga, dreapta = re.split(r"\s{2,}", bloc, maxsplit=1)
-            if tag_semnatura_esemneaza:
-                stanga += ' <font color="white">{{s:1}}</font>'
-                dreapta += ' <font color="white">{{s:2}}</font>'
             latime_coloana = (doc.width) / 2
+            randuri = [[Paragraph(stanga, body), Paragraph(dreapta, body)]]
+            stil_tabel = [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+            if tag_semnatura_esemneaza:
+                # Tag-urile stau pe un rand separat, cu text scurt si fix
+                # (nu lipite dupa denumirea PRESTATOR/BENEFICIAR, a carei
+                # lungime variaza) - un rand de tabel are inaltime uniforma
+                # pe toate coloanele (= cea mai inalta celula), deci ambele
+                # tag-uri ajung mereu la aceeasi inaltime sub nume, indiferent
+                # cat de lunga e denumirea vreuneia dintre parti sau daca se
+                # imparte pe doua linii. Inainte, tag-ul era lipit direct
+                # dupa nume in acelasi paragraf, iar eSemneaza plasa
+                # stampila de semnatura acolo unde cadea acel text in linia
+                # de reflow - inconsistent intre PRESTATOR si BENEFICIAR
+                # cand denumirile aveau lungimi diferite.
+                eticheta_semnatura = ParagraphStyle(
+                    "eticheta_semnatura", parent=body, textColor=_MUTED,
+                    fontSize=8.5)
+                randuri.append([
+                    Paragraph(
+                        'Semnătura PRESTATOR: <font color="white">{{s:1}}</font>',
+                        eticheta_semnatura),
+                    Paragraph(
+                        'Semnătura BENEFICIAR: <font color="white">{{s:2}}</font>',
+                        eticheta_semnatura),
+                ])
+                stil_tabel.append(("TOPPADDING", (0, 1), (-1, 1), 12 * mm))
             elems.append(Spacer(1, 4 * mm))
             elems.append(Table(
-                [[Paragraph(stanga, body), Paragraph(dreapta, body)]],
-                colWidths=[latime_coloana, latime_coloana],
-                style=TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ])))
+                randuri, colWidths=[latime_coloana, latime_coloana],
+                style=TableStyle(stil_tabel)))
         elif len(prima_linie) < 60 and prima_linie.isupper():
             elems.append(Paragraph(bloc.replace("\n", " "), articol))
         else:
