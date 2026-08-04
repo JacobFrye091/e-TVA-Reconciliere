@@ -105,12 +105,26 @@ def upload_document(api_key: str, pdf_bytes: bytes, filename: str) -> str:
 def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
                         sender_name: "str | None" = None,
                         sign_in_order: bool = False,
-                        extract_tags: bool = False) -> dict:
+                        extract_tags: bool = False,
+                        subject: "str | None" = None,
+                        message: "str | None" = None) -> dict:
     """Creeaza cererea de semnare. `recipients` e o lista - contractul
     acestei platforme are doi semnatari reali prin eSemneaza, in ordine:
     PRESTATORUL (master, semneaza primul) si BENEFICIARUL/firma client
     (semneaza al doilea), vezi portal/app.py::trimite_contract_master;
     ramane generica pentru orice alt numar/ordine de semnatari.
+
+    subject/message: subiectul si textul emailului de notificare trimis de
+    eSemneaza fiecarui semnatar (acelasi pentru toti destinatarii cererii -
+    API-ul nu are subject/message per destinatar). NEVERIFICAT inca live
+    (2026-08-04) - documentatia eSemneaza (esemneaza.stoplight.io) e o SPA,
+    inaccesibila din acest mediu; un test de validare impotriva /requests cu
+    fileName inexistent a intors eroare DOAR pe fileName, nu si pe subject/
+    message, semn ca sunt probabil campuri reale (un camp complet inventat,
+    testat separat, ar fi trebuit sa produca acelasi tip de eroare de
+    validare daca schema e stricta) - dar asta nu e o confirmare directa ca
+    apar corect in emailul primit. De verificat la urmatoarea trimitere
+    reala (vezi planning/).
 
     extract_tags=True (folosit de portal/app.py::semneaza_contract): PDF-ul
     are deja tag-ul invizibil `{{s:1}}` incorporat (vezi
@@ -144,6 +158,10 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
         body["extractTags"] = True
     if sender_name:
         body["senderName"] = sender_name
+    if subject:
+        body["subject"] = subject
+    if message:
+        body["message"] = message
     req = urllib.request.Request(
         f"{_BASE_URL}/requests", data=json.dumps(body).encode("utf-8"),
         method="POST",

@@ -2762,7 +2762,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                      "options": ["one_click_sign"]},
                 ],
                 sender_name="e-TVA Reconciliere", extract_tags=True,
-                sign_in_order=True)
+                sign_in_order=True,
+                subject=f"Contract nr. {numar} - {denumire}",
+                message="Aveți de semnat un contract pentru serviciile de "
+                       "acces la platforma e-TVA Reconciliere, oferite de "
+                       "platforma mea administrată de către VML.")
         except esemneaza.EsemneazaError as e:
             conn.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
             conn.commit()
