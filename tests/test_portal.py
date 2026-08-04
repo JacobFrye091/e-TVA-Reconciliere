@@ -3944,8 +3944,9 @@ def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certi
         "WHERE f.cui='RO305'").fetchone()
     assert row["stare"] == "semnat"
     assert row["metoda_semnatura"] == "certificat"
-    # Nicio ancora reala de incredere configurata (etva/trust_anchors/ e
-    # gol) - deci valid dar netrusted, exact ce ar trebui sa raporteze.
+    # Radacina sintetica de test nu se afla printre ancorele reale DigiSign
+    # din etva/trust_anchors/ - deci valid dar netrusted, exact ce ar
+    # trebui sa raporteze.
     assert row["semnatura_verificata"] == 0
     import json as _json
     detalii = _json.loads(row["semnatura_detalii"])
@@ -4332,6 +4333,64 @@ def test_finalizeaza_reziliere_rejects_ramburs_peste_maxim(app):
     row = app.portal_conn.execute(
         "SELECT stare FROM contracts WHERE id=?", (contract_id,)).fetchone()
     assert row["stare"] == "semnat"
+
+
+# ---------- verificare semnatura (master, independent de CONTRACTE_ACTIVE) ----------
+
+def test_verificare_semnatura_master_requires_master(app):
+    c = app.test_client()
+    r = c.get("/master/verificare-semnatura", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_verificare_semnatura_master_works_when_contracte_dezactivate(app, monkeypatch):
+    """Instrumentul e independent de CONTRACTE_ACTIVE - spre deosebire de
+    toate rutele /master/contracte/..., trebuie sa ramana accesibil chiar
+    cand contractele sunt puse pe pauza (valoarea implicita reala)."""
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "CONTRACTE_ACTIVE", False)
+    master = _creeaza_master(app)
+    r = master.get("/master/verificare-semnatura")
+    assert r.status_code == 200
+    assert "Verifică semnătura".encode() in r.data
+
+
+def test_verificare_semnatura_master_valid_dar_neincrezut(app, _semnatura_certificat):
+    """Semnatura sintetica din fixture e valida criptografic, dar radacina
+    ei de test nu se afla in etva/trust_anchors/ (unde stau acum ancorele
+    reale DigiSign) - deci trusted ramane False, exact ca la ramura
+    echivalenta din semneaza_contract."""
+    pdf_semnat, _root_pem = _semnatura_certificat
+    master = _creeaza_master(app)
+    r = master.post("/master/verificare-semnatura", data={
+        "fisier": (io.BytesIO(pdf_semnat), "semnat.pdf"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert "Semnatar Test SRL".encode() in r.data
+    assert "validă criptografic".encode() in r.data
+    assert "neverificată ca fiind de încredere".encode() in r.data
+
+
+def test_verificare_semnatura_master_rejects_unsigned_pdf(app):
+    from reportlab.pdfgen import canvas as _canvas
+    buf = io.BytesIO()
+    cv = _canvas.Canvas(buf)
+    cv.drawString(100, 750, "PDF fara nicio semnatura.")
+    cv.save()
+    master = _creeaza_master(app)
+    r = master.post("/master/verificare-semnatura", data={
+        "fisier": (io.BytesIO(buf.getvalue()), "nesemnat.pdf"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert "nicio semnatura electronica incorporata".encode() in r.data
+
+
+def test_verificare_semnatura_master_rejects_missing_file(app):
+    master = _creeaza_master(app)
+    r = master.post("/master/verificare-semnatura", data={},
+                    content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert "Incarca un fisier PDF semnat".encode() in r.data
 
 
 # ---------- CSRF ----------
