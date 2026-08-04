@@ -34,6 +34,14 @@ FURNIZOR = {
     "email": "office@ereconciliere.ro",
 }
 
+# Adresa care primeste o copie de notificare cand un contract e semnat de
+# ambele parti (vezi portal/app.py::_finalizeaza_contract_esemneaza) - separat
+# de FURNIZOR['email'], care ramane adresa oficiala catre care eSemneaza
+# trimite cererea INITIALA de semnat pentru partea PRESTATOR. Cerut explicit,
+# 2026-08-04: cererea de semnat merge la office@, dar copia de "gata semnat"
+# merge personal, ca sa nu depinda de cine verifica inbox-ul office@.
+NOTIFICARE_CONTRACT_FINALIZAT_EMAIL = "vasilescuandrei945@gmail.com"
+
 _INK = colors.HexColor("#17203a")
 _ACCENT = colors.HexColor("#9c3327")
 _MUTED = colors.HexColor("#5b6478")

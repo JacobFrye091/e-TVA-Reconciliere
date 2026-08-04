@@ -3932,6 +3932,57 @@ def test_webhook_esemneaza_finalizes_matching_contract(app, monkeypatch):
     assert row["stare"] == "semnat"
 
 
+def test_finalizare_contract_trimite_notificarea_la_adresa_personala_nu_la_office(
+        app, monkeypatch):
+    """Cererea INITIALA de semnat merge la invoicing.FURNIZOR['email']
+    (office@ereconciliere.ro, cerut explicit 2026-08-04) - dar copia de
+    notificare la finalizare merge separat, la
+    invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL (personal), ca sa nu
+    depinda de cine verifica inbox-ul office@."""
+    import smtplib as smtplib_mod
+    trimise = []
+
+    class _FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            pass
+
+        def send_message(self, msg):
+            trimise.append(msg)
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.setattr(smtplib_mod, "SMTP", _FakeSMTP)
+
+    c = app.test_client()
+    inregistreaza(c, cui="RO322", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO322'").fetchone()["id"]
+    _creeaza_si_trimite_contract_master(app, firm_id)
+
+    # _mock_esemneaza (autouse) raporteaza implicit ambii semnatari ca
+    # APPLIED - o singura vizualizare a paginii de contract a firmei
+    # declanseaza polling-ul care finalizeaza contractul si trimite email-ul.
+    r = c.get("/panou/contract")
+    assert r.status_code == 200
+
+    from portal.invoicing import FURNIZOR, NOTIFICARE_CONTRACT_FINALIZAT_EMAIL
+    assert any(msg["To"] == NOTIFICARE_CONTRACT_FINALIZAT_EMAIL for msg in trimise)
+    assert not any(msg["To"] == FURNIZOR["email"] for msg in trimise)
+    assert NOTIFICARE_CONTRACT_FINALIZAT_EMAIL != FURNIZOR["email"]
+
+
 def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certificat):
     pdf_semnat, _root_pem = _semnatura_certificat
     c = app.test_client()
