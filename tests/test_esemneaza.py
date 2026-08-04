@@ -102,8 +102,8 @@ def test_create_sign_request_includes_subject_and_message_when_given(monkeypatch
         message="Aveți de semnat un contract.")
 
     body = captured["body"]
-    assert body["subject"] == "Contract nr. 2 - Firma Exemplu SRL"
-    assert body["message"] == "Aveți de semnat un contract."
+    assert body["emailSubject"] == "Contract nr. 2 - Firma Exemplu SRL"
+    assert body["emailMessage"] == "Aveți de semnat un contract."
 
 
 def test_create_sign_request_omits_subject_and_message_when_not_given(monkeypatch):
@@ -120,8 +120,8 @@ def test_create_sign_request_omits_subject_and_message_when_not_given(monkeypatc
                     "field_page": 1}])
 
     body = captured["body"]
-    assert "subject" not in body
-    assert "message" not in body
+    assert "emailSubject" not in body
+    assert "emailMessage" not in body
 
 
 def test_create_sign_request_with_extract_tags_omits_fields(monkeypatch):
