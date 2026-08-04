@@ -36,6 +36,34 @@ pasii tehnici sunt deja scrisi si asteapta doar validare live:
 `/panou/anaf/autorizare` pentru #1, si populare `etva/trust_anchors/` cu
 certificatele radacina oficiale ale CA-ului ales pentru #2.
 
+**UPDATE 2026-08-04 (partial rezolvat pentru #2):** Andrei a obtinut un
+eToken de la DigiSign. Pe testare:
+
+- `etva/trust_anchors/` a fost populat cu cele 4 certificate DigiSign reale,
+  nu expirate, nu demo (descarcate oficial de la
+  `https://digisign.ro/tools/downloads/`, arhiva SFX WinRAR
+  `cert.zip`/`cert.exe`, extrasa cu `unrar`): `DigiSignRootCertificationAuthoritysha2.cer`,
+  `DigiSignQualifiedRootCAv2.cer` (cele doua radacini self-signed) +
+  `DigiSignQualifiedCAClass32017.crt`, `DigiSignQualifiedCASHA1Class32020.cer`
+  (intermediarele "Qualified" curent valide sub fiecare radacina). Excluse
+  intentionat: CA-urile DEMO (nu sunt reale) si CA-urile expirate
+  (`DigiSignEnterpriseCA` pana in 2024, `DigiSignQualifiedPublicCA`/`...sha2`
+  pana in 2021/2024).
+- Rута noua **`/master/verificare-semnatura`** (`portal/app.py`, langa
+  rutele `/master/contracte/...` dar **fara** gate pe `CONTRACTE_ACTIVE` -
+  ramane accesibila oricand pentru master), reutilizeaza direct
+  `verifica_semnatura_pdf` - upload PDF semnat, afiseaza valid/trusted/
+  semnatar/emitent, nu salveaza nimic. Template
+  `portal/templates/master_verificare_semnatura.html`, link din
+  `master.html`.
+- Ramane netratat: semnarea efectiva a contractului ca PRESTATOR cu acest
+  eToken nu e inca legata de fluxul real de creare a contractului
+  (`trimite_contract_master`/`etva/esemneaza.py:one_click_sign`) - deocamdata
+  doar instrumentul de verificare de mai sus e disponibil, ca sa se poata
+  testa ca trust anchor-ele + eToken-ul produc `trusted: true`. Legarea in
+  fluxul real ramane conditionata de reactivarea `CONTRACTE_ACTIVE` (decizie
+  de business separata, vezi §2.3).
+
 ---
 
 ## 2. Alte locuri ramase goale sau netratate (din trecerea prin harta)

@@ -105,12 +105,30 @@ def upload_document(api_key: str, pdf_bytes: bytes, filename: str) -> str:
 def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
                         sender_name: "str | None" = None,
                         sign_in_order: bool = False,
-                        extract_tags: bool = False) -> dict:
+                        extract_tags: bool = False,
+                        subject: "str | None" = None,
+                        message: "str | None" = None) -> dict:
     """Creeaza cererea de semnare. `recipients` e o lista - contractul
     acestei platforme are doi semnatari reali prin eSemneaza, in ordine:
     PRESTATORUL (master, semneaza primul) si BENEFICIARUL/firma client
     (semneaza al doilea), vezi portal/app.py::trimite_contract_master;
     ramane generica pentru orice alt numar/ordine de semnatari.
+
+    subject/message: subiectul si textul emailului de notificare trimis de
+    eSemneaza fiecarui semnatar (acelasi pentru toti destinatarii cererii -
+    API-ul nu are subject/message per destinatar), trimise catre API ca
+    `emailSubject`/`emailMessage`. Numele exacte NU sunt documentate
+    (esemneaza.stoplight.io e o SPA, inaccesibila din acest mediu) - gasite
+    empiric (2026-08-04) impotriva serviciului real, cu un fileName format
+    corect dar inexistent (trece validarea de format, nu ajunge sa
+    proceseze un fisier real): "subject"/"message" au dat direct 400 `"X" is
+    not allowed` (nume gresite); "emailSubject"/"emailMessage" au dat 500
+    Internal Server Error - un raspuns diferit, care inseamna ca cererea a
+    trecut de validarea de schema si a picat mai departe in logica lor
+    (motiv necunoscut, posibil chiar fileName-ul fals) - nu e o confirmare
+    100% ca apar corect in emailul primit de un destinatar real, doar cel
+    mai puternic semnal obtinut fara acces la documentatie. De reverificat
+    daca vreodata un semnatar raporteaza un subiect/text gresit.
 
     extract_tags=True (folosit de portal/app.py::semneaza_contract): PDF-ul
     are deja tag-ul invizibil `{{s:1}}` incorporat (vezi
@@ -144,6 +162,10 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
         body["extractTags"] = True
     if sender_name:
         body["senderName"] = sender_name
+    if subject:
+        body["emailSubject"] = subject
+    if message:
+        body["emailMessage"] = message
     req = urllib.request.Request(
         f"{_BASE_URL}/requests", data=json.dumps(body).encode("utf-8"),
         method="POST",

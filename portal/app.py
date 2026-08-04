@@ -1220,30 +1220,6 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
             (firm_id,)).fetchone()
 
-    def _regenereaza_pdf_contract(contract) -> bytes:
-        """PDF-ul contractului. Pentru eSemneaza, documentul semnat e un
-        artefact real primit de la un tert - servit exact cum a fost primit,
-        NU regenerat (spre deosebire de celelalte metode, unde nu exista
-        niciun fisier original de pastrat). Pentru semnatura cu mouse-ul (
-        metoda veche, pastrata doar pentru contracte semnate inainte de
-        eSemneaza) re-embedam PNG-ul desenat; pentru semnatura cu certificat
-        nu mai exista fisierul original incarcat, asa ca atasam in schimb
-        rezultatul verificarii facute la momentul semnarii."""
-        if (contract["metoda_semnatura"] == pdb.CONTRACT_METODA_ESEMNEAZA
-                and contract["esemneaza_document_pdf"]):
-            return bytes(contract["esemneaza_document_pdf"])
-        continut = contract_mod.genereaza_text_din_rand(contract)
-        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_MOUSE:
-            semnatura_img = (bytes(contract["semnatura_mouse_img"])
-                             if contract["semnatura_mouse_img"] else None)
-            return contract_mod.genereaza_pdf(continut, semnatura_img=semnatura_img)
-        if contract["metoda_semnatura"] == pdb.CONTRACT_METODA_CERTIFICAT:
-            detalii = json.loads(contract["semnatura_detalii"] or "{}")
-            nota = contract_mod.nota_verificare_certificat(
-                detalii, contract["semnat_la"])
-            return contract_mod.genereaza_pdf(continut, nota_semnatura=nota)
-        return contract_mod.genereaza_pdf(continut)
-
     def _finalizeaza_contract_esemneaza(contract, request_id: str):
         """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
         documentul final + certificatul primite de la eSemneaza, si ingheata
@@ -1290,6 +1266,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             (pdb.CONTRACT_STARE_SEMNAT, semnatura_detalii, acum, pdf_bytes,
              cert_bytes, xml_final, contract["id"]))
         conn.commit()
+        _trimite_email(
+            invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL,
+            f"Contract nr. {contract['numar']} semnat de ambele parti",
+            f"Contractul nr. {contract['numar']} ({contract['beneficiar_denumire']}, "
+            f"CUI {contract['beneficiar_cui']}) a fost semnat electronic de ambele "
+            "parti prin eSemneaza.ro si este acum activ.\n\n"
+            f"Detalii: {url_for('master_contracte', _external=True)}")
 
     def _actualizeaza_stare_esemneaza(contract):
         """Interogheaza starea reala la eSemneaza (sursa de adevar - vezi
@@ -1364,7 +1347,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         contract = _contract_curent(active_firm_id)
         if contract is None:
             return redirect(url_for("vezi_contract"))
-        pdf_bytes = _regenereaza_pdf_contract(contract)
+        pdf_bytes = contract_mod.pdf_final(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
@@ -2755,7 +2738,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                      "options": ["one_click_sign"]},
                 ],
                 sender_name="e-TVA Reconciliere", extract_tags=True,
-                sign_in_order=True)
+                sign_in_order=True,
+                subject=f"Contract nr. {numar} - {denumire}",
+                message="Aveți de semnat un contract pentru serviciile de "
+                       "acces la platforma e-TVA Reconciliere, oferite de "
+                       "platforma mea administrată de către VML.")
         except esemneaza.EsemneazaError as e:
             conn.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
             conn.commit()
@@ -2785,7 +2772,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                 (contract_id,)).fetchone()
         if contract is None:
             return redirect(url_for("master_contracte"))
-        pdf_bytes = _regenereaza_pdf_contract(contract)
+        pdf_bytes = contract_mod.pdf_final(contract)
         return Response(
             pdf_bytes, mimetype="application/pdf",
             headers={"Content-Disposition":
@@ -2825,6 +2812,32 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             bytes(contract["esemneaza_certificate_pdf"]), mimetype="application/pdf",
             headers={"Content-Disposition":
                     f"inline; filename=certificat-contract-{contract['numar']}.pdf"})
+
+    @app.route("/master/verificare-semnatura", methods=["GET", "POST"])
+    def verificare_semnatura_master():
+        """Instrument de testare/verificare pentru semnaturi electronice
+        calificate (ex. cele produse local cu un eToken conectat la
+        laptop-ul masterului) - independent de CONTRACTE_ACTIVE si de
+        tabela contracts, nu salveaza nimic. Vezi etva/digital_signature.py
+        pentru verificarea propriu-zisa si etva/trust_anchors/ pentru
+        ancorele de incredere reale."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if request.method == "GET":
+            return render_template("master_verificare_semnatura.html", user=user)
+        fisier = request.files.get("fisier")
+        if fisier is None or not fisier.filename:
+            return render_template(
+                "master_verificare_semnatura.html", user=user,
+                eroare="Incarca un fisier PDF semnat.")
+        try:
+            rezultat = digital_signature.verifica_semnatura_pdf(fisier.read())
+        except digital_signature.SignatureVerificationError as e:
+            return render_template(
+                "master_verificare_semnatura.html", user=user, eroare=str(e))
+        return render_template(
+            "master_verificare_semnatura.html", user=user, rezultat=rezultat)
 
     @app.post("/master/contracte/<int:contract_id>/reziliaza")
     def finalizeaza_reziliere_contract(contract_id):
@@ -2994,10 +3007,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if not pipeline.local_pipeline_available():
             # Un VPS deployat e un singur checkout independent - nu poate
             # (si nu ar trebui sa incerce sa) citeasca celelalte doua medii.
+            mediu = pipeline.own_environment()
+            stare_pull = stare_promovare = None
+            if mediu == "testare":
+                stare_pull = pipeline.read_status(
+                    data_dir, pipeline.PULL_TESTARE_STATUS_NAME)
+                stare_promovare = pipeline.read_status(
+                    data_dir, pipeline.PROMOTE_PRODUCTIE_STATUS_NAME)
             return render_template(
                 "pipeline.html", user=user, local_available=False,
-                labels=pipeline.ENVIRONMENTS, mediu=pipeline.own_environment(),
+                labels=pipeline.ENVIRONMENTS, mediu=mediu,
                 rulare=pipeline.running_vs_current(),
+                stare_pull=stare_pull, stare_promovare=stare_promovare,
                 eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
         envs = {env: pipeline.branch_info(env) for env in pipeline.ENVIRONMENTS}
         promotions = []
@@ -3042,6 +3063,44 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                  f"'git push origin {pipeline.ENVIRONMENTS[target]['branch']}' "
                  f"din folderul {target}.")
         return redirect(url_for("pipeline_dashboard", eroare=eroare))
+
+    @app.post("/master/pipeline/testare/actualizeaza")
+    def pull_testare():
+        """Butonul 'Actualizeaza testare din GitHub' - vezi
+        pipeline.request_testare_pull pentru mecanism (trigger + unitate
+        systemd root-owned, fiindca aplicatia nu are credentiale git)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() != "testare":
+            return redirect(url_for(
+                "pipeline_dashboard",
+                eroare="Actualizarea prin buton e disponibila doar pe mediul testare."))
+        _log_master_action(user, "pipeline.pull_testare_solicitat")
+        pipeline.request_testare_pull(data_dir)
+        return redirect(url_for(
+            "pipeline_dashboard",
+            mesaj="Actualizare solicitata - verifica rezultatul mai jos in cateva secunde."))
+
+    @app.post("/master/pipeline/productie/promoveaza")
+    def promote_to_productie():
+        """Butonul 'Promoveaza in productie' - vezi
+        pipeline.request_promote_to_productie pentru mecanism. NU aplica
+        schimbari de schema a bazei de date pe productie - ramane pas
+        manual, separat."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() != "testare":
+            return redirect(url_for(
+                "pipeline_dashboard",
+                eroare="Promovarea catre productie e disponibila doar din mediul testare."))
+        _log_master_action(user, "pipeline.promovare_productie_solicitata")
+        pipeline.request_promote_to_productie(data_dir)
+        return redirect(url_for(
+            "pipeline_dashboard",
+            mesaj="Promovare solicitata - poate dura cateva secunde. "
+                 "Verifica rezultatul mai jos (push GitHub + deploy pe productie)."))
 
     @app.post("/master/server/restart")
     def restart_server():

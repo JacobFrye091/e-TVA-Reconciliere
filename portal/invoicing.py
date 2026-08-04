@@ -11,6 +11,7 @@ memory / task list) - this module intentionally only produces the PDF and
 the numbered invoice record.
 """
 import io
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -33,6 +34,12 @@ FURNIZOR = {
     "email": "office@ereconciliere.ro",
 }
 
+# Adresa care primeste o copie de notificare cand un contract e semnat de
+# ambele parti (vezi portal/app.py::_finalizeaza_contract_esemneaza) - separat
+# de FURNIZOR['email'], care ramane adresa oficiala catre care eSemneaza
+# trimite cererea INITIALA de semnat pentru partea PRESTATOR.
+NOTIFICARE_CONTRACT_FINALIZAT_EMAIL = "office@ereconciliere.ro"
+
 _INK = colors.HexColor("#17203a")
 _ACCENT = colors.HexColor("#9c3327")
 _MUTED = colors.HexColor("#5b6478")
@@ -52,6 +59,54 @@ def next_invoice_number(conn, serie: str) -> int:
 
 def _suma(valoare: float) -> str:
     return f"{valoare:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def invoice_xml(row) -> bytes:
+    """Export XML propriu al facturii - evidenta interna (serie, numar,
+    sume, client), NU documentul oficial e-Factura (UBL) validat de ANAF.
+    Acela ramane la sursa (SPV/FGO) - FGO nu expune niciun endpoint care sa-l
+    intoarca (vezi factura/emitere: raspunsul are doar Link/LinkPlata, nu
+    XML), iar generarea lui e un buton manual, per-factura, doar in
+    dashboard-ul FGO (Facturile emise -> Generare e-Factura -> Descarca
+    e-Factura XML) - imposibil de automatizat din partea noastra. Acelasi
+    tipar ca date_contract_xml din contract.py."""
+    radacina = ET.Element("factura", serie=row["serie"], numar=str(row["numar"]))
+    ET.SubElement(radacina, "stare").text = row["stare"]
+    ET.SubElement(radacina, "data_emiterii").text = row["data_emiterii"]
+    if row["data_scadentei"]:
+        ET.SubElement(radacina, "data_scadentei").text = row["data_scadentei"]
+    if row["perioada_inceput"]:
+        perioada = ET.SubElement(radacina, "perioada")
+        ET.SubElement(perioada, "inceput").text = row["perioada_inceput"]
+        ET.SubElement(perioada, "sfarsit").text = row["perioada_sfarsit"]
+    ET.SubElement(radacina, "descriere").text = row["descriere"]
+
+    furnizor = ET.SubElement(radacina, "furnizor")
+    ET.SubElement(furnizor, "nume").text = FURNIZOR["nume"]
+    ET.SubElement(furnizor, "cui").text = FURNIZOR["cui"]
+    ET.SubElement(furnizor, "reg_com").text = FURNIZOR["reg_com"]
+    ET.SubElement(furnizor, "adresa").text = FURNIZOR["adresa"]
+
+    client = ET.SubElement(radacina, "client")
+    ET.SubElement(client, "nume").text = row["firm_name"]
+    ET.SubElement(client, "cui").text = row["firm_cui"]
+
+    sume = ET.SubElement(radacina, "sume", moneda=row["moneda"])
+    ET.SubElement(sume, "valoare_neta").text = f"{row['valoare_neta']:.2f}"
+    ET.SubElement(sume, "cota_tva").text = f"{row['cota_tva']:.2f}"
+    ET.SubElement(sume, "valoare_tva").text = f"{row['valoare_tva']:.2f}"
+    ET.SubElement(sume, "valoare_totala").text = f"{row['valoare_totala']:.2f}"
+
+    if row["fgo_serie"] or row["fgo_numar"] or row["fgo_link_pdf"]:
+        fgo = ET.SubElement(radacina, "fgo")
+        if row["fgo_serie"]:
+            ET.SubElement(fgo, "serie").text = row["fgo_serie"]
+        if row["fgo_numar"]:
+            ET.SubElement(fgo, "numar").text = row["fgo_numar"]
+        if row["fgo_link_pdf"]:
+            ET.SubElement(fgo, "link_pdf").text = row["fgo_link_pdf"]
+
+    return ET.tostring(radacina, encoding="utf-8", xml_declaration=True)
 
 
 def generate_pdf(invoice: dict) -> bytes:

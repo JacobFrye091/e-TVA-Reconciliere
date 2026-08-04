@@ -6,17 +6,18 @@ fluxuri. Generat prin scanarea completa a codului la 2026-08-02 (branch
 `main`/`testare`/`dev`, commit `29ec879`). Actualizeaza-l manual daca
 schimbi semnificativ un flux - nu se regenereaza automat.
 
-Nota 2026-08-04: `main` (productie, go2) si `testare` au primit azi doua
-schimbari care **inca nu exista pe acest branch (`dev`)**:
-1. `invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` - email separat pentru
-   notificarea de finalizare contract (`main` + `testare`).
-2. Doua rute noi in `/master/pipeline` (`pull_testare`,
-   `promote_to_productie`) - promovare cod direct din panoul web,
-   necesare fiindca productia s-a mutat pe un VPS separat (doar
-   `testare`).
-Branch-urile `dev`/`testare`/`main` au divergat intre ele (fiecare are
-commit-uri proprii pe care celelalte nu le au) - de rezolvat manual
-(merge/rebase) inainte de urmatoarea promovare intre ele.
+Actualizat manual 2026-08-04: adaugata notificarea de finalizare contract
+(`invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL`) si, in `/master/pipeline`
+(vizibile doar pe mediul `testare`), doua rute noi de promovare a codului
+direct din panoul web (§3p, §6.4), fiindca pipeline-ul local existent
+(DEV/TESTARE/PROD alaturi) nu functioneaza de pe un VPS deployat.
+
+Nota istorica: `dev`, `main` si `testare` au divergat azi (acelasi fix
+aplicat separat pe checkout-uri diferite, commit-uri diferite cu continut
+identic) - rezolvat prin doua merge-uri succesive (`main` -> `testare`,
+apoi `testare` -> `dev`), fiecare urmat de promovarea rezultatului
+unificat mai departe (vezi [[etva-capacitate-server]] pentru context
+complet).
 
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
@@ -479,6 +480,8 @@ trimite_contract_master: firms -> ultimul contract -> valideaza form ->
 |---|---|---|
 | GET | `/master/pipeline` | `pipeline_dashboard` |
 | POST | `/master/pipeline/promoveaza` | `promote_environment` |
+| POST | `/master/pipeline/testare/actualizeaza` | `pull_testare` |
+| POST | `/master/pipeline/productie/promoveaza` | `promote_to_productie` |
 | POST | `/master/server/restart` | `restart_server` |
 | POST | `/master/backup-onedrive` | `master_backup_onedrive` |
 
@@ -487,9 +490,31 @@ pipeline_dashboard: pipeline.local_pipeline_available() -> daca True:
   per env pipeline.branch_info(env) -> per promotie posibila
   pipeline.ahead_count + pipeline.can_promote -> render_template(istoric=
   pipeline.history(conn))
+  daca False (VPS deployat) si mediu=='testare': citeste in plus
+  pipeline.read_status pt. PULL_TESTARE_STATUS_NAME si
+  PROMOTE_PRODUCTIE_STATUS_NAME, afisate in cele doua carduri noi
 
 promote_environment: pipeline.promote(source, target) [poate arunca
   PipelineError] -> pipeline.log_promotion(...) -> redirect
+
+pull_testare (doar pe mediul testare): verifica pipeline.own_environment()
+  -> pipeline.request_testare_pull(data_dir) [scrie trigger file] ->
+  redirect. Executia reala e in afara procesului Flask - vezi
+  /usr/local/sbin/etva-testare-pull.sh (unitate systemd .path root-owned,
+  aplicatia n-are credentiale git): verifica checkout curat -> git pull
+  --ff-only origin testare -> pip install -> systemctl restart
+  etva-testare -> scrie status.
+
+promote_to_productie (doar pe mediul testare): verifica
+  pipeline.own_environment() -> pipeline.request_promote_to_productie(data_dir)
+  [scrie trigger file] -> redirect. Executia reala:
+  /usr/local/sbin/etva-promoveaza-productie.sh (root-owned): verifica
+  checkout curat -> verifica fast-forward fata de origin/main (foloseste
+  FETCH_HEAD, nu origin/main - checkout-ul testare urmareste doar
+  branch-ul lui) -> git push origin HEAD:main -> SSH pe go2 (productie):
+  git pull --ff-only origin main + pip install + systemctl restart
+  etva-productie -> scrie status. NU aplica schimbari de schema DB -
+  ramane pas manual, separat (decizie explicita).
 ```
 
 ### 3q. Product API - session-based (folosit de SPA)
@@ -591,7 +616,7 @@ folosite de mai multe handlere:
 | `_role_in_firm(user_id, firm_id)` | Rolul userului in firma |
 | `_contract_curent(firm_id)` | Cel mai recent contract al firmei |
 | `_regenereaza_pdf_contract(contract)` | Reconstruieste PDF-ul contractului dupa metoda de semnatura |
-| `_finalizeaza_contract_esemneaza` / `_actualizeaza_stare_esemneaza` | Polling + finalizare semnare eSemneaza.ro |
+| `_finalizeaza_contract_esemneaza` / `_actualizeaza_stare_esemneaza` | Polling + finalizare semnare eSemneaza.ro; `_finalizeaza_contract_esemneaza` trimite si un `_trimite_email` catre `invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` cand ambele parti au semnat |
 | `_istoric_utilizator` / `_istoric_la_xml` / `_istoric_master` | Agregare istoric audit pentru afisare/export XML |
 | `_anunt_activ()` | Anuntul activ curent (fereastra de timp) |
 | `_trimite_email` / `_trimite_email_contact` / `_trimite_email_verificare` | SMTP; no-op daca `SMTP_HOST` nelipsit |
@@ -846,11 +871,37 @@ log_promotion(conn, source, target, commit, username) -> INSERT
 pe care un unit systemd extern il asteapta pentru restart efectiv (nu
 reporneste procesul singur).
 
+**Adaugat 2026-08-04** (doar pe `testare` - productia s-a mutat pe un VPS
+separat, go2, nu mai e un worktree local; vezi §3p pentru rutele care le
+folosesc):
+
+```
+request_testare_pull(data_dir) - scrie fisier trigger PULL_TESTARE_TRIGGER_NAME
+request_promote_to_productie(data_dir) - scrie fisier trigger PROMOTE_PRODUCTIE_TRIGGER_NAME
+read_status(data_dir, filename) -> parseaza "stare|moment ISO|mesaj",
+  scris de scripturile root-owned de mai sus (acelasi format ca
+  backup-onedrive.status) - None daca fisierul nu exista/e corupt
+```
+
+Ambele trigger-e sunt vazute de unitati systemd `.path` root-owned
+(aplicatia ruleaza fara privilegii, fara credentiale git) - vezi
+scripturile `/usr/local/sbin/etva-testare-pull.sh` si
+`/usr/local/sbin/etva-promoveaza-productie.sh`, nu doar cod Python.
+
 ### 6.5 portal/invoicing.py
 
 `next_invoice_number(conn, serie)` (sub `db_lock`). `generate_pdf(invoice)`
 -> `pdf_fonts.asigura_fonturi()` -> `SimpleDocTemplate`/`Table`/`Paragraph`
 (reportlab) -> `_suma()`. Constanta `FURNIZOR` reutilizata de `contract.py`.
+
+Constanta `NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` (adaugata 2026-08-04,
+corectata tot atunci) - destinatarul emailului trimis de
+`_finalizeaza_contract_esemneaza` (`portal/app.py`) cand un contract e
+semnat de ambele parti prin eSemneaza. E o constanta separata de
+`FURNIZOR['email']` (folosit pentru cererea initiala de semnatura), dar
+azi ambele au aceeasi valoare (`office@ereconciliere.ro`) - separarea
+structurala ramane utila daca se decide vreodata o adresa diferita pentru
+notificarea de finalizare.
 
 ### 6.6 portal/contract.py
 

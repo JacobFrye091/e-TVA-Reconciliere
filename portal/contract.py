@@ -17,6 +17,7 @@ schimbe la fiecare vizualizare); un contract nou trebuie generat explicit
 daca firma isi schimba ciclul de facturare, la fel ca inainte.
 """
 import io
+import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -29,7 +30,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Tabl
 
 from etva import anaf_cui
 from portal import pdf_fonts
-from portal.db import CONTRACT_RAMBURS_MAX_PROCENT
+from portal.db import (
+    CONTRACT_RAMBURS_MAX_PROCENT, CONTRACT_METODA_CERTIFICAT,
+    CONTRACT_METODA_ESEMNEAZA, CONTRACT_METODA_MOUSE)
 from portal.invoicing import FURNIZOR
 
 _ETICHETE_CICLU = {"lunar": "lunar", "6luni": "la 6 luni", "an": "anual"}
@@ -222,6 +225,30 @@ def date_contract_xml(row) -> bytes:
     return ET.tostring(radacina, encoding="utf-8", xml_declaration=True)
 
 
+def pdf_final(contract) -> bytes:
+    """PDF-ul contractului. Pentru eSemneaza, documentul semnat e un
+    artefact real primit de la un tert - servit exact cum a fost primit,
+    NU regenerat (spre deosebire de celelalte metode, unde nu exista
+    niciun fisier original de pastrat). Pentru semnatura cu mouse-ul (
+    metoda veche, pastrata doar pentru contracte semnate inainte de
+    eSemneaza) re-embedam PNG-ul desenat; pentru semnatura cu certificat
+    nu mai exista fisierul original incarcat, asa ca atasam in schimb
+    rezultatul verificarii facute la momentul semnarii."""
+    if (contract["metoda_semnatura"] == CONTRACT_METODA_ESEMNEAZA
+            and contract["esemneaza_document_pdf"]):
+        return bytes(contract["esemneaza_document_pdf"])
+    continut = genereaza_text_din_rand(contract)
+    if contract["metoda_semnatura"] == CONTRACT_METODA_MOUSE:
+        semnatura_img = (bytes(contract["semnatura_mouse_img"])
+                         if contract["semnatura_mouse_img"] else None)
+        return genereaza_pdf(continut, semnatura_img=semnatura_img)
+    if contract["metoda_semnatura"] == CONTRACT_METODA_CERTIFICAT:
+        detalii = json.loads(contract["semnatura_detalii"] or "{}")
+        nota = nota_verificare_certificat(detalii, contract["semnat_la"])
+        return genereaza_pdf(continut, nota_semnatura=nota)
+    return genereaza_pdf(continut)
+
+
 def nota_verificare_certificat(semnatura_detalii: dict, semnat_la: str) -> str:
     """Text care inlocuieste, in PDF-ul regenerat, fisierul semnat original
     incarcat de beneficiar - acela nu mai e pastrat pe server (fisier mare,
@@ -284,19 +311,46 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
             # pentru aliniere si arata urat, in loc sa pastreze cele doua
             # blocuri separate vizual).
             stanga, dreapta = re.split(r"\s{2,}", bloc, maxsplit=1)
-            if tag_semnatura_esemneaza:
-                stanga += ' <font color="white">{{s:1}}</font>'
-                dreapta += ' <font color="white">{{s:2}}</font>'
             latime_coloana = (doc.width) / 2
+            randuri = [[Paragraph(stanga, body), Paragraph(dreapta, body)]]
+            stil_tabel = [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+            if tag_semnatura_esemneaza:
+                # Eticheta "Semnatura X:" si tag-ul invizibil stau pe randuri
+                # SEPARATE de tabel (nu doar pe linii diferite in acelasi
+                # Paragraph) - eSemneaza plaseaza stampila de semnatura
+                # centrata pe pozitia tag-ului, iar stampila e mai inalta
+                # decat o linie de text; daca tag-ul ar fi doar cu un
+                # <br/> sub eticheta, in acelasi Paragraph, stampila tot ar
+                # acoperi eticheta de deasupra (confirmat vizual live,
+                # 2026-08-04 - stampila PRESTATOR acoperea "...TATOR:" din
+                # eticheta). Un rand de tabel separat, cu TOPPADDING propriu,
+                # da un gol vertical real intre eticheta si tag - suficient
+                # cat sa incapa stampila fara sa acopere textul de deasupra.
+                # Randul cu tag-ul are inaltime uniforma pe ambele coloane
+                # (= cea mai inalta celula), deci PRESTATOR si BENEFICIAR
+                # ajung mereu la aceeasi inaltime, indiferent de lungimea
+                # denumirilor din randul de mai sus.
+                eticheta_semnatura = ParagraphStyle(
+                    "eticheta_semnatura", parent=body, textColor=_MUTED,
+                    fontSize=8.5)
+                randuri.append([
+                    Paragraph("Semnătura PRESTATOR:", eticheta_semnatura),
+                    Paragraph("Semnătura BENEFICIAR:", eticheta_semnatura),
+                ])
+                randuri.append([
+                    Paragraph('<font color="white">{{s:1}}</font>', eticheta_semnatura),
+                    Paragraph('<font color="white">{{s:2}}</font>', eticheta_semnatura),
+                ])
+                stil_tabel.append(("TOPPADDING", (0, 1), (-1, 1), 12 * mm))
+                stil_tabel.append(("TOPPADDING", (0, 2), (-1, 2), 20 * mm))
             elems.append(Spacer(1, 4 * mm))
             elems.append(Table(
-                [[Paragraph(stanga, body), Paragraph(dreapta, body)]],
-                colWidths=[latime_coloana, latime_coloana],
-                style=TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ])))
+                randuri, colWidths=[latime_coloana, latime_coloana],
+                style=TableStyle(stil_tabel)))
         elif len(prima_linie) < 60 and prima_linie.isupper():
             elems.append(Paragraph(bloc.replace("\n", " "), articol))
         else:

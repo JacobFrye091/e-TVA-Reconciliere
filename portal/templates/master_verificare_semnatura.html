@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titlu %}Verificare semnătură — e-TVA Reconciliere{% endblock %}
+{% block continut %}
+<main class="ingust">
+  <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
+    <h2>Verificare semnătură electronică</h2>
+    <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
+       href="/master">&larr; Înapoi la panoul master</a>
+  </div>
+
+  <div class="card">
+    <p class="sub">Încarcă un PDF deja semnat local (ex. cu un eToken, prin
+      soft-ul furnizorului de certificat) ca să verifici semnătura încorporată.
+      Nu se salvează nimic — e doar un instrument de testare, independent de
+      fluxul de contracte.</p>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="file" name="fisier" accept=".pdf" required>
+      <button class="btn-lat" type="submit" style="margin-top:10px">Verifică semnătura</button>
+    </form>
+  </div>
+
+  {% if eroare %}
+  <div class="card"><p class="eroare" style="margin:0">{{ eroare }}</p></div>
+  {% endif %}
+
+  {% if rezultat %}
+  <div class="card">
+    <p class="sub" style="color:{{ 'var(--ok)' if rezultat.valid else 'var(--danger)' }};margin:0 0 8px">
+      Semnătură {{ 'validă' if rezultat.valid else 'invalidă' }} criptografic ·
+      {{ 'de încredere' if rezultat.trusted else 'neverificată ca fiind de încredere' }}
+    </p>
+    <table>
+      <tr><td>Semnatar</td><td>{{ rezultat.semnatar or '—' }}</td></tr>
+      <tr><td>Certificat emitent</td><td>{{ rezultat.certificat_emitent or '—' }}</td></tr>
+      <tr><td>Valabil de la</td><td>{{ rezultat.valabil_de_la[:10] if rezultat.valabil_de_la else '—' }}</td></tr>
+      <tr><td>Valabil până la</td><td>{{ rezultat.valabil_pana_la[:10] if rezultat.valabil_pana_la else '—' }}</td></tr>
+    </table>
+    {% if rezultat.eroare %}
+    <p class="nota" style="margin-top:8px">{{ rezultat.eroare }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

@@ -19,6 +19,43 @@
       </tr>
     </table>
   </div>
+
+  {% if mediu == 'testare' %}
+  <div class="card">
+    <h2>Actualizeaza testare din GitHub</h2>
+    <p class="sub">Aduce ultimul commit de pe branch-ul <code>testare</code> din GitHub
+      si reporneste acest server. Foloseste asta dupa ce ai facut push la modificari
+      din dezvoltarea locala catre branch-ul <code>testare</code>.</p>
+    {% if stare_pull %}
+    <p{% if stare_pull['stare']=='ok' %} style="color:var(--ok); font-weight:600"{% else %} class="eroare"{% endif %}>
+      [{{ stare_pull['moment'] }}] {{ stare_pull['mesaj'] }}
+    </p>
+    {% endif %}
+    <form method="post" action="/master/pipeline/testare/actualizeaza"
+          onsubmit="return confirm('Aduci ultimele modificari din GitHub (branch testare) si repornesti serverul de testare?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Actualizeaza testare din GitHub</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Promoveaza in productie</h2>
+    <p class="sub">Trimite commit-ul curent de pe <code>testare</code> catre branch-ul
+      <code>main</code> pe GitHub, apoi aduce modificarea si reporneste serverul de
+      productie (VPS separat). Schimbarile de schema a bazei de date <b>nu</b> se
+      aplica automat - ruleaza-le manual pe productie, separat, cu grija.</p>
+    {% if stare_promovare %}
+    <p{% if stare_promovare['stare']=='ok' %} style="color:var(--ok); font-weight:600"{% else %} class="eroare"{% endif %}>
+      [{{ stare_promovare['moment'] }}] {{ stare_promovare['mesaj'] }}
+    </p>
+    {% endif %}
+    <form method="post" action="/master/pipeline/productie/promoveaza"
+          onsubmit="return confirm('Promovezi testare -> productie? Push pe GitHub (main) + deploy automat pe serverul de productie. Schimbarile de schema DB NU se aplica automat.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Promoveaza in productie</button>
+    </form>
+  </div>
+  {% endif %}
   {% else %}
   <div class="card">
     <h2>Pipeline de versiuni</h2>
