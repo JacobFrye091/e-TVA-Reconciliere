@@ -319,29 +319,34 @@ def genereaza_pdf(continut: str, semnatura_img: bytes | None = None,
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ]
             if tag_semnatura_esemneaza:
-                # Tag-urile stau pe un rand separat, cu text scurt si fix
-                # (nu lipite dupa denumirea PRESTATOR/BENEFICIAR, a carei
-                # lungime variaza) - un rand de tabel are inaltime uniforma
-                # pe toate coloanele (= cea mai inalta celula), deci ambele
-                # tag-uri ajung mereu la aceeasi inaltime sub nume, indiferent
-                # cat de lunga e denumirea vreuneia dintre parti sau daca se
-                # imparte pe doua linii. Inainte, tag-ul era lipit direct
-                # dupa nume in acelasi paragraf, iar eSemneaza plasa
-                # stampila de semnatura acolo unde cadea acel text in linia
-                # de reflow - inconsistent intre PRESTATOR si BENEFICIAR
-                # cand denumirile aveau lungimi diferite.
+                # Eticheta "Semnatura X:" si tag-ul invizibil stau pe randuri
+                # SEPARATE de tabel (nu doar pe linii diferite in acelasi
+                # Paragraph) - eSemneaza plaseaza stampila de semnatura
+                # centrata pe pozitia tag-ului, iar stampila e mai inalta
+                # decat o linie de text; daca tag-ul ar fi doar cu un
+                # <br/> sub eticheta, in acelasi Paragraph, stampila tot ar
+                # acoperi eticheta de deasupra (confirmat vizual live,
+                # 2026-08-04 - stampila PRESTATOR acoperea "...TATOR:" din
+                # eticheta). Un rand de tabel separat, cu TOPPADDING propriu,
+                # da un gol vertical real intre eticheta si tag - suficient
+                # cat sa incapa stampila fara sa acopere textul de deasupra.
+                # Randul cu tag-ul are inaltime uniforma pe ambele coloane
+                # (= cea mai inalta celula), deci PRESTATOR si BENEFICIAR
+                # ajung mereu la aceeasi inaltime, indiferent de lungimea
+                # denumirilor din randul de mai sus.
                 eticheta_semnatura = ParagraphStyle(
                     "eticheta_semnatura", parent=body, textColor=_MUTED,
                     fontSize=8.5)
                 randuri.append([
-                    Paragraph(
-                        'Semnătura PRESTATOR: <font color="white">{{s:1}}</font>',
-                        eticheta_semnatura),
-                    Paragraph(
-                        'Semnătura BENEFICIAR: <font color="white">{{s:2}}</font>',
-                        eticheta_semnatura),
+                    Paragraph("Semnătura PRESTATOR:", eticheta_semnatura),
+                    Paragraph("Semnătura BENEFICIAR:", eticheta_semnatura),
+                ])
+                randuri.append([
+                    Paragraph('<font color="white">{{s:1}}</font>', eticheta_semnatura),
+                    Paragraph('<font color="white">{{s:2}}</font>', eticheta_semnatura),
                 ])
                 stil_tabel.append(("TOPPADDING", (0, 1), (-1, 1), 12 * mm))
+                stil_tabel.append(("TOPPADDING", (0, 2), (-1, 2), 20 * mm))
             elems.append(Spacer(1, 4 * mm))
             elems.append(Table(
                 randuri, colWidths=[latime_coloana, latime_coloana],
