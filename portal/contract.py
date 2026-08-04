@@ -17,6 +17,7 @@ schimbe la fiecare vizualizare); un contract nou trebuie generat explicit
 daca firma isi schimba ciclul de facturare, la fel ca inainte.
 """
 import io
+import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -29,7 +30,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Tabl
 
 from etva import anaf_cui
 from portal import pdf_fonts
-from portal.db import CONTRACT_RAMBURS_MAX_PROCENT
+from portal.db import (
+    CONTRACT_RAMBURS_MAX_PROCENT, CONTRACT_METODA_CERTIFICAT,
+    CONTRACT_METODA_ESEMNEAZA, CONTRACT_METODA_MOUSE)
 from portal.invoicing import FURNIZOR
 
 _ETICHETE_CICLU = {"lunar": "lunar", "6luni": "la 6 luni", "an": "anual"}
@@ -220,6 +223,30 @@ def date_contract_xml(row) -> bytes:
             if row["ramburs_procent"] is not None else "")
 
     return ET.tostring(radacina, encoding="utf-8", xml_declaration=True)
+
+
+def pdf_final(contract) -> bytes:
+    """PDF-ul contractului. Pentru eSemneaza, documentul semnat e un
+    artefact real primit de la un tert - servit exact cum a fost primit,
+    NU regenerat (spre deosebire de celelalte metode, unde nu exista
+    niciun fisier original de pastrat). Pentru semnatura cu mouse-ul (
+    metoda veche, pastrata doar pentru contracte semnate inainte de
+    eSemneaza) re-embedam PNG-ul desenat; pentru semnatura cu certificat
+    nu mai exista fisierul original incarcat, asa ca atasam in schimb
+    rezultatul verificarii facute la momentul semnarii."""
+    if (contract["metoda_semnatura"] == CONTRACT_METODA_ESEMNEAZA
+            and contract["esemneaza_document_pdf"]):
+        return bytes(contract["esemneaza_document_pdf"])
+    continut = genereaza_text_din_rand(contract)
+    if contract["metoda_semnatura"] == CONTRACT_METODA_MOUSE:
+        semnatura_img = (bytes(contract["semnatura_mouse_img"])
+                         if contract["semnatura_mouse_img"] else None)
+        return genereaza_pdf(continut, semnatura_img=semnatura_img)
+    if contract["metoda_semnatura"] == CONTRACT_METODA_CERTIFICAT:
+        detalii = json.loads(contract["semnatura_detalii"] or "{}")
+        nota = nota_verificare_certificat(detalii, contract["semnat_la"])
+        return genereaza_pdf(continut, nota_semnatura=nota)
+    return genereaza_pdf(continut)
 
 
 def nota_verificare_certificat(semnatura_detalii: dict, semnat_la: str) -> str:
