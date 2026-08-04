@@ -2826,6 +2826,32 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             headers={"Content-Disposition":
                     f"inline; filename=certificat-contract-{contract['numar']}.pdf"})
 
+    @app.route("/master/verificare-semnatura", methods=["GET", "POST"])
+    def verificare_semnatura_master():
+        """Instrument de testare/verificare pentru semnaturi electronice
+        calificate (ex. cele produse local cu un eToken conectat la
+        laptop-ul masterului) - independent de CONTRACTE_ACTIVE si de
+        tabela contracts, nu salveaza nimic. Vezi etva/digital_signature.py
+        pentru verificarea propriu-zisa si etva/trust_anchors/ pentru
+        ancorele de incredere reale."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if request.method == "GET":
+            return render_template("master_verificare_semnatura.html", user=user)
+        fisier = request.files.get("fisier")
+        if fisier is None or not fisier.filename:
+            return render_template(
+                "master_verificare_semnatura.html", user=user,
+                eroare="Incarca un fisier PDF semnat.")
+        try:
+            rezultat = digital_signature.verifica_semnatura_pdf(fisier.read())
+        except digital_signature.SignatureVerificationError as e:
+            return render_template(
+                "master_verificare_semnatura.html", user=user, eroare=str(e))
+        return render_template(
+            "master_verificare_semnatura.html", user=user, rezultat=rezultat)
+
     @app.post("/master/contracte/<int:contract_id>/reziliaza")
     def finalizeaza_reziliere_contract(contract_id):
         """Master proceseaza manual reziliere - fie ceruta de firma, fie
