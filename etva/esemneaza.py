@@ -116,15 +116,19 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
 
     subject/message: subiectul si textul emailului de notificare trimis de
     eSemneaza fiecarui semnatar (acelasi pentru toti destinatarii cererii -
-    API-ul nu are subject/message per destinatar). NEVERIFICAT inca live
-    (2026-08-04) - documentatia eSemneaza (esemneaza.stoplight.io) e o SPA,
-    inaccesibila din acest mediu; un test de validare impotriva /requests cu
-    fileName inexistent a intors eroare DOAR pe fileName, nu si pe subject/
-    message, semn ca sunt probabil campuri reale (un camp complet inventat,
-    testat separat, ar fi trebuit sa produca acelasi tip de eroare de
-    validare daca schema e stricta) - dar asta nu e o confirmare directa ca
-    apar corect in emailul primit. De verificat la urmatoarea trimitere
-    reala (vezi planning/).
+    API-ul nu are subject/message per destinatar), trimise catre API ca
+    `emailSubject`/`emailMessage`. Numele exacte NU sunt documentate
+    (esemneaza.stoplight.io e o SPA, inaccesibila din acest mediu) - gasite
+    empiric (2026-08-04) impotriva serviciului real, cu un fileName format
+    corect dar inexistent (trece validarea de format, nu ajunge sa
+    proceseze un fisier real): "subject"/"message" au dat direct 400 `"X" is
+    not allowed` (nume gresite); "emailSubject"/"emailMessage" au dat 500
+    Internal Server Error - un raspuns diferit, care inseamna ca cererea a
+    trecut de validarea de schema si a picat mai departe in logica lor
+    (motiv necunoscut, posibil chiar fileName-ul fals) - nu e o confirmare
+    100% ca apar corect in emailul primit de un destinatar real, doar cel
+    mai puternic semnal obtinut fara acces la documentatie. De reverificat
+    daca vreodata un semnatar raporteaza un subiect/text gresit.
 
     extract_tags=True (folosit de portal/app.py::semneaza_contract): PDF-ul
     are deja tag-ul invizibil `{{s:1}}` incorporat (vezi
@@ -159,9 +163,9 @@ def create_sign_request(api_key: str, file_name: str, recipients: "list[dict]",
     if sender_name:
         body["senderName"] = sender_name
     if subject:
-        body["subject"] = subject
+        body["emailSubject"] = subject
     if message:
-        body["message"] = message
+        body["emailMessage"] = message
     req = urllib.request.Request(
         f"{_BASE_URL}/requests", data=json.dumps(body).encode("utf-8"),
         method="POST",
