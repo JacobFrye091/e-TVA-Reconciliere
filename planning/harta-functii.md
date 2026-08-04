@@ -6,6 +6,18 @@ fluxuri. Generat prin scanarea completa a codului la 2026-08-02 (branch
 `main`/`testare`/`dev`, commit `29ec879`). Actualizeaza-l manual daca
 schimbi semnificativ un flux - nu se regenereaza automat.
 
+Nota 2026-08-04: `main` (productie, go2) si `testare` au primit azi doua
+schimbari care **inca nu exista pe acest branch (`dev`)**:
+1. `invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` - email separat pentru
+   notificarea de finalizare contract (`main` + `testare`).
+2. Doua rute noi in `/master/pipeline` (`pull_testare`,
+   `promote_to_productie`) - promovare cod direct din panoul web,
+   necesare fiindca productia s-a mutat pe un VPS separat (doar
+   `testare`).
+Branch-urile `dev`/`testare`/`main` au divergat intre ele (fiecare are
+commit-uri proprii pe care celelalte nu le au) - de rezolvat manual
+(merge/rebase) inainte de urmatoarea promovare intre ele.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
