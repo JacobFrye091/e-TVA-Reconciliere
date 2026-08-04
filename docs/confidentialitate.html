@@ -9,87 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<style>
-:root {
-  --ink: #132922; --ink-2: #1c3a30; --ink-3: #25493c;
-  --paper: #eef3ef; --surface: #ffffff; --border: #dbe7e0;
-  --text: #182922; --muted: #5c6f66; --muted-inv: #a9c4b7;
-  --accent: #1f7a5c; --accent-2: #155f47; --accent-soft: #e1f0e8;
-  --danger: #c23a32; --danger-bg: #fdeeed; --warn: #b8862e; --warn-bg: #f7ecd6;
-  --ok: #1f7a5c; --ok-bg: #e6f3ec;
-  --disp: "Space Grotesk", ui-monospace, "Cascadia Mono", monospace; --body: "Public Sans", system-ui, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
-}
-* { box-sizing: border-box; margin: 0; }
-html { scroll-behavior: smooth; }
-body { font-family: var(--body); color: var(--text); background: var(--paper);
-  font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
-h1, h2, h3, h4 { font-family: var(--disp); line-height: 1.15; letter-spacing: -.01em; }
-a { color: inherit; }
-.inv { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-
-.topbar { position: sticky; top: 0; z-index: 50; background: rgba(23, 32, 58, .94);
-  backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.07); }
-.topbar .inv { display: flex; align-items: center; justify-content: space-between; height: 64px; }
-.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
-.brand img { width: 36px; height: 36px; display: block; }
-.brand-name { color: #fff; font-family: var(--disp); font-weight: 700; font-size: 16px; }
-.nav { display: flex; align-items: center; gap: 26px; }
-.nav a { color: var(--muted-inv); text-decoration: none; font-size: 14.5px; font-weight: 500; }
-.nav a:hover { color: #fff; }
-.nav a.activ { color: #fff; }
-.btn { display: inline-block; font-family: var(--disp); font-weight: 600; font-size: 14px;
-  text-decoration: none; border-radius: 4px; padding: 11px 22px; }
-.btn-plin { background: var(--accent); color: #fff; }
-.btn-plin:hover { background: var(--accent-2); }
-.nav .btn { padding: 8px 16px; font-size: 14px; }
-@media (max-width: 860px) { .nav a:not(.btn) { display: none; } }
-
-.page-header { background: linear-gradient(170deg, var(--ink) 0%, #0e1f19 60%, #081410 100%);
-  color: #fff; padding: 56px 0 44px; }
-.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--disp); font-size: 12px; font-weight: 600;
-  letter-spacing: .06em; color: #e6c988; background: rgba(184, 134, 46, .18);
-  border: 1px solid rgba(184, 134, 46, .55); border-radius: 3px; padding: 6px 12px; margin-bottom: 20px;
-  text-transform: uppercase; }
-.eyebrow::before { content: ""; width: 6px; height: 6px; background: #155f47; }
-.page-header h1 { font-size: clamp(26px, 3.6vw, 36px); font-weight: 800; margin-bottom: 10px; max-width: 22em; }
-.page-header p.sub { font-size: 15.5px; color: var(--muted-inv); max-width: 42em; }
-
-section { padding: 48px 0; }
-section.alt { background: var(--surface); border-block: 1px solid var(--border); }
-.corp { max-width: 760px; }
-.corp h2 { font-size: 21px; margin-bottom: 12px; }
-.corp h2 .tag { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
-  font-family: var(--mono); color: var(--accent); margin-bottom: 8px; }
-.corp p { color: var(--text); margin-bottom: 12px; }
-.corp ul, .corp ol { padding-left: 1.3em; margin-bottom: 12px; }
-.corp li { color: var(--text); margin-bottom: 7px; }
-.corp li b { font-weight: 650; }
-.corp + .corp { margin-top: 34px; padding-top: 34px; border-top: 1px solid var(--border); }
-
-.tabel-scroll { overflow-x: auto; max-width: 760px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
-table.date { border-collapse: collapse; width: 100%; min-width: 480px; background: var(--surface); }
-table.date th, table.date td { padding: 11px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13.5px; }
-table.date thead th { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--muted); background: #fbfcfe; }
-table.date tbody tr:last-child td { border-bottom: 0; }
-
-.nota { background: var(--accent-soft); border-left: 3px solid var(--accent);
-  padding: 14px 18px; border-radius: 0 8px 8px 0; font-size: 14.5px; color: var(--text);
-  max-width: 42em; margin: 8px 0 14px; }
-.nota b { color: var(--accent); }
-.placeholder-legal { color: var(--danger); font-weight: 600; }
-
-footer { background: var(--ink); color: var(--muted-inv); padding: 36px 0; font-size: 13.5px; }
-footer .footer-grid { display: flex; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
-footer .footer-col { max-width: 46em; }
-footer .footer-firma { margin-top: 8px; font-size: 12.5px; line-height: 1.6; }
-footer .footer-links { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
-@media (max-width: 620px) { footer .footer-links { align-items: flex-start; } }
-footer a { color: var(--muted-inv); }
-footer a:hover { color: #fff; }
-footer .placeholder-legal { color: #e6c988; }
-</style>
+<link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 
@@ -99,7 +19,7 @@ footer .placeholder-legal { color: #e6c988; }
       <img src="favicon.svg" alt="Logo e-TVA Reconciliere">
       <span class="brand-name">e-TVA Reconciliere</span>
     </a>
-    <nav class="nav">
+    <nav class="nav" id="navPrincipal">
       <a href="index.html">&larr; Pagina principală</a>
       <a href="ghid.html">Ghid complet</a>
       <a href="confidentialitate.html" class="activ">Confidențialitate</a>
@@ -107,6 +27,7 @@ footer .placeholder-legal { color: #e6c988; }
       <a href="autentificare" data-auth="autentificare">Autentificare</a>
       <a class="btn btn-plin" href="inregistrare" data-auth="inregistrare">Creează cont</a>
     </nav>
+    <button class="menu-toggle" type="button" aria-label="Comută meniul" aria-expanded="false" aria-controls="navPrincipal">☰</button>
   </div>
 </header>
 
@@ -278,5 +199,6 @@ footer .placeholder-legal { color: #e6c988; }
   </div>
 </footer>
 
+<script src="assets/site.js"></script>
 </body>
 </html>
