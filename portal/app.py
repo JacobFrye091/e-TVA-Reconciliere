@@ -3007,10 +3007,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if not pipeline.local_pipeline_available():
             # Un VPS deployat e un singur checkout independent - nu poate
             # (si nu ar trebui sa incerce sa) citeasca celelalte doua medii.
+            mediu = pipeline.own_environment()
+            stare_pull = stare_promovare = None
+            if mediu == "testare":
+                stare_pull = pipeline.read_status(
+                    data_dir, pipeline.PULL_TESTARE_STATUS_NAME)
+                stare_promovare = pipeline.read_status(
+                    data_dir, pipeline.PROMOTE_PRODUCTIE_STATUS_NAME)
             return render_template(
                 "pipeline.html", user=user, local_available=False,
-                labels=pipeline.ENVIRONMENTS, mediu=pipeline.own_environment(),
+                labels=pipeline.ENVIRONMENTS, mediu=mediu,
                 rulare=pipeline.running_vs_current(),
+                stare_pull=stare_pull, stare_promovare=stare_promovare,
                 eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
         envs = {env: pipeline.branch_info(env) for env in pipeline.ENVIRONMENTS}
         promotions = []
@@ -3055,6 +3063,44 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                  f"'git push origin {pipeline.ENVIRONMENTS[target]['branch']}' "
                  f"din folderul {target}.")
         return redirect(url_for("pipeline_dashboard", eroare=eroare))
+
+    @app.post("/master/pipeline/testare/actualizeaza")
+    def pull_testare():
+        """Butonul 'Actualizeaza testare din GitHub' - vezi
+        pipeline.request_testare_pull pentru mecanism (trigger + unitate
+        systemd root-owned, fiindca aplicatia nu are credentiale git)."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() != "testare":
+            return redirect(url_for(
+                "pipeline_dashboard",
+                eroare="Actualizarea prin buton e disponibila doar pe mediul testare."))
+        _log_master_action(user, "pipeline.pull_testare_solicitat")
+        pipeline.request_testare_pull(data_dir)
+        return redirect(url_for(
+            "pipeline_dashboard",
+            mesaj="Actualizare solicitata - verifica rezultatul mai jos in cateva secunde."))
+
+    @app.post("/master/pipeline/productie/promoveaza")
+    def promote_to_productie():
+        """Butonul 'Promoveaza in productie' - vezi
+        pipeline.request_promote_to_productie pentru mecanism. NU aplica
+        schimbari de schema a bazei de date pe productie - ramane pas
+        manual, separat."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() != "testare":
+            return redirect(url_for(
+                "pipeline_dashboard",
+                eroare="Promovarea catre productie e disponibila doar din mediul testare."))
+        _log_master_action(user, "pipeline.promovare_productie_solicitata")
+        pipeline.request_promote_to_productie(data_dir)
+        return redirect(url_for(
+            "pipeline_dashboard",
+            mesaj="Promovare solicitata - poate dura cateva secunde. "
+                 "Verifica rezultatul mai jos (push GitHub + deploy pe productie)."))
 
     @app.post("/master/server/restart")
     def restart_server():

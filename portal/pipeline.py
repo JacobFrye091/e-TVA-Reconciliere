@@ -125,6 +125,50 @@ def own_environment() -> str | None:
 
 RESTART_TRIGGER_NAME = "restart.trigger"
 
+# Actualizare testare din GitHub si promovare testare -> productie, din
+# panoul /master/pipeline al unei instante VPS (nu al pipeline-ului local
+# de mai sus - acela cere DEV/TESTARE/PROD alaturi, pe acelasi calculator).
+# Pe VPS, testare e un checkout unic, iar productia e alt server complet
+# (nu un worktree local) - aplicatia (fara privilegii, fara credentiale
+# git) scrie un fisier-semnal, la fel ca la restart/backup, iar o unitate
+# systemd .path detinuta de root vede semnalul si face push pe GitHub +
+# deploy la distanta prin SSH, lasand rezultatul intr-un fisier de stare.
+PULL_TESTARE_TRIGGER_NAME = "pull-testare.trigger"
+PULL_TESTARE_STATUS_NAME = "pull-testare.status"
+PROMOTE_PRODUCTIE_TRIGGER_NAME = "promote-productie.trigger"
+PROMOTE_PRODUCTIE_STATUS_NAME = "promote-productie.status"
+
+
+def request_testare_pull(data_dir: str) -> None:
+    """Cere actualizarea checkout-ului testare la ultimul commit de pe
+    GitHub (branch 'testare') si repornirea serviciului - vezi comentariul
+    de mai sus pentru mecanism."""
+    pathlib.Path(data_dir, PULL_TESTARE_TRIGGER_NAME).write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+
+
+def request_promote_to_productie(data_dir: str) -> None:
+    """Cere promovarea testare -> productie: push pe 'main' (GitHub) +
+    deploy pe serverul de productie - vezi comentariul de mai sus pentru
+    mecanism. NU aplica schimbari de schema a bazei de date - ramane pas
+    manual, separat (decizie explicita - cel mai riscant pas, nu se
+    automatizeaza neasistat)."""
+    pathlib.Path(data_dir, PROMOTE_PRODUCTIE_TRIGGER_NAME).write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+
+
+def read_status(data_dir: str, filename: str) -> dict | None:
+    """Parseaza un fisier de stare 'stare|moment ISO|mesaj', scris de un
+    script root-owned declansat printr-un trigger (acelasi format ca
+    backup-onedrive.status). None daca fisierul nu exista/e corupt -
+    inseamna doar ca nu s-a rulat inca nimic din buton."""
+    try:
+        with open(os.path.join(data_dir, filename), encoding="utf-8") as f:
+            stare, moment, mesaj = f.read().strip().split("|", 2)
+        return {"stare": stare, "moment": moment, "mesaj": mesaj}
+    except (OSError, ValueError):
+        return None
+
 
 def request_server_restart(data_dir: str) -> None:
     """Ask this environment's own systemd unit to restart the gunicorn
