@@ -893,13 +893,14 @@ scripturile `/usr/local/sbin/etva-testare-pull.sh` si
 -> `pdf_fonts.asigura_fonturi()` -> `SimpleDocTemplate`/`Table`/`Paragraph`
 (reportlab) -> `_suma()`. Constanta `FURNIZOR` reutilizata de `contract.py`.
 
-Constanta `NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` (adaugata 2026-08-04) -
-destinatarul emailului trimis de `_finalizeaza_contract_esemneaza`
-(`portal/app.py`) cand un contract e semnat de ambele parti prin
-eSemneaza - separata intentionat de `FURNIZOR['email']` (folosit pentru
-cererea initiala de semnatura), ca sa nu depinda de cine verifica inboxul
-de office in momentul respectiv. **De verificat**: valoarea curenta pare
-o adresa personala, nu una de firma - posibil ramasa dintr-un test.
+Constanta `NOTIFICARE_CONTRACT_FINALIZAT_EMAIL` (adaugata 2026-08-04,
+corectata tot atunci) - destinatarul emailului trimis de
+`_finalizeaza_contract_esemneaza` (`portal/app.py`) cand un contract e
+semnat de ambele parti prin eSemneaza. E o constanta separata de
+`FURNIZOR['email']` (folosit pentru cererea initiala de semnatura), dar
+azi ambele au aceeasi valoare (`office@ereconciliere.ro`) - separarea
+structurala ramane utila daca se decide vreodata o adresa diferita pentru
+notificarea de finalizare.
 
 ### 6.6 portal/contract.py
 
