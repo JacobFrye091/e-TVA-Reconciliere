@@ -3932,13 +3932,13 @@ def test_webhook_esemneaza_finalizes_matching_contract(app, monkeypatch):
     assert row["stare"] == "semnat"
 
 
-def test_finalizare_contract_trimite_notificarea_la_adresa_personala_nu_la_office(
+def test_finalizare_contract_trimite_notificarea_de_finalizare(
         app, monkeypatch):
-    """Cererea INITIALA de semnat merge la invoicing.FURNIZOR['email']
-    (office@ereconciliere.ro, cerut explicit 2026-08-04) - dar copia de
-    notificare la finalizare merge separat, la
-    invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL (personal), ca sa nu
-    depinda de cine verifica inbox-ul office@."""
+    """Cand un contract e semnat de ambele parti, se trimite o notificare
+    separata catre invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL - o
+    constanta distincta de invoicing.FURNIZOR['email'] (folosit pentru
+    cererea INITIALA de semnat), chiar daca azi au aceeasi valoare
+    (office@ereconciliere.ro)."""
     import smtplib as smtplib_mod
     trimise = []
 
@@ -3977,10 +3977,8 @@ def test_finalizare_contract_trimite_notificarea_la_adresa_personala_nu_la_offic
     r = c.get("/panou/contract")
     assert r.status_code == 200
 
-    from portal.invoicing import FURNIZOR, NOTIFICARE_CONTRACT_FINALIZAT_EMAIL
+    from portal.invoicing import NOTIFICARE_CONTRACT_FINALIZAT_EMAIL
     assert any(msg["To"] == NOTIFICARE_CONTRACT_FINALIZAT_EMAIL for msg in trimise)
-    assert not any(msg["To"] == FURNIZOR["email"] for msg in trimise)
-    assert NOTIFICARE_CONTRACT_FINALIZAT_EMAIL != FURNIZOR["email"]
 
 
 def test_semneaza_contract_certificat_valid_dar_neincrezut(app, _semnatura_certificat):
