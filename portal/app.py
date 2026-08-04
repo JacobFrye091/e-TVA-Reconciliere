@@ -1267,7 +1267,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
              cert_bytes, xml_final, contract["id"]))
         conn.commit()
         _trimite_email(
-            invoicing.FURNIZOR["email"],
+            invoicing.NOTIFICARE_CONTRACT_FINALIZAT_EMAIL,
             f"Contract nr. {contract['numar']} semnat de ambele parti",
             f"Contractul nr. {contract['numar']} ({contract['beneficiar_denumire']}, "
             f"CUI {contract['beneficiar_cui']}) a fost semnat electronic de ambele "
