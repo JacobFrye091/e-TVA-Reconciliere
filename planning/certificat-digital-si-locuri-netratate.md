@@ -107,20 +107,23 @@ si integrarea bancara PSD2 (`fgo.ro/procesare-extrase`) pentru
 reconcilierea automata a platilor cu extrasul bancar real - "discutate,
 neimplementate". Depinde oricum de §2.2 (plata activa) ca sa aiba sens.
 
-### 2.5 Backup/restore Postgres - backup-ul real functioneaza, restore-ul nu exista
+### 2.5 (REZOLVAT 2026-08-05) Backup/restore Postgres
 
-Verificat direct pe server: `etva-backup-pg.timer` (in afara repo-ului,
-`/usr/local/sbin/etva-backup-pg.sh`) ruleaza real, nocturn, `pg_dump` pe
-`etva_testare`+`etva_productie`, criptat GPG, urcat pe OneDrive (remote
-configurat, fisiere reale prezente, retentie 14 zile local / 60 zile
-cloud) - partea asta e in regula. **Ce lipseste:** nicio unealta sau
-procedura de restore, nici testata, nici scrisa. In aplicatie,
-`/master/backup/restaureaza` refuza explicit orice incercare pe backend
-Postgres (`portal/app.py`, cf. `planning/harta-functii.md` §3m) - zip-ul
-din `portal/backup.py` mai acopera doar `uploads/`+chei pe Postgres, nu
-date live (`portal/pg_schema.sql`... vezi `planning/concurenta-postgres.md`
-punctul 3 din "Descoperiri importante"). Documentat explicit ca "Faza 5,
-inca deschisa" in `planning/migrare-postgres.md:3-8`.
+Era: backup-ul real functiona (nocturn, `pg_dump`+GPG+OneDrive), dar nicio
+unealta de restore nu exista/nu era testata. **Acum:** buton real
+"Restaureaza baza Postgres" in `/master/backup`, disponibil STRICT pe
+mediul testare (acelasi precedent de siguranta ca vechiul refuz pe
+productie) - `portal/backup_pg.py` + ruta `restaureaza_backup_postgres`
+(`portal/app.py`, cf. `planning/harta-functii.md` §3m), mecanism
+trigger-file + script root (`/usr/local/sbin/etva-restore-pg.sh`, in
+afara repo-ului) identic cu `/master/pipeline`. Restore intr-o baza
+temporara verificata (tabele, cont master, RLS), swap prin redenumire in
+tranzactie, baza veche pastrata (`_prev_<moment>`), niciodata suprascriere
+directa. Testat live cu date reale (round-trip complet: firma de test
+creata, restaurata inapoi, confirmata disparuta). Procedura completa in
+`planning/restaurare-postgres.md`. Zip-ul din `portal/backup.py` ramane
+neschimbat (acopera doar `uploads/`+chei pe Postgres, nu date live) - UI
+clarifica acum explicit diferenta intre cele doua.
 
 ### 2.6 (rezolvat azi, mentionat pentru context) Leak de tranzactie in trial_reminders
 
@@ -136,10 +139,10 @@ cod pe viitor.
 | # | Item | Blocheaza pe altceva? |
 |---|---|---|
 | 1 | Certificat digital calificat | Blocheaza §1.1, §1.2, indirect §2.3 |
-| 2 | Restore Postgres testat (Faza 5) | Risc de date, independent de rest |
+| ~~2~~ | ~~Restore Postgres testat (Faza 5)~~ | **FACUT 2026-08-05**, vezi §2.5 |
 | 3 | Integrare Netopia/FGO plati | Blocheaza §2.2, §2.4, §2.3 (partial) |
 | 4 | API live ANAF pt. modul clasic | Asteapta publicare format oficial ANAF - in afara controlului nostru |
 
-Certificatul (1) si restore-ul testat (2) sunt singurele doua fara nicio
-dependenta externa in afara controlului echipei - restul asteapta fie
-decizii de business (Netopia), fie ANAF sa publice ceva.
+Certificatul (1) ramane singurul fara nicio dependenta externa in afara
+controlului echipei - restul asteapta fie decizii de business (Netopia),
+fie ANAF sa publice ceva.

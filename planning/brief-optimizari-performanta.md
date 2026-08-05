@@ -103,16 +103,18 @@ nepush-uit.
 | # | Item | Tip | Blocaj |
 |---|---|---|---|
 | 1 | Certificat digital calificat real | Administrativ | Fără el, OAuth2 ANAF (decont) și verificarea semnăturilor rămân netestate live |
-| 2 | Restore Postgres testat (Faza 5) | Tehnic | Backup-ul nocturn (`pg_dump`+OneDrive) funcționează real; nicio procedură de restore nu există/nu e testată |
-| 3 | Monitorizare automată swap/load | Tehnic | Oferit, neconfirmat încă de Andrei — alertă simplă (cron) pentru pragurile discutate (swap crescând, load > nr. vCPU, RAM liber < 500MB susținut) |
+| ~~2~~ | ~~Restore Postgres testat (Faza 5)~~ | Tehnic | **FĂCUT 2026-08-05** — buton real în `/master/backup` (doar mediul testare), testat live cu date reale (round-trip complet), vezi `planning/restaurare-postgres.md` |
+| ~~3~~ | ~~Monitorizare automată swap/load~~ | Tehnic | **FĂCUT 2026-08-03** — `etva-monitorizeaza-resurse.timer`, confirmat activ live |
 | 4 | Integrare Netopia/FGO pentru plăți | Business | `PLATA_ACTIVA=0` — amânat până există cont Netopia configurat |
 | 5 | Reactivare contracte (semnătură electronică) | Business | `CONTRACTE_ACTIVE=0` — depinde parțial și de #1 |
 | 6 | Reconciliere bancară automată (FGO/PSD2) | Business | Discutat, neimplementat — depinde de #4 |
 | 7 | API live ANAF pentru modul clasic (factură-cu-factură) | Extern | Așteaptă ca ANAF să publice formatul oficial — în afara controlului echipei |
-| 8 | Separare testare/productie pe infrastructură proprie | Arhitectural | Nu e o problemă de resurse acum (2 firme active) — devine relevant din motive de risc/izolare odată ce productie are clienți reali plătitori, nu neapărat de performanță |
-| 9 | Reconsiderare `--workers` peste 3 | Tehnic | Doar dacă monitorizarea reală (#3) arată nevoie — nu de făcut preventiv |
+| 8 | Separare testare/productie pe infrastructură proprie | Arhitectural | **FĂCUT 2026-08-04** — go2 (VPS separat, 4 vCPU/8GB) dedicat exclusiv productiei, cutover complet |
+| 9 | Reconsiderare `--workers` peste 3 | Tehnic | Doar dacă monitorizarea reală (acum activă) arată nevoie — nu de făcut preventiv |
+| 10 | Tunare Postgres (`shared_buffers`/`work_mem`) | Tehnic | **Parțial** — făcut pe testare 2026-08-04 (256MB/8MB, valori conservatoare, serverul mai găzduiește mail/DNS/FTP); rămâne de făcut pe go2 (productie), la un moment ales de Andrei — restart Postgres = întrerupere reală |
+| 11 | Test de încărcare real (locust/k6) | Tehnic | Neînceput — singurul mod să se confirme ferm câți utilizatori concurenți ține infrastructura actuală |
 
-Singurele două fără nicio dependență externă: **#1** (certificat) și **#2**
-(restore testat) — restul așteaptă fie o decizie de business (Netopia),
-fie ANAF, fie date reale de trafic care încă nu există (2 firme active,
-9MB bază de date).
+Rămase fără nicio dependență externă, deci acționabile oricând: **#1**
+(certificat), **#10** (tunare go2) și **#11** (test de încărcare) — restul
+așteaptă fie o decizie de business (Netopia), fie ANAF, fie date reale de
+trafic care încă nu există (2 firme active, 9MB bază de date).

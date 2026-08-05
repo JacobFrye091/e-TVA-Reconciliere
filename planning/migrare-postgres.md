@@ -2,10 +2,15 @@
 
 Stare: **atât testare cât și productie rulează pe Postgres din 2026-07-29**
 (Fazele 3 și 4 complete, verificate live, cu OK explicit al lui Andrei
-pentru productie: "continua schimbarea si in productie, dai bice"). Rămâne
-doar Faza 5 (backup `pg_dump` + decizia finală despre bazele de pe shared
-hosting). Fazele și progresul lor: vezi lista de task-uri a sesiunii
-(#201–#206) și commit-urile care referă acest document.
+pentru productie: "continua schimbarea si in productie, dai bice"). Faza 5
+(backup `pg_dump`) era deja completă; **restore (2026-08-05, vezi
+`planning/restaurare-postgres.md`) e acum și el complet, doar pe mediul
+testare** - buton real în `/master/backup`, testat live cu date reale.
+Rămâne doar decizia finală despre bazele vechi de pe shared hosting
+(cPanel) - fișierele SQLite/SQLCipher pre-migrare, păstrate ca backup
+înghețat, nu au fost încă șterse/arhivate definitiv. Fazele și progresul
+lor: vezi lista de task-uri a sesiunii (#201–#206) și commit-urile care
+referă acest document.
 
 ## Faza 3 — testare, executată și verificată (2026-07-29)
 

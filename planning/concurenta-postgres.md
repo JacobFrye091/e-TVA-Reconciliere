@@ -66,18 +66,13 @@ alta cerere, de la orice firma, era complet blocata cat timp dura.
 
 ## Ce ramane deschis
 
-- **`gunicorn`**: codul suporta acum concurenta reala, dar serviciul
-  inca ruleaza `--workers 1` fara threaduri - pool-ul nu ajuta cu
-  nimic pana `/etc/systemd/system/etva-testare.service` nu trece pe
-  `--worker-class gthread --workers 1 --threads 8` (sau echivalent) si
-  serviciul nu e repornit. Schimbare separata, in afara repo-ului
-  (fisier root-only), cu restart confirmat explicit.
-- **Verificare live**: dupa restart, de confirmat pe
-  `testare.ereconciliere.ro` ca o emitere de factura FGO nu mai
-  blocheaza o a doua cerere simultana.
-- **Promovare pe productie**: abia dupa ce `testare` ruleaza stabil,
-  prin fluxul existent (cherry-pick), cu restart separat pentru
-  `etva-productie.service`, confirmat explicit.
-- `psycopg_pool` a fost instalat manual in venv-ul de testare pentru a
-  putea rula suita de teste - la promovare, trebuie instalat si in
-  venv-ul de productie (`pip install -r requirements.txt`).
+**REZOLVAT** (vezi `planning/brief-optimizari-performanta.md` pentru
+istoricul complet, punctele 3-4-6-7): `gunicorn` a trecut de la
+`--workers 1` la 2, apoi la 3 (dupa upgrade-ul VPS go0->go1, 1->2 vCPU),
+cu leader election pentru scheduler-ele de fundal ca prerechizit (altfel
+fiecare worker ar fi pornit propriile fire de backup/remindere,
+duplicandu-le). Verificat live 2026-08-05: ambele medii ruleaza
+`--worker-class gthread --workers 3 --threads 8`
+(`/etc/systemd/system/etva-testare.service` si
+`.../etva-productie.service`), confirmat direct pe ambele servere.
+`psycopg_pool` e in `requirements.txt`, instalat pe ambele venv-uri.
