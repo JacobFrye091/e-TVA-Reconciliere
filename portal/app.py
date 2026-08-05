@@ -53,6 +53,8 @@ _CONFIDENTIALITATE = _ROOT / "docs" / "confidentialitate.html"
 _COOKIE_URI = _ROOT / "docs" / "cookie-uri.html"
 _CONTACT = _ROOT / "docs" / "contact.html"
 _SITEMAP = _ROOT / "docs" / "sitemap.xml"
+_SITE_CSS = _ROOT / "docs" / "assets" / "site.css"
+_SITE_JS = _ROOT / "docs" / "assets" / "site.js"
 _SPA = _ROOT / "web" / "index.html"
 
 _HINT_MODEL = ("Daca jurnalul nu provine din SAGA, alege in formular 'Alt "
@@ -499,6 +501,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     @app.get("/sitemap.xml")
     def sitemap():
         return send_file(_SITEMAP, mimetype="application/xml")
+
+    @app.get("/assets/site.css")
+    def docs_site_css():
+        return send_file(_SITE_CSS, mimetype="text/css")
+
+    @app.get("/assets/site.js")
+    def docs_site_js():
+        return send_file(_SITE_JS, mimetype="text/javascript")
 
     @app.get("/robots.txt")
     def robots():
