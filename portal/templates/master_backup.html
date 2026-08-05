@@ -15,6 +15,24 @@ button.periculos:hover { background:#a32e27; }
   <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap">
     <div>
       <h2>Backup date producție</h2>
+      {% if backend == 'postgres' %}
+      <p class="sub"><b>Acest backup (zip local, mai jos) NU conține baza de
+        date.</b> De când mediul rulează pe Postgres, datele reale (firme,
+        reconcilieri, tot ce ține de business) nu mai stau în
+        <code>portal.db</code>/<code>firm_*.db</code> — zip-ul de-aici
+        acoperă doar fișierele încărcate de clienți și cele două chei de
+        criptare. Se creează automat la fiecare 3 zile — poți porni oricând
+        și unul manual, mai jos.</p>
+      <p class="sub" style="margin-top:8px">Baza de date reală se
+        backupuiește separat: dump Postgres criptat, în fiecare noapte,
+        urcat pe OneDrive — vezi cardul <b>„Restaurează baza Postgres”</b>
+        mai jos pentru acela (el e cel din care se poate restaura efectiv
+        conținutul bazei).</p>
+      <p class="sub" style="color:var(--warn);margin-top:8px">Zip-ul de-aici
+        ramane totusi sensibil — contine fisierele incarcate de clienti si
+        cheile de criptare: nu-l trimite necriptat prin email si nu-l lasa
+        pe un disc partajat.</p>
+      {% else %}
       <p class="sub">Un backup conține baza de date a platformei, baza de
         date criptată a fiecărei firme și cheile care le fac descifrabile.
         Se creează automat la fiecare 3 zile — poți porni oricând și unul
@@ -23,6 +41,7 @@ button.periculos:hover { background:#a32e27; }
         backup e suficient, singur, pentru a citi datele oricărei firme —
         tratează-l ca pe cea mai sensibilă informație din platformă: nu-l
         trimite necriptat prin email și nu-l lăsa pe un disc partajat.</p>
+      {% endif %}
     </div>
     <a class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--border)"
        href="/master">&larr; Inapoi la panoul master</a>
