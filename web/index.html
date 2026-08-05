@@ -798,7 +798,13 @@ async function ruleazaReconciliere() {
     if (mapareAnaf.value.trim()) fd.append('anaf_mapping', mapareAnaf.value);
     if (codMapare.value.trim()) fd.append('cod_mapping', codMapare.value);
     const r = await api('/api/reconciliations', {method: 'POST', body: fd});
-    const body = await r.json();
+    let body;
+    try {
+      body = await r.json();
+    } catch (e) {
+      reconErr.textContent = 'A aparut o eroare neasteptata pe server. Incearca din nou.';
+      return;
+    }
     if (!r.ok) {
       reconErr.textContent = (body.errors || [body.error]).join('\n');
       return;
@@ -807,6 +813,8 @@ async function ruleazaReconciliere() {
     navRezultate.style.display = '';
     afiseazaRezultate(body);
     navigheaza('rezultate');
+  } catch (e) {
+    reconErr.textContent = 'A aparut o eroare neasteptata. Incearca din nou sau contacteaza suportul.';
   } finally {
     btnRuleaza.disabled = false; btnRuleaza.textContent = 'Ruleaza reconcilierea';
   }

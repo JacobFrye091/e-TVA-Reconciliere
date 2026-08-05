@@ -2449,6 +2449,21 @@ def test_reconciliation_auto_fetch_rejects_malformed_decont(app, monkeypatch):
     assert r.status_code == 400
 
 
+def test_reconciliation_without_anaf_file_returns_clean_error(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+
+    assert r.status_code == 400
+    assert "decont" in r.get_json()["errors"][0].lower()
+
+
 def test_me_reports_anaf_autorizat_flag(app, monkeypatch):
     monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(portal_app_module, "ANAF_OAUTH_CLIENT_SECRET", "test-secret")

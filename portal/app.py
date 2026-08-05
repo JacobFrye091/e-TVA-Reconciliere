@@ -3469,7 +3469,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             except NotAnafP300Json as e:
                 return jsonify({"errors": [str(e)]}), 400
         else:
-            anaf_file = request.files["anaf_file"]
+            anaf_file = request.files.get("anaf_file")
+            if anaf_file is None or not anaf_file.filename:
+                return jsonify({"errors": [
+                    "Lipseste decontul ANAF - incarca decontul precompletat "
+                    "(PDF/JSON) sau un fisier ANAF (xlsx/csv), ori "
+                    "activeaza preluarea automata din ANAF."]}), 400
             if anaf_file.filename.lower().endswith((".pdf", ".json")):
                 saved_anaf_path = _save_upload(anaf_file)
                 try:
