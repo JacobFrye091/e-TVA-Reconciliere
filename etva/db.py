@@ -4,10 +4,6 @@ Identity (users, roles) now lives in the account portal; this schema keeps
 only firm-local data. `client_assignments` and `audit_log` reference portal
 usernames as plain strings.
 """
-try:
-    from sqlcipher3 import dbapi2 as sqlcipher
-except ImportError:  # sqlcipher3-binary exposes the same API
-    from pysqlcipher3 import dbapi2 as sqlcipher
 
 
 class DbError(Exception):
@@ -65,6 +61,15 @@ CREATE TABLE IF NOT EXISTS audit_log(
 
 
 def open_db(path: str, key: bytes):
+    # Import lazily (not at module level) so ETVA_DB=postgres deployments,
+    # which import this module only for PERMISSIONS/DEFAULT_ROLES/DbError
+    # and never call open_db(), don't pay to load the sqlcipher C extension
+    # in every gunicorn worker (no --preload, see portal/wsgi.py).
+    try:
+        from sqlcipher3 import dbapi2 as sqlcipher
+    except ImportError:  # sqlcipher3-binary exposes the same API
+        from pysqlcipher3 import dbapi2 as sqlcipher
+
     # check_same_thread=False only lifts sqlite3's same-thread assertion -
     # concurrent statement execution on this connection from multiple
     # request threads is still unsafe. portal/app.py serializes all

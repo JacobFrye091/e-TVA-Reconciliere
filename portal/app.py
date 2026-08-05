@@ -1014,7 +1014,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 (ident["firm_id"],)).fetchone()
             if firma is not None and not firma["email_verificat"]:
                 return redirect(url_for("asteapta_verificare_email"))
-        return send_file(_SPA)
+        resp = send_file(_SPA)
+        # private: raspunsul e identic pentru toti utilizatorii autentificati,
+        # dar ruta e din spatele unui login - fara "private", un proxy/cache
+        # partajat ar putea servi acest SPA fara sa mai treaca prin verificarile
+        # de mai sus. max-age scurt, ca un deploy nou (SPA schimbat) sa nu
+        # ramana stale mult; ETag-ul implicit al send_file() tot revalideaza.
+        resp.headers["Cache-Control"] = "private, max-age=300"
+        return resp
 
     # ---------- firm account pages ----------
     def _role_in_firm(user_id: int, firm_id: int) -> str | None:
