@@ -4,6 +4,7 @@ import re
 import pytest
 from portal.app import create_app
 from portal import security as psec
+from portal import backup_pg
 from etva import anaf_cui
 from etva import esemneaza
 from etva import fgo
@@ -2793,6 +2794,232 @@ def test_restaureaza_backup_restores_older_state_and_closes_process_connections(
     # pana la restart, nu doar "date invechite"
     with pytest.raises(sqlite3.ProgrammingError):
         app.portal_conn.execute("SELECT 1")
+
+
+# ---------- master: restaurare Postgres ----------
+# Majoritatea acestor teste nu au nevoie de un Postgres real: ruta citeste
+# dbcompat.backend()/pl.own_environment() la momentul cererii, asa ca un
+# monkeypatch e suficient sa exercite toate verificarile, scrierea
+# trigger-ului si selectorul din manifest pe suita implicita SQLite. Doar
+# afisarea rezultatului verify_schema chiar are nevoie de Postgres real -
+# vezi @doar_postgres mai jos.
+doar_postgres = pytest.mark.skipif(
+    os.environ.get("ETVA_TEST_PG") != "1",
+    reason="restaurarea Postgres exista doar pe mediile migrate (ETVA_TEST_PG=1)")
+
+
+def _pregateste_postgres_testare(monkeypatch):
+    from etva import dbcompat
+    monkeypatch.setattr(dbcompat, "backend", lambda: "postgres")
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+
+
+def test_restaurare_pg_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/backup/postgres/restaureaza", follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_restaurare_pg_blocked_in_productie(app, tmp_path, monkeypatch):
+    from etva import dbcompat
+    monkeypatch.setattr(dbcompat, "backend", lambda: "postgres")
+    monkeypatch.setattr(pl, "own_environment", lambda: "productie")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "local", "data": "2026-08-04"},
+              follow_redirects=True)
+    assert "dezactivata in productie".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+    assert app.portal_conn.execute(
+        "SELECT 1 FROM master_actions WHERE actiune='backup.pg_restaurare_solicitata'"
+    ).fetchone() is None
+
+
+def test_restaurare_pg_blocked_outside_testare(app, tmp_path, monkeypatch):
+    from etva import dbcompat
+    monkeypatch.setattr(dbcompat, "backend", lambda: "postgres")
+    monkeypatch.setattr(pl, "own_environment", lambda: None)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "local", "data": "2026-08-04"},
+              follow_redirects=True)
+    assert "disponibila doar pe mediul testare".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+
+
+@doar_sqlite
+def test_restaurare_pg_refuza_pe_sqlite(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "local", "data": "2026-08-04"},
+              follow_redirects=True)
+    assert "nu ruleaza pe Postgres".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+
+
+def test_restaurare_pg_cere_fraza_de_confirmare(app, tmp_path, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    (tmp_path / backup_pg.MANIFEST_NAME).write_text("2026-08-04|100\n", encoding="utf-8")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": "da", "sursa": "local", "data": "2026-08-04"},
+              follow_redirects=True)
+    assert "Trebuie sa scrii exact".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+    assert app.portal_conn.execute(
+        "SELECT 1 FROM master_actions WHERE actiune='backup.pg_restaurare_solicitata'"
+    ).fetchone() is None
+
+
+def test_restaurare_pg_refuza_data_absenta_din_manifest(app, tmp_path, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    (tmp_path / backup_pg.MANIFEST_NAME).write_text("2026-08-04|100\n", encoding="utf-8")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "local", "data": "2026-08-01"},
+              follow_redirects=True)
+    assert "nu se afla in lista".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+
+
+def test_restaurare_pg_din_backup_local_scrie_trigger(app, tmp_path, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    (tmp_path / backup_pg.MANIFEST_NAME).write_text("2026-08-04|100\n", encoding="utf-8")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza",
+              data={"confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "local", "data": "2026-08-04"})
+    assert r.status_code == 200
+    assert "Restaurare pornita".encode() in r.data
+
+    linii = (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).read_text(
+        encoding="utf-8").strip("\n").split("\n")
+    assert len(linii) == 2 and linii[1] == "local:2026-08-04"
+    from datetime import datetime
+    datetime.fromisoformat(linii[0])
+
+    rand = app.portal_conn.execute(
+        "SELECT actiune, detalii FROM master_actions ORDER BY id DESC LIMIT 1").fetchone()
+    assert rand["actiune"] == "backup.pg_restaurare_solicitata"
+    assert rand["detalii"] == "local:2026-08-04"
+
+
+def test_restaurare_pg_din_fisier_incarcat_salveaza_si_scrie_trigger(app, tmp_path, monkeypatch):
+    import io
+    import gzip
+    _pregateste_postgres_testare(monkeypatch)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    continut = gzip.compress(b"-- PostgreSQL database dump")
+    r = c.post("/master/backup/postgres/restaureaza", data={
+        "confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "upload",
+        "fisier": (io.BytesIO(continut), "backup.sql.gz"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert "Restaurare pornita".encode() in r.data
+
+    linii = (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).read_text(
+        encoding="utf-8").strip("\n").split("\n")
+    assert linii[1] == "upload"
+    assert (tmp_path / backup_pg.RESTORE_UPLOAD_NAME).read_bytes() == continut
+
+
+def test_restaurare_pg_refuza_fisier_care_nu_e_gzip(app, tmp_path, monkeypatch):
+    import io
+    _pregateste_postgres_testare(monkeypatch)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    r = c.post("/master/backup/postgres/restaureaza", data={
+        "confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "upload",
+        "fisier": (io.BytesIO(b"nu sunt gzip"), "backup.sql.gz"),
+    }, content_type="multipart/form-data", follow_redirects=True)
+    assert "Restaurare esuata".encode() in r.data
+    assert not (tmp_path / backup_pg.RESTORE_TRIGGER_NAME).exists()
+    assert not (tmp_path / backup_pg.RESTORE_UPLOAD_NAME).exists()
+
+
+def test_restaurare_pg_ignora_numele_de_fisier_trimis(app, tmp_path, monkeypatch):
+    import io
+    import gzip
+    _pregateste_postgres_testare(monkeypatch)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    continut = gzip.compress(b"-- PostgreSQL database dump")
+    c.post("/master/backup/postgres/restaureaza", data={
+        "confirmare": backup_pg.nume_baza(os.environ.get("DATABASE_URL")), "sursa": "upload",
+        "fisier": (io.BytesIO(continut), "../../evil.sql.gz"),
+    }, content_type="multipart/form-data")
+    nume_fisiere = {p.name for p in tmp_path.iterdir() if p.is_file()}
+    assert backup_pg.RESTORE_UPLOAD_NAME in nume_fisiere
+    assert not any(".." in nume for nume in nume_fisiere)
+
+
+def test_master_backup_afiseaza_starea_restaurarii_pg(app, tmp_path, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    (tmp_path / backup_pg.RESTORE_STATUS_NAME).write_text(
+        "ok|2026-08-04T21:48:11Z|Baza etva_testare a fost restaurata.", encoding="utf-8")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/backup")
+    assert "Baza etva_testare a fost restaurata.".encode() in r.data
+
+
+def test_master_backup_listeaza_backupurile_din_manifest(app, tmp_path, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    (tmp_path / backup_pg.MANIFEST_NAME).write_text(
+        "2026-08-04|186666\nlinie-stricata\n2026-08-03|182401\n", encoding="utf-8")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/backup")
+    assert r.status_code == 200
+    assert "2026-08-04".encode() in r.data
+    assert "2026-08-03".encode() in r.data
+
+
+def test_master_backup_fara_manifest_nu_crapa(app, monkeypatch):
+    _pregateste_postgres_testare(monkeypatch)
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/backup")
+    assert r.status_code == 200
+    assert "nu a fost generată încă".encode() in r.data
+
+
+@doar_postgres
+def test_master_backup_afiseaza_verificarea_schemei(app, monkeypatch):
+    monkeypatch.setattr(pl, "own_environment", lambda: "testare")
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.get("/master/backup")
+    assert "Schema bazei curente corespunde codului".encode() in r.data
 
 
 # ---------- inregistrare: email obligatoriu + verificare cont + trial ----------

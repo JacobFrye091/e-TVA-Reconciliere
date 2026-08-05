@@ -21,6 +21,7 @@ from portal import pipeline
 from portal import invoicing
 from portal import contract as contract_mod
 from portal import backup as backup_mod
+from portal import backup_pg
 from portal import trial_reminders as remind_mod
 from etva import db as fdb
 from etva import dbcompat
@@ -2389,14 +2390,35 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             headers={"Content-Disposition": f'attachment; filename="{nume_fisier}"'})
 
     # ---------- master: backup date productie ----------
+    def _probleme_schema_pg():
+        """etva.pg.verify_schema peste conexiunea curenta - indicatorul care
+        confirma, dupa o restaurare, ca baza incarcata chiar are schema pe
+        care o asteapta codul. Nu poate rupe pagina: orice esec inseamna
+        doar 'nu stiu' (None), nu o eroare 500 in panoul master."""
+        try:
+            return pg.verify_schema(conn.raw)
+        except Exception:
+            return None
+
     @app.get("/master/backup")
     def master_backup():
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
+        backend = dbcompat.backend()
+        restaurare_pg = None
+        if backend == "postgres":
+            restaurare_pg = {
+                "baza": backup_pg.nume_baza(os.environ.get("DATABASE_URL")),
+                "backups": backup_pg.list_local_backups(data_dir),
+                "manifest_la": backup_pg.manifest_updated_at(data_dir),
+                "stare": pipeline.read_status(data_dir, backup_pg.RESTORE_STATUS_NAME),
+                "probleme_schema": _probleme_schema_pg(),
+            }
         return render_template(
             "master_backup.html", user=user, backups=backup_mod.list_backups(data_dir),
-            mediu=pipeline.own_environment(),
+            mediu=pipeline.own_environment(), backend=backend,
+            restaurare_pg=restaurare_pg,
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
     @app.post("/master/backup/creeaza")
@@ -2441,13 +2463,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 eroare="Restaurarea e dezactivata in productie - ar suprascrie datele live."))
         if dbcompat.backend() == "postgres":
             # Arhivele zip contin fisiere SQLite - nu au ce restaura intr-un
-            # mediu care ruleaza pe Postgres (restaurarea PG vine odata cu
-            # integrarea pg_dump in portal/backup.py - vezi
-            # planning/migrare-postgres.md, faza 5).
+            # mediu care ruleaza pe Postgres. Restaurarea reala pe Postgres
+            # e o ruta separata, backup_pg.py + restaureaza_backup_postgres
+            # mai jos (mecanism diferit: trigger+script root, nu zip).
             return redirect(url_for(
                 "master_backup",
-                eroare="Restaurarea din arhive SQLite nu e disponibila pe "
-                       "mediile migrate pe Postgres."))
+                eroare="Arhivele zip contin fisiere SQLite. Pentru mediile pe "
+                       "Postgres foloseste 'Restaureaza baza Postgres' de pe "
+                       "aceeasi pagina."))
         if request.form.get("confirm") != "da":
             return redirect(url_for(
                 "master_backup", eroare="Trebuie sa confirmi explicit inainte de restaurare."))
@@ -2491,6 +2514,73 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                "<b>Reporneste manual serverul acestui mediu</b> ca sa aiba efect - "
                "orice alta actiune in aceasta sesiune va esua pana atunci, pentru ca "
                "aplicatia tine conexiunile catre bazele de date deja deschise.</p>", 200)
+
+    @app.post("/master/backup/postgres/restaureaza")
+    def restaureaza_backup_postgres():
+        """Restaurarea reala a bazei Postgres - vezi portal/backup_pg.py
+        pentru mecanism (trigger + unitate systemd root-owned +
+        /usr/local/sbin/etva-restore-pg.sh, fiindca aplicatia nu poate
+        rula psql/systemctl singura). Disponibila STRICT pe mediul
+        testare - niciodata pe productie, acelasi precedent ca la
+        restaureaza_backup (SQLite) de mai sus."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        if pipeline.own_environment() == "productie":
+            return redirect(url_for(
+                "master_backup",
+                eroare="Restaurarea e dezactivata in productie - ar suprascrie datele live."))
+        if pipeline.own_environment() != "testare":
+            return redirect(url_for(
+                "master_backup",
+                eroare="Restaurarea bazei Postgres e disponibila doar pe mediul testare."))
+        if dbcompat.backend() != "postgres":
+            return redirect(url_for(
+                "master_backup", eroare="Acest mediu nu ruleaza pe Postgres."))
+        baza = backup_pg.nume_baza(os.environ.get("DATABASE_URL"))
+        if request.form.get("confirmare", "").strip() != baza:
+            return redirect(url_for(
+                "master_backup",
+                eroare=f"Trebuie sa scrii exact '{baza}' in casuta de confirmare."))
+        sursa_form = request.form.get("sursa", "")
+        if sursa_form == "local":
+            data = request.form.get("data", "")
+            backups_disponibile = {b["data"] for b in backup_pg.list_local_backups(data_dir)}
+            if data not in backups_disponibile:
+                return redirect(url_for(
+                    "master_backup",
+                    eroare="Data aleasa nu se afla in lista de backup-uri disponibile."))
+            sursa = f"local:{data}"
+            detalii = sursa
+        elif sursa_form == "upload":
+            fisier = request.files.get("fisier")
+            if fisier is None or not fisier.filename:
+                return redirect(url_for(
+                    "master_backup", eroare="Alege un fisier de backup (.sql.gz)."))
+            try:
+                backup_pg.save_uploaded_dump(data_dir, fisier)
+            except backup_pg.RestoreError as e:
+                backup_pg.sterge_incarcare(data_dir)
+                return redirect(url_for("master_backup", eroare=f"Restaurare esuata: {e}"))
+            sursa = backup_pg.SURSA_UPLOAD
+            detalii = f"upload:{fisier.filename}"
+        else:
+            return redirect(url_for("master_backup", eroare="Alege o sursa de restaurare."))
+        # Logat inainte de scrierea trigger-ului: odata scris, scriptul root
+        # poate opri serviciul in orice moment, iar un log scris dupa aceea
+        # ar putea sa nu mai apuce sa se salveze (vezi _log_master_action).
+        _log_master_action(user, "backup.pg_restaurare_solicitata", detalii)
+        try:
+            backup_pg.request_restore(data_dir, sursa)
+        except backup_pg.RestoreError as e:
+            backup_pg.sterge_incarcare(data_dir)
+            return redirect(url_for("master_backup", eroare=f"Restaurare esuata: {e}"))
+        return (
+            "<h1>Restaurare pornita</h1>"
+            "<p>Serverul de testare se opreste acum si revine in aproximativ un minut. "
+            "Reincarca <code>/master/backup</code> dupa aceea ca sa vezi rezultatul. "
+            f"Baza actuala e pastrata sub numele <code>{baza}_prev_&lt;moment&gt;</code> "
+            "si NU se sterge automat.</p>", 200)
 
     # ---------- master: remindere expirare trial ----------
     @app.get("/master/remindere-trial")

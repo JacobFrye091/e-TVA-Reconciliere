@@ -424,6 +424,7 @@ verifica_stare_factura_anaf: anaf_oauth.check_upload_status(...) -> daca
 | POST | `/master/backup/creeaza` | `creeaza_backup` |
 | GET | `/master/backup/<nume>/descarca` | `descarca_backup` |
 | POST | `/master/backup/restaureaza` | `restaureaza_backup` |
+| POST | `/master/backup/postgres/restaureaza` | `restaureaza_backup_postgres` |
 
 ```
 restaureaza_backup: verifica mediu != productie -> verifica backend !=
@@ -431,6 +432,32 @@ restaureaza_backup: verifica mediu != productie -> verifica backend !=
   -> backup_mod.create_backup + prune_old_backups (snapshot de siguranta
   inainte de restore) -> _log_master_action -> inchide conn + toate
   firm_conns -> backup_mod.restore_backup(data_dir, fisier)
+
+restaureaza_backup_postgres (adaugat 2026-08-04, doar mediul testare):
+  verifica mediu != productie -> verifica mediu == testare -> verifica
+  backend == postgres -> confirmare == backup_pg.nume_baza(DATABASE_URL)
+  -> sursa 'local:<data>' (validata fata de backup_pg.list_local_backups,
+  citit din manifest) SAU 'upload' (backup_pg.save_uploaded_dump, verifica
+  doar magic number gzip - continutul real e validat de scriptul root) ->
+  _log_master_action (inainte de trigger - vezi comentariu din cod) ->
+  backup_pg.request_restore(data_dir, sursa) [scrie trigger cu 2 linii:
+  moment + sursa] -> raspuns HTML simplu (NU redirect - serverul se
+  opreste imediat, un redirect ar lovi conexiunea inchisa la GET-ul
+  urmator). Executia reala e in afara procesului Flask, ca la
+  pull_testare/promote_to_productie (§3p): unitate systemd .path
+  root-owned + /usr/local/sbin/etva-restore-pg.sh - vezi
+  planning/restaurare-postgres.md pentru mecanismul complet (creeaza baza
+  temporara OWNER etva_app, incarca dump-ul cu psql ca postgres, 4
+  verificari de sanitate, swap prin ALTER DATABASE ... RENAME intr-o
+  tranzactie, verifica reconectarea etva_app prin TCP, repornire serviciu
+  garantata printr-un trap pe EXIT). Baza veche NU se sterge automat -
+  ramane `<baza>_prev_<moment>`.
+
+master_backup (GET) - cand backend==postgres, paseaza in plus
+  restaurare_pg (dict): baza, backups (backup_pg.list_local_backups),
+  manifest_la, stare (pipeline.read_status pe RESTORE_STATUS_NAME),
+  probleme_schema (etva.pg.verify_schema(conn.raw), None daca verificarea
+  insasi esueaza - nu trebuie sa rupa panoul).
 ```
 
 ### 3n. Master: remindere expirare trial
@@ -501,8 +528,13 @@ pull_testare (doar pe mediul testare): verifica pipeline.own_environment()
   -> pipeline.request_testare_pull(data_dir) [scrie trigger file] ->
   redirect. Executia reala e in afara procesului Flask - vezi
   /usr/local/sbin/etva-testare-pull.sh (unitate systemd .path root-owned,
-  aplicatia n-are credentiale git): verifica checkout curat -> git pull
-  --ff-only origin testare -> pip install -> systemctl restart
+  aplicatia n-are credentiale git). CORECTAT 2026-08-04: fluxul e acum
+  dev -> testare (branch-ul dev e punctul de intrare al dezvoltarii, nu
+  doar un pull pe branch-ul testare direct): verifica checkout curat ->
+  git fetch origin dev -> git merge --ff-only
+  origin/dev (checkout-ul local, pe branch testare, avanseaza la varful
+  lui dev) -> git push origin testare (branch-ul testare de pe GitHub
+  reflecta aceeasi stare) -> pip install -> systemctl restart
   etva-testare -> scrie status.
 
 promote_to_productie (doar pe mediul testare): verifica
@@ -929,6 +961,31 @@ original semnat (nepastrat).
 | `backup_path(data_dir, nume)` | LA CERERE (descarcare) |
 | `_seconds_until_due(data_dir)` | intern, doar din `start_scheduler` |
 | `start_scheduler(data_dir, lock)` | **punct de intrare thread** - vezi §7 |
+
+### 6.7b portal/backup_pg.py (adaugat 2026-08-04)
+
+Modul separat de `portal/backup.py` (acela e exclusiv SQLite/zip -
+extinderea lui ar fi contrazis propriul docstring). Structural sora lui
+`portal/pipeline.py`, nu a lui `backup.py`: acelasi mecanism
+trigger-file + unitate systemd `.path` root-owned + fisier de stare
+`stare|moment|mesaj` (citit cu `pipeline.read_status`, nu duplicat aici).
+
+| Functie | Context de apel |
+|---|---|
+| `nume_baza(dsn)` | LA CERERE (`master_backup`, ruta de restore) - si fraza de confirmare afisata/verificata |
+| `list_local_backups(data_dir)` | LA CERERE - populeaza selectorul din panou, citeste manifestul |
+| `manifest_updated_at(data_dir)` | LA CERERE - afiseaza prospetimea listei |
+| `save_uploaded_dump(data_dir, fisier)` | LA CERERE, sursa 'upload' - verifica doar magic number gzip, salveaza sub nume FIX (niciodata `fisier.filename`) |
+| `request_restore(data_dir, sursa)` | LA CERERE - scrie trigger-ul (2 linii: moment ISO + sursa) |
+| `sterge_incarcare(data_dir)` | LA CERERE, pe orice cale de refuz **si** de scriptul root la final, indiferent de rezultat |
+
+Manifestul (`backup-pg.manifest`, root:root 0644) e scris de
+`/usr/local/sbin/etva-backup-pg.sh` (in afara repo-ului) dupa fiecare
+backup reusit - aplicatia nu are acces la `/root/backup-pg` (0700 root,
+dumpuri necriptate), deci nu poate lista backup-urile direct. Executia
+reala a restaurarii: `/usr/local/sbin/etva-restore-pg.sh` (nou, in afara
+repo-ului) - mecanism complet documentat in
+`planning/restaurare-postgres.md`.
 
 ### 6.8 portal/trial_reminders.py
 

@@ -6,6 +6,8 @@ a.mic { padding:5px 12px; font-size:12.5px; background:var(--surface);
   color:var(--accent); border:1px solid var(--border); border-radius:7px;
   text-decoration:none; display:inline-block; }
 a.mic:hover { background:var(--paper); }
+button.periculos { background:var(--danger); }
+button.periculos:hover { background:#a32e27; }
 </style>
 {% endblock %}
 {% block continut %}
@@ -39,6 +41,7 @@ a.mic:hover { background:var(--paper); }
     </form>
   </div>
 
+  {% if backend != 'postgres' %}
   <div class="card">
     <h2>Restaurează dintr-un backup</h2>
     {% if mediu == 'productie' %}
@@ -64,6 +67,89 @@ a.mic:hover { background:var(--paper); }
     </form>
     {% endif %}
   </div>
+  {% endif %}
+
+  {% if restaurare_pg %}
+  <div class="card">
+    <h2>Restaurează baza Postgres ({{ restaurare_pg['baza'] }})</h2>
+    {% if mediu == 'productie' %}
+    <p class="sub">Dezactivat aici — acesta este mediul de <b>producție</b>, cu date live.</p>
+    {% elif mediu != 'testare' %}
+    <p class="sub">Disponibil doar pe mediul <b>testare</b>.</p>
+    {% else %}
+    <p class="sub">Înlocuiește complet baza <code>{{ restaurare_pg['baza'] }}</code> cu
+      conținutul unui backup. Restaurarea se face într-o bază nouă, temporară, verificată
+      înainte de a fi schimbată cu cea live — dacă ceva nu e în regulă, baza actuală
+      rămâne neatinsă.</p>
+    <p class="sub" style="color:var(--warn)">
+      <b>Serverul de testare se oprește pe durata restaurării</b> (~un minut) — altfel
+      conexiunile aplicației ar bloca schimbarea. Baza actuală nu se șterge: rămâne sub
+      numele <code>{{ restaurare_pg['baza'] }}_prev_&lt;moment&gt;</code>, de șters manual
+      după ce verifici rezultatul. Conturile și parolele revin la starea din backup —
+      dacă ți-ai schimbat parola de master după data aleasă, va reveni la cea veche.
+    </p>
+
+    {% if restaurare_pg['stare'] %}
+    <p{% if restaurare_pg['stare']['stare']=='ok' %} style="color:var(--ok);font-weight:600"
+       {% elif restaurare_pg['stare']['stare']=='partial' %} style="color:var(--warn);font-weight:600"
+       {% else %} class="eroare"{% endif %}>
+      [{{ restaurare_pg['stare']['moment'] }}] {{ restaurare_pg['stare']['mesaj'] }}
+    </p>
+    {% endif %}
+
+    <form method="post" action="/master/backup/postgres/restaureaza"
+          enctype="multipart/form-data"
+          onsubmit="return confirm('Înlocuiești complet baza {{ restaurare_pg['baza'] }}? Serverul de testare se oprește ~1 minut.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="tip-firma" style="margin-top:14px">
+        <label class="optiune-tip">
+          <input type="radio" name="sursa" value="local" checked>
+          <span>Dintr-un backup automat local
+            <select name="data" style="margin-top:6px">
+              {% for b in restaurare_pg['backups'] %}
+              <option value="{{ b['data'] }}">{{ b['data'] }} — {{ b['marime_mb'] }} MB</option>
+              {% else %}
+              <option disabled>lista nu e disponibilă încă</option>
+              {% endfor %}
+            </select>
+          </span>
+        </label>
+        <label class="optiune-tip">
+          <input type="radio" name="sursa" value="upload">
+          <span>Dintr-un fișier încărcat (<code>.sql.gz</code>) — pentru backup-uri mai
+            vechi de 14 zile, descărcate manual din OneDrive
+            <input type="file" name="fisier" accept=".gz" style="margin-top:6px">
+          </span>
+        </label>
+      </div>
+
+      <label for="fConfirmarePg">Scrie exact <code>{{ restaurare_pg['baza'] }}</code> ca să confirmi</label>
+      <input id="fConfirmarePg" name="confirmare" autocomplete="off" required>
+
+      <button type="submit" class="periculos" style="margin-top:12px">
+        Restaurează baza Postgres
+      </button>
+    </form>
+
+    <p class="nota">
+      {% if restaurare_pg['manifest_la'] %}
+        Lista de mai sus a fost actualizată la
+        {{ restaurare_pg['manifest_la'].strftime('%Y-%m-%d %H:%M UTC') }}.
+      {% else %}
+        Lista nu a fost generată încă — apasă „Trimite backup în OneDrive acum” din panoul
+        master, apoi reîncarcă pagina.
+      {% endif %}
+      {% if restaurare_pg['probleme_schema'] == [] %}
+        Schema bazei curente corespunde codului.
+      {% elif restaurare_pg['probleme_schema'] %}
+        <span class="eroare">Schema bazei curente diferă de cod:
+          {{ restaurare_pg['probleme_schema']|join('; ') }}</span>
+      {% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <div class="card">
     <h2>Backup-uri existente</h2>
