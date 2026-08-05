@@ -91,8 +91,29 @@ reala impotriva path traversal (`local:../../root/.ssh` nu poate potrivi
 `local:[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]`).
 
 **Pas 4 - verificari ieftine, inainte sa opreasca orice:**
-`gzip -t` (arhiva valida) + `zcat | head -c 8192 | grep "PostgreSQL database dump"`
-(chiar e un dump Postgres, nu doar un gzip oarecare).
+`gzip -t` (arhiva valida) + verificarea ca e chiar un dump Postgres, nu
+doar un gzip oarecare.
+
+**BUG GASIT SI REPARAT 2026-08-05** (prima rulare reala, declansata de
+Andrei din UI, a esuat gresit): varianta initiala,
+`zcat | head -c 8192 | grep -q "PostgreSQL database dump"` in linie, pica
+mereu pentru orice dump real (peste 8KB), desi fraza chiar era acolo.
+Motiv: `head -c 8192` inchide pipe-ul dupa 8192 octeti, `zcat` primeste
+SIGPIPE si iese cu cod 141 - iar `pipefail` (activ in tot scriptul)
+alege codul de iesire NENUL cel mai din dreapta dintre etapele
+pipeline-ului, care e 141 de la `zcat`, nu 0 de la `grep` (verificat cu
+`PIPESTATUS`: `141 0 0`). Rezolvat prin dezactivarea temporara a
+`pipefail` DOAR pentru aceasta linie, cu exit code-ul lui `grep` citit
+explicit intr-o variabila inainte de reactivare:
+```bash
+set +o pipefail
+zcat "$SRC" 2>/dev/null | head -c 8192 | grep -q "PostgreSQL database dump"
+GASIT_DUMP=$?
+set -o pipefail
+if [ "$GASIT_DUMP" -ne 0 ]; then ...
+```
+Restul scriptului ramane cu `pipefail` activ (necesar la pasul 7, unde
+chiar trebuie prinsa o eroare reala de `psql` din `zcat | psql`).
 
 **Pas 5 - opreste aplicatia** (`systemctl stop $SERVICE`, `SERVICE_OPRIT=1`
 DOAR daca reuseste). Obligatoriu: pool-ul de conexiuni al aplicatiei (min 2
