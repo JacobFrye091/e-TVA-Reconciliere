@@ -280,6 +280,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     # mediu, nu prin schimbare de cod, cand exista TLS real.
     app.config["SESSION_COOKIE_SECURE"] = (
         os.environ.get("SESSION_COOKIE_SECURE", "0") == "1")
+    # Lipsea complet (planning/restaurare-postgres.md §7) - fara ea, orice
+    # upload (fisier reconciliere, restore Postgres) putea creste nelimitat.
+    # 50MB acopera larg fisierele reale de azi (facturi/reconcilieri, KB-MB)
+    # si un dump Postgres viitor mult mai mare decat cel de azi (~9MB db);
+    # Werkzeug raspunde automat 413 peste prag, inainte sa citeasca body-ul.
+    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
     csrf = CSRFProtect(app)
 
     firm_conns = {}
