@@ -3,7 +3,8 @@ import pytest
 from etva.d300 import (suggest_line, classify_legend, with_mirrored_lines,
                        with_parent_rollups, expand_derived_lines,
                        valid_lines_for_direction, validate_overrides,
-                       MappingSectionError, TOTAL_LINES)
+                       MappingSectionError, TOTAL_LINES,
+                       resolve_codes, resolve_invoice_lines)
 
 
 def test_confident_rate_mappings():
@@ -106,3 +107,40 @@ def test_expand_derived_lines_does_both():
     out = expand_derived_lines(lines)
     assert set(out) == {"26.1", "12.1", "26", "12"}
     assert out["12"] == {"base": 615.0, "vat": 129.15}
+
+
+def test_resolve_codes_matches_classify_legend_mapped_codes():
+    legend = {
+        "2-3": {"label": "cota 21%", "base": 100.0, "vat": 21.0},
+        "10": {"label": "Bunuri/servicii cu taxare inversa", "base": 5.0, "vat": 0.0},
+    }
+    resolved = resolve_codes("vanzari", legend)
+    assert resolved == {"2-3": "9"}  # "10" ramane neclasificat, absent din rezultat
+
+
+def test_resolve_codes_applies_overrides_same_as_classify_legend():
+    legend = {"weird": {"label": "ceva neclar", "base": 10.0, "vat": 2.0}}
+    assert resolve_codes("cumparari", legend, {"weird": "29"}) == {"weird": "29"}
+
+
+def test_resolve_codes_raises_on_cross_section_override():
+    legend = {"14": {"label": "AIC neimpozabile", "base": 662.0, "vat": 0.0}}
+    with pytest.raises(MappingSectionError):
+        resolve_codes("cumparari", legend, {"14": "14+15"})
+
+
+def test_resolve_invoice_lines_direct_line_is_unchanged():
+    assert resolve_invoice_lines("14+15") == ["14+15"]
+    assert resolve_invoice_lines("24") == ["24"]
+
+
+def test_resolve_invoice_lines_simple_parent():
+    assert resolve_invoice_lines("7") == ["22", "22.1", "7", "7.1"]
+
+
+def test_resolve_invoice_lines_double_derived_parent_and_mirror():
+    # "5" e simultan parinte al lui "5.1" SI oglinda lui "20" - iar "5.1"
+    # e la randul lui oglinda lui "20.1" - o factura reala e etichetata
+    # doar "20.1", niciodata "5" sau "5.1" direct.
+    assert resolve_invoice_lines("5") == ["20", "20.1", "5", "5.1"]
+    assert resolve_invoice_lines("12") == ["12", "12.1", "12.2", "26", "26.1", "26.2"]

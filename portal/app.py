@@ -42,7 +42,8 @@ from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
 from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
                                           NotAnafP300Json)
 from etva.d300 import (classify_legend, expand_derived_lines, D300_LINES,
-                       valid_lines_for_direction, MappingSectionError)
+                       valid_lines_for_direction, MappingSectionError,
+                       resolve_codes, resolve_invoice_lines)
 from etva.engine import reconcile, reconcile_d300
 from etva.advisor import suggest_d300, suggest_d300_lines
 
@@ -3436,7 +3437,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "differences": result.differences,
                 "suggestions": suggest_d300(result)}
 
-    def _persist_lines(fc, username, client_id, period, company_lines, anaf_lines):
+    def _persist_lines(fc, username, client_id, period, company_lines, anaf_lines,
+                       company_invoices=None):
         rid = dbcompat.insert_id(
             fc,
             "INSERT INTO reconciliations(client_id, period, created_at, "
@@ -3449,6 +3451,17 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 f"INSERT INTO {table}(reconciliation_id, category, base, vat) "
                 "VALUES(?,?,?,?)",
                 [(rid, line_no, v["base"], v["vat"]) for line_no, v in lines.items()])
+        # Randuri suplimentare, per factura (partner_cui populat), pe langa
+        # cele agregate de mai sus (partner_cui NULL) - _load_lines si
+        # _reconciliation_mode filtreaza explicit dupa partner_cui IS NULL,
+        # deci coexista fara sa se calce ("Vezi facturile" din rezultate
+        # citeste doar randurile astea noi, cu partner_cui IS NOT NULL).
+        if company_invoices:
+            fc.executemany(
+                "INSERT INTO invoices_company(reconciliation_id, partner_cui, "
+                "invoice_no, date, base, vat, category) VALUES(?,?,?,?,?,?,?)",
+                [(rid, r["partner_cui"], r["invoice_no"], r["date"], r["base"],
+                  r["vat"], r["category"]) for r in company_invoices])
         fc.commit()
         return rid
 
@@ -3562,6 +3575,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             persisted = cod_mappings.load_for_client(fc, client_id)
 
             company_lines: dict = {}
+            company_invoices: list = []
             unmapped = []
             try:
                 for f in company_files:
@@ -3585,6 +3599,21 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                             line_no, {"base": 0.0, "vat": 0.0})
                         acc["base"] += v["base"]
                         acc["vat"] += v["vat"]
+                    # Detaliu per factura pentru "Vezi facturile" din
+                    # rezultate - aceleasi direction/legend/overrides ca mai
+                    # sus, deci nu poate diverge de agregatul calculat.
+                    resolved = resolve_codes(journal.direction, journal.legend,
+                                             overrides)
+                    for entry in journal.entries:
+                        line_no = resolved.get(entry["cod"])
+                        if line_no is None:
+                            continue  # neclasificat - deja vizibil agregat
+                        company_invoices.append({
+                            "partner_cui": entry["partner_cui"],
+                            "invoice_no": entry["doc_no"],
+                            "date": entry["date"],
+                            "base": entry["base"], "vat": entry["vat"],
+                            "category": line_no})
             except NotSagaFormat as e:
                 return jsonify({"errors": [str(e), _HINT_MODEL]}), 400
             except NotModelFormat as e:
@@ -3594,7 +3623,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             company_lines = expand_derived_lines(company_lines)
 
             rid = _persist_lines(fc, ident["username"], client_id, period,
-                                 company_lines, anaf_doc.lines)
+                                 company_lines, anaf_doc.lines, company_invoices)
             audit.log(fc, ident["username"], "reconciliere.creare",
                       "reconciliation", str(rid))
             return jsonify(_result_payload_lines(
@@ -3653,6 +3682,33 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         comp = _load_rows(fc, rid, "invoices_company")
         anaf = _load_rows(fc, rid, "invoices_anaf")
         return jsonify(_result_payload(fc, rid, comp, anaf))
+
+    def _load_company_invoices(fc, rid, line_nos):
+        """Randurile per factura ale firmei etichetate cu oricare din
+        line_nos (vezi etva.d300.resolve_invoice_lines) - drill-down-ul
+        "Vezi facturile" pentru o reconciliere pe linii D300. Reconcilierile
+        de dinainte de aceasta functie n-au niciun rand de acest fel (doar
+        randul agregat, cu partner_cui NULL) - lista goala e starea
+        asteptata pentru ele, nu o eroare."""
+        placeholders = ",".join("?" * len(line_nos))
+        rows = fc.execute(
+            f"SELECT date, invoice_no, partner_cui, base, vat FROM invoices_company "
+            f"WHERE reconciliation_id=? AND category IN ({placeholders}) "
+            f"AND partner_cui IS NOT NULL ORDER BY date, invoice_no",
+            (rid, *line_nos))
+        return [dict(r) for r in rows]
+
+    @app.get("/api/reconciliations/<int:rid>/facturi")
+    @require()
+    def get_reconciliation_facturi(ident, rid):
+        fc = firm_conn(ident["firm_id"])
+        if _reconciliation_mode(fc, rid) != "d300_lines":
+            return jsonify({"error": "Detaliul pe facturi e disponibil doar "
+                                     "pentru reconcilierile pe linii D300."}), 404
+        linie = (request.args.get("linie") or "").strip()
+        if linie not in D300_LINES:
+            return jsonify({"error": "Linie D300 necunoscuta."}), 400
+        return jsonify(_load_company_invoices(fc, rid, resolve_invoice_lines(linie)))
 
     @app.get("/api/reconciliations/<int:rid>/export")
     @require("rapoarte.export")

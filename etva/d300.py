@@ -138,6 +138,40 @@ def expand_derived_lines(lines: dict) -> dict:
     return with_parent_rollups(with_mirrored_lines(lines))
 
 
+# Reverse index of MIRROR_TO_COLLECTED: a collected-side line -> the
+# deductible-side line whose amount was mirrored onto it.
+_MIRROR_SOURCE = {colectata: deductibila
+                  for deductibila, colectata in MIRROR_TO_COLLECTED.items()}
+
+
+def resolve_invoice_lines(line_no: str) -> "list[str]":
+    """Every real D300 line_no a persisted per-invoice row could actually
+    carry (see resolve_codes), starting from a possibly-derived line_no
+    (parent rollup or reverse-charge mirror, see expand_derived_lines) -
+    a "show me the invoices behind this line" lookup needs this to find
+    them regardless of which derivation stage produced the number.
+
+    Transitive closure over PARENT_CHILDREN and _MIRROR_SOURCE, not a
+    single hop: a parent's child can itself be a mirror value (line "5" is
+    both a PARENT_CHILDREN key, child "5.1", AND a MIRROR_TO_COLLECTED
+    value of "20" - and "5.1" is itself the mirror value of "20.1"), so a
+    single if/elif would miss the actual real line ("20.1") a per-invoice
+    row could be tagged with.
+    """
+    seen: "set[str]" = set()
+    frontier = [line_no]
+    while frontier:
+        ln = frontier.pop()
+        if ln in seen:
+            continue
+        seen.add(ln)
+        frontier.extend(PARENT_CHILDREN.get(ln, []))
+        sursa = _MIRROR_SOURCE.get(ln)
+        if sursa:
+            frontier.append(sursa)
+    return sorted(seen)
+
+
 def _norm(text: str) -> str:
     text = text.lower()
     for a, b in (("ă", "a"), ("â", "a"), ("î", "i"), ("ș", "s"), ("ş", "s"),
@@ -245,6 +279,36 @@ def validate_overrides(direction: str, overrides: dict) -> "list[str]":
     return errors
 
 
+def resolve_codes(direction: str, legend: dict,
+                  overrides: dict | None = None) -> dict:
+    """{cod: line_no} for every cod in `legend` that resolves (via override
+    or suggest_line) - the same resolution classify_legend() applies
+    internally, exposed as a flat map instead of aggregated totals, so a
+    caller holding per-invoice rows keyed by the same `cod` (see
+    etva.importer.saga.SagaJournal.entries) can tag each invoice with its
+    resolved line_no without re-running suggest_line's rules separately.
+    A cod absent from the result is unclassified - same condition as an
+    entry in classify_legend()'s `unmapped` list.
+
+    Raises MappingSectionError under the same condition as
+    classify_legend() (see there) - the same validation, so a caller
+    invoking both against the same (direction, legend, overrides) can't
+    get inconsistent results.
+    """
+    overrides = overrides or {}
+    applicabile = {cod: line_no for cod, line_no in overrides.items()
+                  if cod in legend}
+    errors = validate_overrides(direction, applicabile)
+    if errors:
+        raise MappingSectionError(errors)
+    resolved = {}
+    for cod, info in legend.items():
+        line_no = applicabile.get(cod) or suggest_line(direction, info["label"])
+        if line_no is not None:
+            resolved[cod] = line_no
+    return resolved
+
+
 def classify_legend(direction: str, legend: dict, overrides: dict | None = None):
     """Group a journal's VAT-code legend onto D300 lines.
 
@@ -261,17 +325,11 @@ def classify_legend(direction: str, legend: dict, overrides: dict | None = None)
     entries meant for the other file are silently ignored here rather
     than rejected.
     """
-    overrides = overrides or {}
-    applicabile = {cod: line_no for cod, line_no in overrides.items()
-                  if cod in legend}
-    errors = validate_overrides(direction, applicabile)
-    if errors:
-        raise MappingSectionError(errors)
-
+    resolved = resolve_codes(direction, legend, overrides)
     mapped: dict = {}
     unmapped: list = []
     for cod, info in legend.items():
-        line_no = applicabile.get(cod) or suggest_line(direction, info["label"])
+        line_no = resolved.get(cod)
         if line_no is None:
             unmapped.append({"cod": cod, "label": info["label"],
                              "base": info["base"], "vat": info["vat"],

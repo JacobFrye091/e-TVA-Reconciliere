@@ -1421,6 +1421,97 @@ def test_d300_line_reconciliation_via_anaf_json_and_saga(app):
     assert body["totals_anaf"]["9"] == {"base": 1000.0, "vat": 210.0}
 
 
+def test_facturi_endpoint_returns_company_invoice_for_direct_line(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={"9": {"base": 1000.0, "vat": 210.0}}))
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    rid = r.get_json()["id"]
+
+    rf = c.get(f"/api/reconciliations/{rid}/facturi?linie=9")
+    assert rf.status_code == 200
+    facturi = rf.get_json()
+    assert facturi == [{"date": "2026-06-01", "invoice_no": "F1",
+                        "partner_cui": "RO999", "base": 1000.0, "vat": 210.0}]
+
+    # O linie D300 valida, dar fara nicio factura clasificata pe ea.
+    assert c.get(f"/api/reconciliations/{rid}/facturi?linie=24").get_json() == []
+    # Linie D300 inexistenta.
+    assert c.get(f"/api/reconciliations/{rid}/facturi?linie=999").status_code == 400
+
+
+def test_facturi_endpoint_resolves_derived_line(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # RD20_1_VAL/TVA nenule - altfel invoices_anaf n-ar primi niciun rand
+    # pentru aceasta reconciliere, iar _reconciliation_mode ar cadea pe
+    # implicitul "invoices" (fara nicio linie ANAF, nu poate distinge
+    # modurile) - o reconciliere reala are intotdeauna un decont cu
+    # continut, deci acest caz nu apare in productie.
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD20_1_VAL": 500.0, "RD20_1_TVA": 0.0}).encode()
+    company_file = _model_bytes("cumparari", [
+        ("2026-06-02", "FZ1", "Furnizor UE", "IE9999999X", 500, 0,
+         _eticheta_model("cumparari", "20.1")),
+    ])
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "cumparari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    rid = r.get_json()["id"]
+
+    # Factura reala e persistata cu category="20.1" - "Vezi facturile" pe
+    # oricare din liniile derivate (5, 5.1, 20) trebuie s-o gaseasca, prin
+    # inchiderea tranzitiva din resolve_invoice_lines.
+    for linie in ("20.1", "5.1", "20", "5"):
+        facturi = c.get(f"/api/reconciliations/{rid}/facturi?linie={linie}").get_json()
+        assert len(facturi) == 1 and facturi[0]["invoice_no"] == "FZ1"
+
+
+def test_facturi_endpoint_404_pentru_modul_invoices(app):
+    import pandas as pd
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    randuri = pd.DataFrame({
+        "cui_partener": ["RO999"], "nr_factura": ["F1"], "data": ["2026-06-01"],
+        "baza": [100.0], "tva": [19.0], "categorie": ["livrari_interne"]})
+    company_buf = _io.BytesIO()
+    randuri.to_csv(company_buf, index=False)
+    company_buf.seek(0)
+    anaf_buf = _io.BytesIO()
+    randuri.to_csv(anaf_buf, index=False)
+    anaf_buf.seek(0)
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (company_buf, "j.csv"),
+        "anaf_file": (anaf_buf, "a.csv"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200 and r.get_json()["mode"] == "invoices"
+    rid = r.get_json()["id"]
+    rf = c.get(f"/api/reconciliations/{rid}/facturi?linie=9")
+    assert rf.status_code == 404
+
+
 def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
     import portal.app as app_module
     monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(

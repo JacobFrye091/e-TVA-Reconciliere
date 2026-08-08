@@ -389,7 +389,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         acestui client.</p>
       <table id="tabelNeclasificate"></table>
       <div class="actiuni" id="actiuniMapareConfirmata" style="display:none;margin-top:12px">
-        <button class="secundar" onclick="ruleazaReconciliere()">Reia verificarea cu mapările confirmate</button>
+        <button class="secundar" onclick="reiaVerificareSiScroleaza()">Reia verificarea cu mapările confirmate</button>
       </div>
       <p id="mapareErr" class="eroare"></p>
     </div>
@@ -871,6 +871,18 @@ async function ruleazaReconciliere() {
   }
 }
 
+// Doar butonul din cardul "Coduri TVA neclasificate" foloseste acest
+// wrapper - utilizatorul vrea sa vada direct rezultatul reverificat
+// (diferentele pe linii D300), nu oriunde a ramas scrollul paginii.
+// "Ruleaza reconcilierea" de pe formularul initial (btnRuleaza) ramane
+// neschimbat: navigheaza la rezultate, fara scroll fortat.
+async function reiaVerificareSiScroleaza() {
+  await ruleazaReconciliere();
+  if (!reconErr.textContent) {
+    titluDiferente.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+}
+
 let ultimulUnmapped = [], ultimulValidLines = {};
 
 function opDropdown(directie) {
@@ -962,13 +974,14 @@ function afiseazaRezultate(b) {
       'precompletat ANAF.';
     tabelDiferente.innerHTML =
       '<thead><tr><th>Tip</th><th>Linie</th><th>Denumire</th>' +
-      '<th class="num">Delta baza</th><th class="num">Delta TVA</th></tr></thead><tbody>' +
+      '<th class="num">Delta baza</th><th class="num">Delta TVA</th><th></th></tr></thead><tbody>' +
       (b.differences.map(d =>
         `<tr class="sever"><td><span class="chip problema">${TIP_DIFERENTA[d.diff_type] || d.diff_type}</span></td>` +
         `<td class="cod">${d.line_no}</td><td>${d.label}</td>` +
         `<td class="num ${d.delta_base < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_base)}</td>` +
-        `<td class="num ${d.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_vat)}</td></tr>`).join('') ||
-      '<tr><td colspan="5" class="gol">Nicio diferenta — jurnalul firmei corespunde cu decontul ANAF.</td></tr>') +
+        `<td class="num ${d.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_vat)}</td>` +
+        `<td><button class="secundar" onclick="toggleFacturiLinie(this, '${d.line_no}')">Vezi facturile</button></td></tr>`).join('') ||
+      '<tr><td colspan="6" class="gol">Nicio diferenta — jurnalul firmei corespunde cu decontul ANAF.</td></tr>') +
       '</tbody>';
     return;
   }
@@ -1007,6 +1020,47 @@ function afiseazaRezultate(b) {
 
 function exporta() {
   window.location = `/api/reconciliations/${reconCurent}/export`;
+}
+
+async function toggleFacturiLinie(btn, linie) {
+  const tr = btn.closest('tr');
+  const existent = tr.nextElementSibling;
+  if (existent && existent.classList.contains('facturi-linie')) {
+    existent.remove();
+    btn.textContent = 'Vezi facturile';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Se incarca...';
+  try {
+    const r = await api(`/api/reconciliations/${reconCurent}/facturi?linie=${encodeURIComponent(linie)}`);
+    const rows = r.ok ? await r.json() : [];
+    const sub = document.createElement('tr');
+    sub.className = 'facturi-linie';
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    if (!rows.length) {
+      cell.innerHTML = '<p class="sub" style="margin:8px 0">' +
+        'Detaliul pe facturi nu e disponibil pentru aceasta rulare.</p>';
+    } else {
+      cell.innerHTML =
+        '<p class="sub" style="margin:8px 0">Facturile firmei clasificate pe aceasta ' +
+        'linie (decontul precompletat ANAF nu are detaliu pe factura — nu e o comparatie ' +
+        'factura-cu-factura, doar evidenta firmei).</p>' +
+        '<table style="margin:0;width:100%"><thead><tr><th>Data</th><th>Document</th>' +
+        '<th>CUI partener</th><th class="num">Baza</th><th class="num">TVA</th></tr></thead><tbody>' +
+        rows.map(f => `<tr><td>${f.date || ''}</td><td class="cod">${f.invoice_no || ''}</td>` +
+          `<td class="cod">${f.partner_cui || ''}</td><td class="num">${num(f.base)}</td>` +
+          `<td class="num">${num(f.vat)}</td></tr>`).join('') + '</tbody></table>';
+    }
+    sub.appendChild(cell);
+    tr.after(sub);
+    btn.textContent = 'Ascunde facturile';
+  } catch (e) {
+    btn.textContent = 'Vezi facturile';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function reiaAltaVerificare() {
