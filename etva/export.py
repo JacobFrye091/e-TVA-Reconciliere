@@ -4,6 +4,9 @@ from openpyxl.styles import Font, PatternFill
 
 _RED = PatternFill("solid", start_color="FFC7CE")
 _BOLD = Font(bold=True)
+_ITALIC = Font(italic=True)
+_NOTA = ("Notă: valorile sugerate sunt informative. Platforma nu se implică în corecții — "
+        "corectarea jurnalului contabil rămâne responsabilitatea internă a firmei/contabilului.")
 
 _SUMAR_HEADER = ["Categorie", "Baza firma", "TVA firma", "Baza ANAF",
                  "TVA ANAF", "Baza sugerata", "TVA sugerata", "Status"]
@@ -19,7 +22,8 @@ def write_report(result, suggestions, path, client_name, period) -> None:
     ws["A1"] = f"Client: {client_name}"
     ws["A2"] = f"Perioada: {period}"
     ws["A1"].font = ws["A2"].font = _BOLD
-    ws.append([])
+    ws.append([_NOTA])
+    ws["A3"].font = _ITALIC
     ws.append(_SUMAR_HEADER)
     for cell in ws[4]:
         cell.font = _BOLD
@@ -62,7 +66,8 @@ def write_report_lines(result, suggestions, path, client_name, period) -> None:
     ws["A1"] = f"Client: {client_name}"
     ws["A2"] = f"Perioada: {period}"
     ws["A1"].font = ws["A2"].font = _BOLD
-    ws.append([])
+    ws.append([_NOTA])
+    ws["A3"].font = _ITALIC
     ws.append(_SUMAR_HEADER_LINII)
     for cell in ws[4]:
         cell.font = _BOLD

@@ -105,6 +105,10 @@ II. OBIECTUL CONTRACTULUI
 instrument de reconciliere între jurnalul contabil al BENEFICIARULUI și \
 datele precompletate transmise de ANAF pentru decontul de TVA (D300).
 
+2.2. PRESTATORUL nu se implică în corecții: platforma identifică automat \
+diferențele față de decontul ANAF, însă corectarea datelor din jurnalul \
+contabil al BENEFICIARULUI este de competența internă a acestuia.
+
 III. DURATA CONTRACTULUI
 
 3.1. Contractul se încheie pentru un ciclu de facturare {eticheta_ciclu}, \
