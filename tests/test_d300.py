@@ -1,5 +1,9 @@
+import pytest
+
 from etva.d300 import (suggest_line, classify_legend, with_mirrored_lines,
-                       with_parent_rollups, expand_derived_lines)
+                       with_parent_rollups, expand_derived_lines,
+                       valid_lines_for_direction, validate_overrides,
+                       MappingSectionError, TOTAL_LINES)
 
 
 def test_confident_rate_mappings():
@@ -34,12 +38,53 @@ def test_classify_legend_sums_multiple_codes_onto_one_line():
     mapped, unmapped = classify_legend("vanzari", legend)
     assert mapped["9"] == {"base": 150.0, "vat": 31.5}
     assert len(unmapped) == 1 and unmapped[0]["cod"] == "10"
+    assert unmapped[0]["direction"] == "vanzari"
 
 
 def test_classify_legend_override():
     legend = {"weird": {"label": "ceva neclar", "base": 10.0, "vat": 2.0}}
     mapped, unmapped = classify_legend("cumparari", legend, {"weird": "29"})
     assert mapped == {"29": {"base": 10.0, "vat": 2.0}}
+    assert unmapped == []
+
+
+def test_valid_lines_for_direction_excludes_totals_and_opposite_section():
+    vanzari = valid_lines_for_direction("vanzari")
+    cumparari = valid_lines_for_direction("cumparari")
+    assert not (vanzari.keys() & TOTAL_LINES)
+    assert not (cumparari.keys() & TOTAL_LINES)
+    assert "9" in vanzari and "14+15" in vanzari
+    assert "20" not in vanzari and "24" not in vanzari
+    assert "24" in cumparari and "29" in cumparari
+    assert "9" not in cumparari
+
+
+def test_validate_overrides_flags_cross_section_and_unknown_line():
+    errors = validate_overrides("cumparari", {"14": "14+15", "24": "24"})
+    assert len(errors) == 1
+    assert "14" in errors[0] and "14+15" in errors[0]
+    errors = validate_overrides("vanzari", {"x": "99"})
+    assert "necunoscuta" in errors[0]
+
+
+def test_classify_legend_raises_on_cross_section_override():
+    # Bug real reprodus: un cod din jurnalul de cumparari ("14", "AIC
+    # neimpozabile") mapat pe o linie exclusiv de vanzari ("14+15") -
+    # trebuie respins, nu acceptat tacit in totalul companiei.
+    legend = {"14": {"label": "AIC neimpozabile", "base": 662.0, "vat": 0.0}}
+    with pytest.raises(MappingSectionError) as exc:
+        classify_legend("cumparari", legend, {"14": "14+15"})
+    assert "14+15" in str(exc.value)
+
+
+def test_classify_legend_ignores_override_for_absent_cod():
+    # overrides poate fi un dict plat, partajat intre fisierul de vanzari
+    # si cel de cumparari din aceeasi cerere - o intrare destinata
+    # celuilalt fisier nu trebuie nici validata, nici aplicata aici.
+    legend = {"9x": {"label": "cota 21%", "base": 10.0, "vat": 2.1}}
+    mapped, unmapped = classify_legend(
+        "vanzari", legend, {"14": "14+15"})  # "14" nu exista in acest legend
+    assert mapped == {"9": {"base": 10.0, "vat": 2.1}}
     assert unmapped == []
 
 

@@ -384,9 +384,14 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
     <div class="card" id="cardNeclasificate" style="display:none">
       <h3>Coduri TVA neclasificate</h3>
       <p class="sub">Aceste coduri din jurnalul firmei nu au putut fi asociate automat unei linii
-        din D300 (situatii legal ambigue — nu se ghiceste). Verifica-le manual si, daca e nevoie,
-        rerulează cu o corectie in campul „Corectie mapare coduri TVA firma".</p>
+        din D300 (situatii legal ambigue — nu se ghiceste). Alege linia corecta pentru fiecare cod
+        si apasa „Confirma" — maparea ramane valabila automat la reconcilierile viitoare ale
+        acestui client.</p>
       <table id="tabelNeclasificate"></table>
+      <div class="actiuni" id="actiuniMapareConfirmata" style="display:none;margin-top:12px">
+        <button class="secundar" onclick="ruleazaReconciliere()">Reia verificarea cu mapările confirmate</button>
+      </div>
+      <p id="mapareErr" class="eroare"></p>
     </div>
     <div class="card">
       <h3 id="titluSumar">Sumar pe categorii</h3>
@@ -866,6 +871,34 @@ async function ruleazaReconciliere() {
   }
 }
 
+let ultimulUnmapped = [], ultimulValidLines = {};
+
+function opDropdown(directie) {
+  const linii = ultimulValidLines[directie] || {};
+  return '<option value="">— alege linia D300 —</option>' +
+    Object.entries(linii).map(([ln, lbl]) => `<option value="${ln}">${ln} — ${lbl}</option>`).join('');
+}
+
+async function confirmaMapare(i) {
+  mapareErr.textContent = '';
+  const u = ultimulUnmapped[i];
+  const sel = document.getElementById('selMap' + i);
+  if (!sel.value) return;
+  const r = await api('/api/cod-mapari', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({client_id: firmaDirecta ? null : +selClient.value,
+                          direction: u.direction, cod: u.cod, line_no: sel.value})});
+  if (!r.ok) {
+    const body = await r.json();
+    mapareErr.textContent = body.error || 'Maparea nu a putut fi salvata.';
+    return;
+  }
+  document.getElementById('btnMap' + i).textContent = 'Salvat';
+  document.getElementById('btnMap' + i).disabled = true;
+  sel.disabled = true;
+  actiuniMapareConfirmata.style.display = '';
+}
+
 function afiseazaRezultate(b) {
   const peLinii = b.mode === 'd300_lines';
 
@@ -886,15 +919,22 @@ function afiseazaRezultate(b) {
        <div class="val ${nProbleme ? 'rau' : 'bun'}">${nProbleme}</div>
        <div class="sub-val">${nProbleme ? 'necesita verificare' : 'totul corespunde'}</div></div>`;
 
-  if (b.unmapped && b.unmapped.length) {
+  ultimulUnmapped = b.unmapped || [];
+  ultimulValidLines = b.valid_lines || {};
+  mapareErr.textContent = '';
+  actiuniMapareConfirmata.style.display = 'none';
+  if (ultimulUnmapped.length) {
     cardNeclasificate.style.display = '';
     tabelNeclasificate.innerHTML =
-      '<thead><tr><th>Cod</th><th>Denumire (din jurnal)</th><th class="num">Baza</th>' +
-      '<th class="num">TVA</th></tr></thead><tbody>' +
-      b.unmapped.map(u =>
-        `<tr><td class="cod">${u.cod}</td><td>${u.label}</td>` +
-        `<td class="num">${num(u.base)}</td><td class="num">${num(u.vat)}</td></tr>`).join('') +
-      '</tbody>';
+      '<thead><tr><th>Cod</th><th>Denumire (din jurnal)</th><th>Directie</th>' +
+      '<th class="num">Baza</th><th class="num">TVA</th><th>Mapeaza pe linia D300</th>' +
+      '<th></th></tr></thead><tbody>' +
+      ultimulUnmapped.map((u, i) =>
+        `<tr><td class="cod">${u.cod}</td><td>${u.label}</td><td>${u.direction}</td>` +
+        `<td class="num">${num(u.base)}</td><td class="num">${num(u.vat)}</td>` +
+        `<td><select id="selMap${i}">${opDropdown(u.direction)}</select></td>` +
+        `<td><button class="secundar" id="btnMap${i}" onclick="confirmaMapare(${i})">Confirma</button></td></tr>`
+      ).join('') + '</tbody>';
   } else {
     cardNeclasificate.style.display = 'none';
   }

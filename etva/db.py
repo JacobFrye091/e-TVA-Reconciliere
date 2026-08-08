@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS differences(
 CREATE TABLE IF NOT EXISTS audit_log(
   id INTEGER PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
   entity TEXT, entity_id TEXT, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cod_mappings(
+  id INTEGER PRIMARY KEY, client_id INTEGER, direction TEXT NOT NULL,
+  cod TEXT NOT NULL, line_no TEXT NOT NULL, updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cod_mappings_client
+  ON cod_mappings(client_id, direction, cod) WHERE client_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cod_mappings_direct
+  ON cod_mappings(direction, cod) WHERE client_id IS NULL;
 """
 
 

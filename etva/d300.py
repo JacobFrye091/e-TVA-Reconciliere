@@ -64,6 +64,32 @@ D300_LINES = {
 # operations — never the target of an automatic per-code mapping.
 TOTAL_LINES = {"19", "30", "31", "32", "33", "34", "35"}
 
+# Explicit split of D300_LINES into the two sections a journal's direction
+# can legally target — a "vanzari" (taxa colectata) code must never land on
+# a "cumparari" (taxa deductibila) line or vice versa. Previously this was
+# only implicit in D300_LINES' key ordering; classify_legend() below relies
+# on this explicit constant to reject cross-section mappings instead of
+# silently accepting them (see MappingSectionError).
+COLLECTED_LINES = {
+    "1", "2", "3", "3.1", "4", "5", "5.1", "6", "7", "7.1", "8", "9",
+    "10", "11", "12", "12.1", "12.2", "13", "14+15", "16", "17", "18", "19",
+}
+DEDUCTIBLE_LINES = {
+    "20", "20.1", "21", "22", "22.1", "23", "24", "25", "26", "26.1",
+    "26.2", "27", "28", "29", "29.1", "30", "31", "32", "33", "34", "35",
+}
+DIRECTION_SECTIONS = {"vanzari": COLLECTED_LINES, "cumparari": DEDUCTIBLE_LINES}
+
+
+def valid_lines_for_direction(direction: str) -> dict:
+    """{line_no: label} of D300 lines a journal of this direction may
+    legally be mapped onto — the matching section minus TOTAL_LINES (a
+    computed total is never the target of a per-code mapping). Single
+    source of truth for the frontend's guided mapping picker, so
+    D300_LINES never needs to be duplicated there."""
+    return {ln: D300_LINES[ln]
+           for ln in DIRECTION_SECTIONS.get(direction, set()) - TOTAL_LINES}
+
 # For reverse-charge operations, the buyer both "collects" (self-charges)
 # and deducts the same VAT, so ANAF's own form mirrors the identical amount
 # onto both sections (its footnotes say so explicitly, e.g. "Se inscriu
@@ -186,21 +212,70 @@ def suggest_line(direction: str, label: str) -> str | None:
     return None
 
 
+class MappingSectionError(Exception):
+    """One or more overrides target a D300 line outside the journal
+    direction's section (e.g. a cumparari code forced onto a
+    vanzari-only line) or an unknown line number entirely — the exact
+    mistake this guards against: a purchases-journal code silently
+    inflating a sales-side total, or vice versa."""
+    def __init__(self, errors: "list[str]"):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+def validate_overrides(direction: str, overrides: dict) -> "list[str]":
+    """Romanian error messages for every (cod, line_no) in `overrides`
+    whose line_no isn't a valid target for `direction`. Empty list means
+    every override is section-consistent."""
+    valid = valid_lines_for_direction(direction)
+    errors = []
+    for cod, line_no in overrides.items():
+        if line_no in valid:
+            continue
+        if line_no not in D300_LINES:
+            errors.append(f"Codul '{cod}' este mapat pe linia D300 "
+                          f"necunoscuta '{line_no}'.")
+        else:
+            sectiune = ("taxa colectata (vanzari)" if direction == "vanzari"
+                       else "taxa deductibila (cumparari)")
+            errors.append(
+                f"Codul '{cod}' provine dintr-un jurnal de {direction} si nu "
+                f"poate fi mapat pe linia '{line_no}' — aceasta apartine "
+                f"sectiunii opuse, nu de {sectiune}.")
+    return errors
+
+
 def classify_legend(direction: str, legend: dict, overrides: dict | None = None):
     """Group a journal's VAT-code legend onto D300 lines.
 
     `overrides` (cod -> line_no) lets the accountant correct or supply a
     mapping the automatic classifier left unmapped. Returns
-    (mapped: {line_no: {base, vat}}, unmapped: [{cod, label, base, vat}]).
+    (mapped: {line_no: {base, vat}}, unmapped: [{cod, label, base, vat,
+    direction}]).
+
+    Raises MappingSectionError if an override for a cod actually present
+    in `legend` targets a line outside `direction`'s section. `overrides`
+    may be a flat dict shared across a vanzari file and a cumparari file
+    in the same request (see portal/app.py::new_reconciliation) — only
+    entries whose cod appears in THIS legend are validated/applied, so
+    entries meant for the other file are silently ignored here rather
+    than rejected.
     """
     overrides = overrides or {}
+    applicabile = {cod: line_no for cod, line_no in overrides.items()
+                  if cod in legend}
+    errors = validate_overrides(direction, applicabile)
+    if errors:
+        raise MappingSectionError(errors)
+
     mapped: dict = {}
     unmapped: list = []
     for cod, info in legend.items():
-        line_no = overrides.get(cod) or suggest_line(direction, info["label"])
+        line_no = applicabile.get(cod) or suggest_line(direction, info["label"])
         if line_no is None:
             unmapped.append({"cod": cod, "label": info["label"],
-                             "base": info["base"], "vat": info["vat"]})
+                             "base": info["base"], "vat": info["vat"],
+                             "direction": direction})
             continue
         acc = mapped.setdefault(line_no, {"base": 0.0, "vat": 0.0})
         acc["base"] += info["base"]

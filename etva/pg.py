@@ -185,6 +185,11 @@ EXPECTED_SCHEMA = {
         "action": "text", "entity": "text", "entity_id": "text",
         "ts": "timestamp with time zone",
     },
+    "cod_mappings": {
+        "id": "integer", "firm_id": "integer", "client_id": "integer",
+        "direction": "text", "cod": "text", "line_no": "text",
+        "updated_at": "timestamp with time zone", "updated_by": "text",
+    },
 }
 
 

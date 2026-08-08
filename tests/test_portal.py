@@ -1446,7 +1446,142 @@ def test_d300_unmapped_codes_are_surfaced(app, monkeypatch):
     }, content_type="multipart/form-data")
     body = r.get_json()
     assert body["unmapped"] == [{"cod": "99", "label": "Cod ambiguu neclasificat",
-                                 "base": 42.0, "vat": 0.0}]
+                                 "base": 42.0, "vat": 0.0, "direction": "vanzari"}]
+    assert "9" in body["valid_lines"]["vanzari"]
+    assert "9" not in body["valid_lines"]["cumparari"]
+
+
+def test_cod_mapping_cross_section_is_rejected(app, monkeypatch):
+    # Recreeaza bug-ul raportat: un cod din jurnalul de CUMPARARI mapat
+    # (prin campul liber cod_mapping) pe o linie exclusiv de VANZARI -
+    # trebuie respins cu eroare clara, nu acceptat tacit in total.
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={}))
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="cumparari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"14": {"label": "AIC neimpozabile",
+                                          "base": 662.0, "vat": 0.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"placeholder"), "cumparari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+        "cod_mapping": '{"14": "14+15"}',
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "14+15" in r.get_json()["errors"][0]
+
+
+def test_cod_mapping_persisted_via_picker_applies_on_next_run(app, monkeypatch):
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={}))
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="vanzari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"17": {"label": "Livrari scutite fara drept de deducere",
+                                          "base": 60.5, "vat": 0.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # Prima rulare: codul "17" ramane neclasificat.
+    r1 = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    assert r1.get_json()["unmapped"][0]["cod"] == "17"
+
+    # Confirma maparea prin picker - fara cod_mapping in cerere.
+    rmap = c.post("/api/cod-mapari", json={
+        "client_id": cid, "direction": "vanzari", "cod": "17", "line_no": "14+15"})
+    assert rmap.status_code == 200
+
+    # A doua rulare, FARA cod_mapping: maparea persistata se aplica automat.
+    r2 = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    body2 = r2.get_json()
+    assert "unmapped" not in body2 or body2["unmapped"] == []
+    assert body2["totals_company"]["14+15"] == {"base": 60.5, "vat": 0.0}
+
+
+def test_run_scoped_cod_mapping_does_not_persist(app, monkeypatch):
+    # Campul liber cod_mapping castiga DOAR pentru rularea curenta - nu
+    # trebuie sa scrie nimic in cod_mappings (asta a cauzat bug-ul
+    # original: o mapare gresita, ghicita, ramasa "permanenta" ar fi fost
+    # si mai grav decat una gresita o singura data).
+    import portal.app as app_module
+    monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
+        company_cui="RO111", company_name="Exemplu Test SRL", period="2026-06",
+        lines={}))
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="vanzari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"17": {"label": "Livrari scutite fara drept de deducere",
+                                          "base": 60.5, "vat": 0.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+        "cod_mapping": '{"17": "14+15"}',
+    }, content_type="multipart/form-data")
+
+    assert c.get(f"/api/cod-mapari?client_id={cid}").get_json() == []
+
+
+def test_cod_mapari_get_and_delete(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/cod-mapari", json={
+        "client_id": cid, "direction": "vanzari", "cod": "17", "line_no": "14+15"})
+    assert r.status_code == 200
+
+    lista = c.get(f"/api/cod-mapari?client_id={cid}").get_json()
+    assert len(lista) == 1 and lista[0]["cod"] == "17"
+
+    r_del = c.delete(f"/api/cod-mapari/{lista[0]['id']}")
+    assert r_del.status_code == 200
+    assert c.get(f"/api/cod-mapari?client_id={cid}").get_json() == []
+
+
+def test_cod_mapari_rejects_cross_section_line(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/cod-mapari", json={
+        "client_id": cid, "direction": "cumparari", "cod": "14", "line_no": "14+15"})
+    assert r.status_code == 400
 
 
 # ---------- Model e-TVA journal format (alternativa la SAGA) ----------

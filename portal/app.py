@@ -26,7 +26,7 @@ from portal import trial_reminders as remind_mod
 from etva import db as fdb
 from etva import dbcompat
 from etva import pg
-from etva import audit, clients
+from etva import audit, clients, cod_mappings
 from etva import anaf_cui
 from etva import anaf_oauth
 from etva import digital_signature
@@ -41,7 +41,8 @@ from etva.importer.model import (parse_model_journal, NotModelFormat,
 from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
 from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
                                           NotAnafP300Json)
-from etva.d300 import classify_legend, expand_derived_lines, D300_LINES
+from etva.d300 import (classify_legend, expand_derived_lines, D300_LINES,
+                       valid_lines_for_direction, MappingSectionError)
 from etva.engine import reconcile, reconcile_d300
 from etva.advisor import suggest_d300, suggest_d300_lines
 
@@ -3353,6 +3354,52 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                   str(data["client_id"]))
         return jsonify({"ok": True})
 
+    # Mapari cod TVA -> linie D300 confirmate prin picker-ul ghidat din
+    # cardul "Coduri TVA neclasificate" (vezi etva/cod_mappings.py) - nu
+    # din campul liber cod_mapping, care ramane un one-off per rulare
+    # (vezi new_reconciliation mai jos).
+    @app.post("/api/cod-mapari")
+    @require("reconciliere.creare")
+    def save_cod_mapare(ident):
+        fc = firm_conn(ident["firm_id"])
+        data = request.get_json(force=True)
+        direction = data.get("direction")
+        cod = data.get("cod")
+        line_no = data.get("line_no")
+        if direction not in ("vanzari", "cumparari") or not cod or not line_no:
+            return jsonify({"error": "Date incomplete pentru mapare."}), 400
+        client_id = None
+        if ident["firm_tip"] != pdb.FIRM_TIP_DIRECT:
+            brut = data.get("client_id")
+            if brut is None:
+                return jsonify({"error":
+                    "Lipseste clientul pentru care se salveaza maparea."}), 400
+            client_id = int(brut)
+        try:
+            cod_mappings.save_mapping(fc, client_id, direction, cod, line_no,
+                                      ident["username"])
+        except cod_mappings.MappingError as e:
+            return jsonify({"error": str(e)}), 400
+        audit.log(fc, ident["username"], "cod_mapare.confirmare", "cod_mapping",
+                 f"{client_id}:{direction}:{cod}")
+        return jsonify({"ok": True})
+
+    @app.get("/api/cod-mapari")
+    @require("reconciliere.creare")
+    def list_cod_mapari(ident):
+        fc = firm_conn(ident["firm_id"])
+        client_id = request.args.get("client_id", type=int)
+        return jsonify(cod_mappings.list_for_client(fc, client_id))
+
+    @app.delete("/api/cod-mapari/<int:mapping_id>")
+    @require("reconciliere.creare")
+    def sterge_cod_mapare(ident, mapping_id):
+        fc = firm_conn(ident["firm_id"])
+        cod_mappings.delete_mapping(fc, mapping_id)
+        audit.log(fc, ident["username"], "cod_mapare.stergere", "cod_mapping",
+                 str(mapping_id))
+        return jsonify({"ok": True})
+
     def _save_upload(f):
         path = os.path.join(upload_dir, secrets.token_hex(8) + "_" + f.filename)
         f.save(path)
@@ -3420,6 +3467,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                    "suggestions": suggest_d300_lines(result)}
         if unmapped:
             payload["unmapped"] = unmapped
+            payload["valid_lines"] = {
+                "vanzari": valid_lines_for_direction("vanzari"),
+                "cumparari": valid_lines_for_direction("cumparari")}
         return payload
 
     @app.get("/api/sabloane/jurnal/<directie>")
@@ -3503,6 +3553,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             cod_mapping = None
             if request.form.get("cod_mapping"):
                 cod_mapping = json.loads(request.form["cod_mapping"])
+            # Maparile confirmate anterior prin picker-ul ghidat (vezi
+            # etva/cod_mappings.py) - scopate pe client (sau pe firma
+            # "direct" daca client_id e None), reaplicate automat aici.
+            # cod_mapping (campul liber al formularului) castiga DOAR
+            # pentru aceasta rulare - nu se scrie niciodata singur in
+            # cod_mappings (vezi docstring-ul modulului).
+            persisted = cod_mappings.load_for_client(fc, client_id)
 
             company_lines: dict = {}
             unmapped = []
@@ -3511,13 +3568,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     saved_path = _save_upload(f)
                     if format_jurnal == "model":
                         journal = parse_model_journal(saved_path)
-                        overrides = {
-                            **{cod: cod for cod in journal.legend
-                              if cod in D300_LINES},
-                            **(cod_mapping or {})}
+                        base_overrides = {cod: cod for cod in journal.legend
+                                          if cod in D300_LINES}
                     else:
                         journal = parse_saga_journal(saved_path)
-                        overrides = cod_mapping
+                        base_overrides = {}
+                    persisted_dir = {cod: ln for (d, cod), ln in persisted.items()
+                                     if d == journal.direction}
+                    overrides = {**base_overrides, **persisted_dir,
+                                **(cod_mapping or {})}
                     mapped, unmapped_here = classify_legend(
                         journal.direction, journal.legend, overrides)
                     unmapped.extend(unmapped_here)
@@ -3530,6 +3589,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 return jsonify({"errors": [str(e), _HINT_MODEL]}), 400
             except NotModelFormat as e:
                 return jsonify({"errors": [str(e)]}), 400
+            except MappingSectionError as e:
+                return jsonify({"errors": e.errors}), 400
             company_lines = expand_derived_lines(company_lines)
 
             rid = _persist_lines(fc, ident["username"], client_id, period,
