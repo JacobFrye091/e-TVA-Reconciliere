@@ -559,7 +559,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     @app.get("/api/anaf/denumire")
     def anaf_denumire():
         """Used by the registration/add-firm forms' 'Cod CUI Completat'
-        checkbox to auto-fill the (readonly) firm-name field from ANAF."""
+        checkbox, and by the SPA's 'Adauga client' form's 'Verifica CUI'
+        button, to auto-fill the (readonly) firm-name field from ANAF."""
         cui = request.args.get("cui", "").strip()
         if not cui:
             return jsonify({"denumire": None, "eroare": "Introdu un CUI."})

@@ -290,10 +290,15 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <div id="listaClienti"></div>
       <div id="cardClientNou" style="display:none">
         <div class="actiuni" style="margin-top:16px">
-          <input id="cuiNou" placeholder="CUI (ex: RO12345678)" style="max-width:220px">
-          <input id="numeNou" placeholder="Denumire firma" style="max-width:320px">
-          <button class="secundar" onclick="adaugaClient()">Adauga client</button>
+          <input id="cuiNou" placeholder="CUI (ex: RO12345678)" style="max-width:220px"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();verificaCuiNou();}"
+                 oninput="numeNou.value='';btnAdaugaClient.disabled=true;">
+          <button class="secundar" id="btnVerificaCuiNou" onclick="verificaCuiNou()">Verifica CUI</button>
+          <input id="numeNou" placeholder="Se completeaza dupa verificarea CUI" style="max-width:320px" readonly>
+          <button class="secundar" id="btnAdaugaClient" onclick="adaugaClient()" disabled>Adauga client</button>
         </div>
+        <p class="sub" id="cuiNouStare" style="margin:6px 0 0">Introdu CUI-ul si apasa
+          "Verifica CUI" (sau Enter) ca sa preluam automat denumirea firmei de la ANAF.</p>
         <label class="check" style="margin-bottom:0">
           <input type="checkbox" id="gdprClientNou">
           <span>Confirm ca firma noastra are un contract / o imputernicire cu
@@ -581,7 +586,7 @@ function pasiiTurului() {
   if (!firmaDirecta) {
     pasi.push({view: 'dashboard', sel: '#cardClienti', titlu: 'Clientii tai',
       text: 'Aici vezi toti clientii pentru care faci reconciliere. Adaugi unul nou ' +
-        'completand CUI-ul si denumirea firmei, mai jos in card.'});
+        'introducand CUI-ul si apasand "Verifica CUI" — denumirea se preia automat de la ANAF.'});
     pasi.push({view: 'dashboard', sel: '#campClient', titlu: 'Alege clientul',
       text: 'Cand pornesti o reconciliere noua, alegi din lista clientul pentru care o faci.'});
   }
@@ -755,8 +760,42 @@ async function incarcaClienti() {
   if (document.getElementById('alocClient')) alocClient.innerHTML = optiuni;
 }
 
+async function verificaCuiNou() {
+  const cui = cuiNou.value.trim();
+  numeNou.value = ''; btnAdaugaClient.disabled = true;
+  cuiNouStare.style.color = '';
+  if (!cui) {
+    cuiNouStare.textContent = 'Completeaza mai intai CUI-ul.';
+    cuiNouStare.style.color = 'var(--danger)';
+    return;
+  }
+  btnVerificaCuiNou.disabled = true;
+  cuiNouStare.textContent = 'Se verifica CUI-ul la ANAF...';
+  try {
+    const r = await fetch('/api/anaf/denumire?cui=' + encodeURIComponent(cui));
+    const data = await r.json();
+    if (data.eroare) {
+      cuiNouStare.textContent = data.eroare;
+      cuiNouStare.style.color = 'var(--danger)';
+      return;
+    }
+    numeNou.value = data.denumire;
+    btnAdaugaClient.disabled = false;
+    cuiNouStare.textContent = 'Denumire preluata de la ANAF: ' + data.denumire + '.';
+  } catch (e) {
+    cuiNouStare.textContent = 'Nu am putut contacta serviciul ANAF chiar acum. Incearca din nou.';
+    cuiNouStare.style.color = 'var(--danger)';
+  } finally {
+    btnVerificaCuiNou.disabled = false;
+  }
+}
+
 async function adaugaClient() {
   clientErr.textContent = '';
+  if (!numeNou.value) {
+    clientErr.textContent = 'Verifica mai intai CUI-ul, ca sa preluam denumirea de la ANAF.';
+    return;
+  }
   if (!gdprClientNou.checked) {
     clientErr.textContent = 'Bifeaza mai intai confirmarea GDPR - fara acordul '
       + 'clientului tau pentru prelucrarea datelor, nu il putem adauga.';
@@ -769,6 +808,10 @@ async function adaugaClient() {
   const body = await r.json();
   if (r.ok) {
     cuiNou.value = ''; numeNou.value = ''; gdprClientNou.checked = false;
+    btnAdaugaClient.disabled = true;
+    cuiNouStare.textContent = 'Introdu CUI-ul si apasa "Verifica CUI" (sau Enter) ca sa '
+      + 'preluam automat denumirea firmei de la ANAF.';
+    cuiNouStare.style.color = '';
     await incarcaClienti();
   } else {
     clientErr.textContent = body.error || 'Clientul nu a putut fi adaugat.';
