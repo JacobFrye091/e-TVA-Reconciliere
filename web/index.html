@@ -1073,15 +1073,15 @@ async function toggleFacturiLinie(btn, linie) {
     } else {
       const areCandidati = rows.some(f => f.candidat);
       const nota = areCandidati
-        ? 'Facturile evidentiate mai jos au suma cea mai apropiata de diferenta ' +
+        ? 'Cele evidentiate mai jos au suma cea mai apropiata de diferenta ' +
           '— verifica-le primele.'
-        : 'Nu am putut identifica automat o factura anume care sa explice ' +
-          'diferenta — poate veni din mai multe facturi mici sau dintr-o ' +
-          'operatiune pe care ANAF nu a inregistrat-o.';
+        : 'N-am gasit o factura anume care sa explice diferenta — poate fi ' +
+          'vorba de mai multe facturi mici adunate, sau de o operatiune pe ' +
+          'care ANAF n-a prins-o.';
       cell.innerHTML =
-        '<div class="avert"><p class="sub" style="margin:0 0 8px">Facturile firmei clasificate pe aceasta ' +
-        'linie (decontul precompletat ANAF nu are detaliu pe factura — nu e o comparatie ' +
-        `factura-cu-factura, doar evidenta firmei). ${nota}</p>` +
+        '<div class="avert"><p class="sub" style="margin:0 0 8px">Astea sunt facturile firmei de pe aceasta ' +
+        'linie — decontul ANAF nu are detaliu pe factura, deci nu le putem compara una la una, ' +
+        `doar sa-ti aratam ce a raportat firma. ${nota}</p>` +
         '<table style="margin:0;width:100%"><thead><tr><th>Data</th><th>Document</th>' +
         '<th>CUI partener</th><th class="num">Baza</th><th class="num">TVA</th></tr></thead><tbody>' +
         rows.map(f => `<tr${f.candidat ? ' class="sever"' : ''}><td>${f.date || ''}</td>` +
