@@ -601,17 +601,41 @@ function pasiiTurului() {
     text: 'Implicit, aplicatia citeste exportul SAGA. Daca folosesti alt program de ' +
       'contabilitate, alege "Alt program", descarca modelul e-TVA (vanzari si ' +
       'cumparari), completeaza-l si incarca-l in locul exportului SAGA.'});
-  pasi.push({view: 'dashboard', sel: '#campJurnale', titlu: 'Jurnalele firmei',
-    text: 'Incarci aici jurnalul de vanzari SI jurnalul de cumparari (fisiere Excel ' +
-      '.xls / .xlsx, in formatul ales mai sus).'});
+  pasi.push({view: 'dashboard', sel: '#fisierVanzari', titlu: 'Jurnalul de vanzari',
+    text: 'Incarci aici exportul jurnalului de vanzari (fisier Excel .xls / .xlsx, ' +
+      'in formatul ales mai sus).'});
+  pasi.push({view: 'dashboard', sel: '#fisierCumparari', titlu: 'Jurnalul de cumparari',
+    text: 'La fel, jurnalul de cumparari - incarca-le pe amandoua pentru o verificare ' +
+      'completa.'});
   pasi.push({view: 'dashboard', sel: '#fisierAnaf', titlu: 'Decontul ANAF',
     text: 'Incarci aici decontul precompletat de la ANAF, descarcat din SPV (PDF sau JSON).'});
+  pasi.push({view: 'dashboard', sel: '#campAnafAuto', titlu: 'Preluare automata ANAF',
+    text: 'Daca firma are acces autorizat, poti prelua decontul direct de la ANAF, ' +
+      'fara sa mai incarci fisierul manual.'});
+  pasi.push({view: 'dashboard', sel: '#mapareAnaf', titlu: 'Mapare coloane ANAF',
+    text: 'Optional - doar daca incarci un fisier ANAF xlsx/csv (nu decontul precompletat ' +
+      'PDF/JSON) cu alte denumiri de coloane decat cele asteptate.'});
+  pasi.push({view: 'dashboard', sel: '#codMapare', titlu: 'Corectie mapare coduri TVA firma',
+    text: 'Optional - foloseste-l doar daca preferi sa scrii direct JSON. Metoda ' +
+      'recomandata e picker-ul din ecranul de Rezultate, la cardul "Coduri TVA ' +
+      'neclasificate" - alegi linia dintr-o lista, fara sa mai tastezi nimic.'});
   pasi.push({view: 'dashboard', sel: '#btnRuleaza', titlu: 'Ruleaza reconcilierea',
     text: 'Cand ai fisierele incarcate, apesi aici. Rezultatul apare imediat, cu ' +
       'toate diferentele explicate clar' + (poateExport ? ' si un buton de export Excel.' : '.')});
   if (areRezultate) {
     pasi.push({view: 'rezultate', sel: '#registruTotal', titlu: 'Rezultatul reconcilierii',
       text: 'Aici vezi totalurile si numarul de diferente dintr-o privire.'});
+    pasi.push({view: 'rezultate', sel: '#tabelNeclasificate', titlu: 'Coduri TVA neclasificate',
+      text: 'Cateva coduri din jurnalul tau pot ramane neclasificate (situatii legal ' +
+        'ambigue). Alegi linia corecta din lista pentru fiecare si apesi "Confirma" - ' +
+        'maparea ramane valabila automat si la reconcilierile viitoare ale acestui client.'});
+    pasi.push({view: 'rezultate', sel: '#tabelSumar', titlu: 'Sumar pe linii D300',
+      text: 'Valorile sugerate pentru decont, linie cu linie - de la firma acolo unde ' +
+        'corespunde cu ANAF, de la ANAF acolo unde exista diferenta.'});
+    pasi.push({view: 'rezultate', sel: '#tabelDiferente', titlu: 'Diferente',
+      text: 'Liniile unde totalul firmei nu corespunde cu decontul ANAF. Butonul ' +
+        '"Vezi facturile" de pe fiecare rand arata exact facturile firmei clasificate ' +
+        'pe acea linie, ca sa gasesti rapid unde e problema.'});
     pasi.push({view: 'rezultate', sel: '#btnReiaVerificare', titlu: 'Reia alta verificare',
       text: 'De aici pornesti direct o noua verificare, fara sa iesi din aplicatie - ' +
         'te intorci la formular cu campurile pregatite pentru urmatorul client sau ' +
@@ -1044,14 +1068,14 @@ async function toggleFacturiLinie(btn, linie) {
         'Detaliul pe facturi nu e disponibil pentru aceasta rulare.</p>';
     } else {
       cell.innerHTML =
-        '<p class="sub" style="margin:8px 0">Facturile firmei clasificate pe aceasta ' +
+        '<div class="avert"><p class="sub" style="margin:0 0 8px">Facturile firmei clasificate pe aceasta ' +
         'linie (decontul precompletat ANAF nu are detaliu pe factura — nu e o comparatie ' +
         'factura-cu-factura, doar evidenta firmei).</p>' +
         '<table style="margin:0;width:100%"><thead><tr><th>Data</th><th>Document</th>' +
         '<th>CUI partener</th><th class="num">Baza</th><th class="num">TVA</th></tr></thead><tbody>' +
         rows.map(f => `<tr><td>${f.date || ''}</td><td class="cod">${f.invoice_no || ''}</td>` +
           `<td class="cod">${f.partner_cui || ''}</td><td class="num">${num(f.base)}</td>` +
-          `<td class="num">${num(f.vat)}</td></tr>`).join('') + '</tbody></table>';
+          `<td class="num">${num(f.vat)}</td></tr>`).join('') + '</tbody></table></div>';
     }
     sub.appendChild(cell);
     tr.after(sub);
