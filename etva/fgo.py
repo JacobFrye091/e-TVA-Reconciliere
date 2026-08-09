@@ -135,7 +135,20 @@ def emite_factura(cod_unic: str, cheie_privata: str, platforma_url: str, mediu: 
     intreg (ex. 21.0, cum il produce Python dintr-un form field parsat cu
     type=float) e RESPINS de FGO cu "CotaTVA ... nu a fost transmisa sau
     valoarea 21,0 nu exista in nomenclator" - trebuie trimis ca 21 (int).
-    Normalizat mai jos, ca apelantul sa nu trebuiasca sa stie de asta."""
+    Normalizat mai jos, ca apelantul sa nu trebuiasca sa stie de asta.
+
+    CONFIRMAT EMPIRIC (2026-08-09, pe api-testuat, facturile VML 0002-0004):
+    un Continut cu 2 linii si CodArticol noi (RISC_FISCAL_SIMPLU/
+    RISC_FISCAL_COMPLET) e acceptat direct - FGO creeaza articolul in
+    catalog la prima utilizare, iar refolosirea aceluiasi cod pe facturi
+    ulterioare merge fara duplicare. ATENTIE insa: o factura IDENTICA
+    (acelasi client + acelasi Continut, aceeasi zi) emisa imediat dupa una
+    anterioara e respinsa cu 409 Conflict - anti-dubla-emitere la nivel de
+    FACTURA, nu de articol. Inofensiv pe fluxul real (facturile difera
+    mereu prin client/perioada/sume), dar important la retry: un retry orb
+    al aceluiasi payload dupa un timeout poate primi 409 desi factura
+    ORIGINALA s-a emis - verifica intai cu get_status inainte sa tratezi
+    409 ca esec."""
     continut_normalizat = []
     for linie in continut:
         linie = dict(linie)
