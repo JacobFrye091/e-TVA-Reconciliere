@@ -23,11 +23,15 @@ from portal import contract as contract_mod
 from portal import backup as backup_mod
 from portal import backup_pg
 from portal import trial_reminders as remind_mod
+from portal import risk_alerts as risk_alerts_mod
+from portal import risc_fiscal_report
 from etva import db as fdb
 from etva import dbcompat
 from etva import pg
 from etva import audit, clients, cod_mappings
 from etva import anaf_cui
+from etva import risc_fiscal
+from etva import risc_fiscal_store
 from etva import anaf_oauth
 from etva import digital_signature
 from etva import esemneaza
@@ -89,6 +93,16 @@ FGO_CHEIE_PRIVATA = os.environ.get("FGO_CHEIE_PRIVATA")
 FGO_MEDIU = os.environ.get("FGO_MEDIU", "test")
 FGO_SERIE = os.environ.get("FGO_SERIE", "VML")
 FGO_PLATFORMA_URL = os.environ.get("FGO_PLATFORMA_URL", "https://ereconciliere.ro")
+
+# CodArticol distincte pentru liniile de facturare ale modulului premium
+# Risc Fiscal, adaugate ca linii suplimentare pe factura lunara de abonament
+# (vezi _emite_factura_fgo/linii_extra) - NU acelasi cod ca "ABONAMENT",
+# altfel FGO nu poate distinge pe factura ce s-a facturat. Doua coduri
+# distincte (nu unul singur cu descriere variabila), pentru acelasi motiv
+# documentat la ABONAMENT: FGO creeaza articol nou in catalog la fiecare
+# CodArticol nou intalnit, nu la fiecare descriere noua.
+FGO_COD_ARTICOL_RISC_FISCAL_SIMPLU = "RISC_FISCAL_SIMPLU"
+FGO_COD_ARTICOL_RISC_FISCAL_COMPLET = "RISC_FISCAL_COMPLET"
 
 # Judetele Romaniei, exact cum le intoarce FGO la GET /nomenclator/judet
 # (confirmat live 2026-08-02, fara diacritice) - lista stabila, nu se
@@ -249,7 +263,8 @@ class _ReqScopedConn(dbcompat.ConnCompat):
 
 
 def create_app(data_dir: str, enable_backup_scheduler: bool = False,
-               enable_trial_reminder_scheduler: bool = False) -> Flask:
+               enable_trial_reminder_scheduler: bool = False,
+               enable_risk_alerts_scheduler: bool = False) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
     firms_dir = os.path.join(data_dir, "firms")
     upload_dir = os.path.join(data_dir, "uploads")
@@ -339,14 +354,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             db_lock.release()
 
     scheduler_lock_fd = None
-    if enable_backup_scheduler or enable_trial_reminder_scheduler:
+    if (enable_backup_scheduler or enable_trial_reminder_scheduler
+            or enable_risk_alerts_scheduler):
         scheduler_lock_fd = _is_scheduler_leader(data_dir)
         app._scheduler_lock_fd = scheduler_lock_fd  # tinut deschis cat traieste procesul
         # flush=True: stdout e block-buffered sub gunicorn/systemd (nu e un
         # TTY), altfel acest mesaj ar ramane invizibil in jurnal pana la
         # umplerea bufferului sau iesirea procesului.
         print(f"[scheduler] pid {os.getpid()}: "
-              + ("lider - pornesc firele de fundal (backup/remindere trial)"
+              + ("lider - pornesc firele de fundal "
+                 "(backup/remindere trial/alerte risc fiscal)"
                  if scheduler_lock_fd else
                  "nu sunt lider - firele de fundal nu pornesc in acest proces"),
               flush=True)
@@ -428,6 +445,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     "firm_id": firma["id"], "firm_name": firma["name"],
                     "firm_tip": firma["tip"], "firm_cui": firma["cui"],
                     "onboarding_completat": True, "este_master": True,
+                    # Masterul trebuie sa poata testa fluxul complet
+                    # (indicatorii 4-5 + Sectiunea B) fara sa treaca prin
+                    # activarea platita a modulului - vezi [[etva-model-tarifare]].
+                    "risc_fiscal_nivel": pdb.RISC_FISCAL_COMPLET,
                     "permissions": pdb.ROLE_PERMISSIONS["admin"]}
         if user is None:
             return None
@@ -435,8 +456,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if active_firm_id is None:
             return None
         row = conn.execute(
-            "SELECT uf.role, f.id, f.name, f.tip, f.cui FROM user_firms uf "
-            "JOIN firms f ON f.id = uf.firm_id "
+            "SELECT uf.role, f.id, f.name, f.tip, f.cui, f.risc_fiscal_nivel "
+            "FROM user_firms uf JOIN firms f ON f.id = uf.firm_id "
             "WHERE uf.user_id=? AND uf.firm_id=? AND uf.active=TRUE AND f.active=TRUE "
             "AND f.arhivata_la IS NULL",
             (user["id"], active_firm_id)).fetchone()
@@ -446,6 +467,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "firm_id": row["id"], "firm_name": row["name"],
                 "firm_tip": row["tip"], "firm_cui": row["cui"],
                 "onboarding_completat": bool(user["onboarding_completat"]),
+                "risc_fiscal_nivel": row["risc_fiscal_nivel"],
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
     @app.context_processor
@@ -675,24 +697,41 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         n = (peste + pachet["marime_pachet"] - 1) // pachet["marime_pachet"]
         return n, round(n * pachet["pret_pachet_lunar_ron"], 2)
 
+    def _cost_modul_risc_fiscal(firm) -> float:
+        """Costul lunar (fara TVA) al modulului premium Risc Fiscal, daca
+        firma a ales un nivel (firms.risc_fiscal_nivel - 'simplu'/'complet',
+        sau NULL daca niciunul). Pretul vine din nomenclator
+        (pdb.get_preturi_module), editabil din /master/nomenclator, nu
+        hardcodat - la fel ca restul preturilor din acest modul."""
+        nivel = firm["risc_fiscal_nivel"]
+        if not nivel:
+            return 0.0
+        modul = {pdb.RISC_FISCAL_SIMPLU: pdb.MODUL_RISC_FISCAL_SIMPLU,
+                pdb.RISC_FISCAL_COMPLET: pdb.MODUL_RISC_FISCAL_COMPLET}[nivel]
+        return pdb.get_preturi_module(conn).get(modul, 0.0)
+
     def _calculeaza_suma_plata(firm, ciclu: str) -> float:
         """Pretul de baza, fara TVA - firma 'contabilitate' plateste per
         client gestionat (minim 1, ca o firma abia inregistrata - fara
         clienti inca - sa nu ajunga la o factura de 0 RON); firma 'direct'
         plateste abonamentul standard plus, daca estimarea ei de
         reconcilieri lunare depaseste ce include abonamentul, pachetele
-        extra (vezi _pachete_extra_lunare). Folosit ca atare pentru
-        contracts.suma (contractul afiseaza explicit "exclusiv TVA" langa
-        aceasta suma) - suma efectiv ceruta clientului la plata trece prin
-        _suma_cu_tva."""
+        extra (vezi _pachete_extra_lunare). Peste oricare din cele doua,
+        daca firma a ales un nivel al modulului Risc Fiscal, se adauga
+        costul lui lunar (_cost_modul_risc_fiscal) - flat, nu inmultit cu
+        numarul de clienti, la fel ca abonamentul standard al firmei
+        directe. Folosit ca atare pentru contracts.suma (contractul afiseaza
+        explicit "exclusiv TVA" langa aceasta suma) - suma efectiv ceruta
+        clientului la plata trece prin _suma_cu_tva."""
         pret_lunar = pdb.get_preturi(conn)[firm["tip"]][ciclu]
         luni = _luni_pentru_ciclu(ciclu)
+        cost_risc_fiscal = _cost_modul_risc_fiscal(firm)
         if firm["tip"] == pdb.FIRM_TIP_CONTABILITATE:
             n_clienti = firm_conn(firm["id"]).execute(
                 "SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
-            return round(pret_lunar * luni * max(n_clienti, 1), 2)
+            return round((pret_lunar * max(n_clienti, 1) + cost_risc_fiscal) * luni, 2)
         _n_pachete, cost_lunar_extra = _pachete_extra_lunare(firm)
-        return round((pret_lunar + cost_lunar_extra) * luni, 2)
+        return round((pret_lunar + cost_lunar_extra + cost_risc_fiscal) * luni, 2)
 
     def _suma_cu_tva(suma_neta: float) -> float:
         """Suma efectiv ceruta/incasata de la client - pretul de baza
@@ -1149,6 +1188,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             pachet=pdb.get_pachet_reconcilieri(conn),
             n_pachete_extra=n_pachete_extra,
             cost_lunar_extra=cost_lunar_extra,
+            preturi_risc_fiscal=pdb.get_preturi_module(conn),
             zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
             suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
             cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
@@ -1182,11 +1222,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 request.form, firm["tip"])
             if eroare_estimare:
                 return redirect(url_for("alege_plan", eroare=eroare_estimare))
+        risc_fiscal_nivel = request.form.get("risc_fiscal_nivel", "").strip() or None
+        if risc_fiscal_nivel is not None and risc_fiscal_nivel not in pdb.RISC_FISCAL_NIVELURI:
+            return redirect(url_for(
+                "alege_plan", eroare="Nivel invalid pentru modulul Risc Fiscal."))
         conn.execute(
             "UPDATE firms SET ciclu_facturare=?, "
-            "reconcilieri_lunare_estimate=COALESCE(?, reconcilieri_lunare_estimate) "
-            "WHERE id=?",
-            (ciclu, reconcilieri_estimate, active_firm_id))
+            "reconcilieri_lunare_estimate=COALESCE(?, reconcilieri_lunare_estimate), "
+            "risc_fiscal_nivel=? WHERE id=?",
+            (ciclu, reconcilieri_estimate, risc_fiscal_nivel, active_firm_id))
         conn.commit()
         return redirect(url_for("panou", mesaj="Planul a fost salvat."))
 
@@ -1689,6 +1733,28 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             stare_noua = "dezactivata" if firma["active"] else "activata"
             _log_master_action(user, "firma.comutare",
                                f"{firma['name']} (CUI {firma['cui']}) -> {stare_noua}")
+        return redirect(url_for("master"))
+
+    @app.post("/master/firma/<int:firm_id>/risc-fiscal/nivel")
+    def seteaza_risc_fiscal_nivel(firm_id):
+        """Forteaza nivelul modulului Risc Fiscal al unei firme (activare
+        gratuita pentru test, sau dezactivare pt. o firma care nu mai
+        plateste) - acelasi tipar ca toggle_firm, dar cu 3 stari posibile
+        in loc de comutare binara."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        nivel = request.form.get("nivel", "").strip() or None
+        if nivel is not None and nivel not in pdb.RISC_FISCAL_NIVELURI:
+            return redirect(url_for("master", eroare="Nivel invalid pentru Risc Fiscal."))
+        firma = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        conn.execute("UPDATE firms SET risc_fiscal_nivel=? WHERE id=?",
+                    (nivel, firm_id))
+        conn.commit()
+        if firma is not None:
+            _log_master_action(
+                user, "firma.risc_fiscal_nivel",
+                f"{firma['name']} (CUI {firma['cui']}) -> {nivel or 'niciun nivel'}")
         return redirect(url_for("master"))
 
     @app.get("/master/statistici")
@@ -2266,15 +2332,24 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     def _emite_factura_fgo(user, firma, descriere, valoare_neta, cota_tva, judet, *,
                            perioada_inceput=None, perioada_sfarsit=None,
-                           data_scadentei=None):
+                           data_scadentei=None, linii_extra=None):
         """Emite o factura reala prin FGO (creare + declansarea trimiterii
         automate la SPV, configurata o singura data in contul FGO - vezi
         etva/fgo.py) si o persista in `invoices`. Ridica fgo.FgoError daca
         FGO refuza cererea - apelantul decide ce mesaj arata; nu se scrie
         nimic in DB daca esueaza. Reutilizata de creeaza_factura (manual)
-        si valideaza_plata (automat la validarea unei incasari)."""
-        valoare_tva = round(valoare_neta * cota_tva / 100, 2)
-        valoare_totala = round(valoare_neta + valoare_tva, 2)
+        si valideaza_plata (automat la validarea unei incasari).
+
+        linii_extra: linii suplimentare de adaugat pe aceeasi factura (ex.
+        costul modulului Risc Fiscal, vezi valideaza_plata) - liste de
+        dict-uri in acelasi format ca linia de baza. valoare_neta ramane
+        DOAR pretul liniei de baza (abonament) - invoices.valoare_neta
+        insumeaza toate liniile mai jos, ca sa corespunda cu totalul real
+        facturat de FGO."""
+        valoare_neta_linii_extra = sum(l["PretUnitar"] for l in (linii_extra or []))
+        valoare_neta_totala = round(valoare_neta + valoare_neta_linii_extra, 2)
+        valoare_tva = round(valoare_neta_totala * cota_tva / 100, 2)
+        valoare_totala = round(valoare_neta_totala + valoare_tva, 2)
         client = {
             "Denumire": firma["name"],
             "CodUnic": str(anaf_cui.normalize_cui(firma["cui"])),
@@ -2289,7 +2364,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "UM": "BUC",
             "CotaTVA": cota_tva,
             "PretUnitar": valoare_neta,
-        }]
+        }, *(linii_extra or [])]
         factura_fgo = fgo.emite_factura(
             FGO_COD_UNIC, FGO_CHEIE_PRIVATA, FGO_PLATFORMA_URL, FGO_MEDIU,
             serie=FGO_SERIE, valuta="RON", tip_factura="Factura",
@@ -2308,7 +2383,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "fgo_link_pdf) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (pdb.FACTURA_SERIE, numar, firma["id"], firma["name"], firma["cui"],
              descriere, perioada_inceput, perioada_sfarsit, acum.isoformat(),
-             data_scadentei, valoare_neta, cota_tva, valoare_tva,
+             data_scadentei, valoare_neta_totala, cota_tva, valoare_tva,
              valoare_totala, user["username"], acum.isoformat(),
              factura_fgo["Serie"], factura_fgo["Numar"], factura_fgo.get("Link")))
         conn.commit()
@@ -2703,10 +2778,37 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         cota_tva = pdb.get_cota_tva(conn)
         valoare_totala = plata["suma"]
         valoare_neta = round(valoare_totala / (1 + cota_tva / 100), 2)
+        # Daca firma a ales un nivel al modulului Risc Fiscal, factura are o
+        # a doua linie separata pentru el (CodArticol propriu, vezi
+        # FGO_COD_ARTICOL_RISC_FISCAL_*) - desprinsa din valoare_neta deja
+        # fixata mai sus (nu recalculata din nomenclatorul curent), ca
+        # totalul facturat sa ramana identic cu ce s-a cerut efectiv la plata
+        # (acelasi motiv ca la desprinderea bazei/TVA de mai sus). Pretul
+        # liniei foloseste totusi nomenclatorul curent - o diferenta fata de
+        # nomenclatorul de la momentul cererii de plata ar insemna ca masterul
+        # a schimbat pretul intre timp, caz rar, acceptat ca aproximare pe
+        # eticheta liniei, nu pe totalul facturat.
+        linii_extra = []
+        cost_risc_fiscal = round(_cost_modul_risc_fiscal(firma) * _luni_pentru_ciclu(
+            plata["ciclu_facturare"]), 2)
+        if cost_risc_fiscal > 0:
+            cod_articol_risc_fiscal = {
+                pdb.RISC_FISCAL_SIMPLU: FGO_COD_ARTICOL_RISC_FISCAL_SIMPLU,
+                pdb.RISC_FISCAL_COMPLET: FGO_COD_ARTICOL_RISC_FISCAL_COMPLET,
+            }[firma["risc_fiscal_nivel"]]
+            linii_extra.append({
+                "Denumire": f"Modul Risc Fiscal ({firma['risc_fiscal_nivel']}) - {eticheta_ciclu}",
+                "CodArticol": cod_articol_risc_fiscal,
+                "NrProduse": 1,
+                "UM": "BUC",
+                "CotaTVA": cota_tva,
+                "PretUnitar": cost_risc_fiscal,
+            })
+            valoare_neta = round(max(0.0, valoare_neta - cost_risc_fiscal), 2)
         try:
             invoice_id = _emite_factura_fgo(
                 user, firma, f"Abonament e-TVA Reconciliere - {eticheta_ciclu}",
-                valoare_neta, cota_tva, judet)
+                valoare_neta, cota_tva, judet, linii_extra=linii_extra)
         except fgo.FgoError as e:
             _elibereaza_claim()
             return redirect(url_for("master_plati", eroare=f"FGO: {e}"))
@@ -3001,6 +3103,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return render_template(
             "master_nomenclator.html", user=user, preturi=pdb.get_preturi(conn),
             pachet=pdb.get_pachet_reconcilieri(conn),
+            preturi_risc_fiscal=pdb.get_preturi_module(conn),
             cota_tva=pdb.get_cota_tva(conn), istoric_tva=pdb.listeaza_cote_tva(conn),
             eroare=request.args.get("eroare"), mesaj=request.args.get("mesaj"))
 
@@ -3076,6 +3179,35 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return redirect(url_for(
             "master_nomenclator",
             mesaj="Setarile pachetelor de reconcilieri au fost actualizate."))
+
+    @app.post("/master/nomenclator/risc-fiscal")
+    def salveaza_preturi_risc_fiscal():
+        """Preturile lunare ale celor doua niveluri ale modulului premium
+        Risc Fiscal - validate integral inainte de a scrie ceva, ca la
+        salveaza_nomenclator."""
+        user = current_user()
+        if user is None or not user["is_master"]:
+            return redirect(url_for("login"))
+        valori = {}
+        for modul in (pdb.MODUL_RISC_FISCAL_SIMPLU, pdb.MODUL_RISC_FISCAL_COMPLET):
+            bruta = request.form.get(modul, "").strip().replace(",", ".")
+            try:
+                pret = float(bruta)
+            except ValueError:
+                pret = None
+            if pret is None or pret <= 0:
+                return redirect(url_for(
+                    "master_nomenclator",
+                    eroare=f"Pretul pentru {modul} trebuie sa fie un numar pozitiv."))
+            valori[modul] = pret
+        for modul, pret in valori.items():
+            pdb.set_pret_modul(conn, modul, pret, user["username"])
+        _log_master_action(
+            user, "nomenclator.risc_fiscal",
+            ", ".join(f"{modul}={pret:g}" for modul, pret in valori.items()))
+        return redirect(url_for(
+            "master_nomenclator",
+            mesaj="Preturile modulului Risc Fiscal au fost actualizate."))
 
     @app.post("/master/nomenclator/tva")
     def salveaza_cota_tva():
@@ -3278,7 +3410,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                         "onboarding_completat": ident["onboarding_completat"],
                         "permissions": sorted(ident["permissions"]),
                         "este_master": ident.get("este_master", False),
-                        "anaf_autorizat": anaf_autorizat})
+                        "anaf_autorizat": anaf_autorizat,
+                        "risc_fiscal_nivel": ident.get("risc_fiscal_nivel")})
 
     @app.post("/api/onboarding/completat")
     @require()
@@ -3770,6 +3903,135 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         return send_file(path, as_attachment=True,
                          download_name=f"raport_{rid}.xlsx")
 
+    # ---------- Risc Fiscal (modul premium) ----------
+    # Gating pe firms.risc_fiscal_nivel (vezi current_identity/api/me) - NU
+    # pe o permisiune noua, ca sa nu umfle catalogul PERMISSIONS pt. un
+    # add-on comercial separat; "reconciliere.creare"/"rapoarte.export" sunt
+    # suficient de apropiate semantic (creezi o evaluare / exportzi un raport).
+
+    def _client_id_din_request(ident):
+        """Acelasi tipar ca la /api/reconciliations: o firma directa se
+        evalueaza pe sine (client_id None), o firma de contabilitate alege
+        un client explicit din form sau query string."""
+        if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT:
+            return None, None
+        brut = (request.form.get("client_id") or request.args.get("client_id") or "").strip()
+        if not brut.isdigit():
+            return None, "Alege clientul pentru care faci evaluarea de risc fiscal."
+        return int(brut), None
+
+    @app.post("/api/risc-fiscal/perioada")
+    @require("reconciliere.creare")
+    def salveaza_risc_fiscal_perioada(ident):
+        nivel = ident.get("risc_fiscal_nivel")
+        if not nivel:
+            return jsonify({"errors": [
+                "Modulul Risc Fiscal nu e activat pentru firma ta - "
+                "activeaza-l din /panou/plan."]}), 403
+        client_id, eroare = _client_id_din_request(ident)
+        if eroare:
+            return jsonify({"errors": [eroare]}), 400
+        perioada = request.form.get("perioada", "").strip()
+        if not perioada:
+            return jsonify({"errors": ["Completeaza perioada (ex: 2026-T2)."]}), 400
+
+        def _numar(camp):
+            bruta = (request.form.get(camp) or "").strip().replace(",", ".")
+            if not bruta:
+                return None
+            try:
+                return float(bruta)
+            except ValueError:
+                return None
+
+        date_financiare = {
+            "capitaluri_proprii": _numar("capitaluri_proprii"),
+            "datorii_totale": _numar("datorii_totale"),
+            "cifra_afaceri": _numar("cifra_afaceri"),
+            "rezultat_net": _numar("rezultat_net"),
+        }
+        declaratii_nedepuse = None
+        obligatii_restante = None
+        obligatii_crescute = None
+        flaguri_sectiune_b = {}
+        if nivel == pdb.RISC_FISCAL_COMPLET:
+            brut_decl = (request.form.get("declaratii_nedepuse") or "").strip()
+            if brut_decl:
+                if not brut_decl.isdigit():
+                    return jsonify({"errors": [
+                        "Declaratiile nedepuse trebuie sa fie un numar intreg."]}), 400
+                declaratii_nedepuse = int(brut_decl)
+            obligatii_restante = request.form.get("obligatii_restante") == "on"
+            obligatii_crescute = request.form.get("obligatii_crescute") == "on"
+            for cheie in risc_fiscal.FLAGURI_SECTIUNE_B:
+                flaguri_sectiune_b[cheie] = request.form.get(f"flag_{cheie}") == "on"
+
+        scor = risc_fiscal.calculeaza_scor(
+            nivel, date_financiare, declaratii_nedepuse=declaratii_nedepuse,
+            obligatii_restante=obligatii_restante,
+            obligatii_crescute=obligatii_crescute,
+            flaguri_sectiune_b=flaguri_sectiune_b)
+
+        fc = firm_conn(ident["firm_id"])
+        rid = risc_fiscal_store.salveaza_perioada(
+            fc, client_id, perioada, "manual", date_financiare, scor,
+            declaratii_nedepuse=declaratii_nedepuse,
+            obligatii_restante=obligatii_restante,
+            obligatii_crescute=obligatii_crescute,
+            flaguri_sectiune_b=flaguri_sectiune_b, username=ident["username"])
+        audit.log(fc, ident["username"], "risc_fiscal.evaluare",
+                  "risc_fiscal_perioade", str(rid))
+        return jsonify({
+            "id": rid, "scor_afisat": scor.scor_afisat,
+            "clasificare": scor.clasificare,
+            "scor_total_indicatori": scor.scor_total_indicatori,
+            "scor_max_posibil": scor.scor_max_posibil,
+            "override_sectiune_b": scor.override_sectiune_b,
+            "flaguri_risc_mare_active": scor.flaguri_risc_mare_active,
+            "detaliu": scor.detaliu})
+
+    @app.get("/api/risc-fiscal/istoric")
+    @require()
+    def istoric_risc_fiscal(ident):
+        if not ident.get("risc_fiscal_nivel"):
+            return jsonify({"errors": [
+                "Modulul Risc Fiscal nu e activat pentru firma ta."]}), 403
+        client_id, eroare = _client_id_din_request(ident)
+        if eroare:
+            return jsonify({"errors": [eroare]}), 400
+        fc = firm_conn(ident["firm_id"])
+        return jsonify(risc_fiscal_store.lista_perioade(fc, client_id))
+
+    @app.get("/api/risc-fiscal/perioada/<perioada>/pdf")
+    @require("rapoarte.export")
+    def risc_fiscal_pdf(ident, perioada):
+        if not ident.get("risc_fiscal_nivel"):
+            return jsonify({"errors": [
+                "Modulul Risc Fiscal nu e activat pentru firma ta."]}), 403
+        client_id, eroare = _client_id_din_request(ident)
+        if eroare:
+            return jsonify({"errors": [eroare]}), 400
+        fc = firm_conn(ident["firm_id"])
+        date = risc_fiscal_store.obtine_perioada(fc, client_id, perioada)
+        if date is None:
+            return jsonify({"errors": [
+                "Nu exista o evaluare de risc fiscal pentru aceasta perioada."]}), 404
+        client_name = None
+        if client_id is not None:
+            client_row = fc.execute(
+                "SELECT name, cui FROM clients WHERE id=?", (client_id,)).fetchone()
+            client_name = (client_row["name"] or client_row["cui"]
+                           if client_row else None)
+        pdf_bytes = risc_fiscal_report.generate_pdf(
+            firm_name=ident["firm_name"], firm_cui=ident["firm_cui"],
+            client_name=client_name, perioada=date)
+        audit.log(fc, ident["username"], "risc_fiscal.export_pdf",
+                  "risc_fiscal_perioade", str(date["id"]))
+        return Response(
+            pdf_bytes, mimetype="application/pdf",
+            headers={"Content-Disposition":
+                    f'inline; filename="risc-fiscal-{perioada}.pdf"'})
+
     @app.get("/api/audit")
     @require("audit.vizualizare")
     def audit_view(ident):
@@ -3780,6 +4042,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # nevoie de closure-ul ei, deja legat de app.logger si SMTP. Gatingul
         # pe scheduler_lock_fd e explicat langa _is_scheduler_leader mai sus.
         remind_mod.start_scheduler(conn, db_lock, _trimite_email)
+
+    if enable_risk_alerts_scheduler and scheduler_lock_fd:
+        # firm_conn (closure-ul de mai sus) e nevoie ca schedulerul sa poata
+        # citi risc_fiscal_perioade din baza per-firma a fiecarei firme, nu
+        # doar din portal.db (spre deosebire de remind_mod, care lucreaza
+        # exclusiv pe firms).
+        risk_alerts_mod.start_scheduler(conn, firm_conn, db_lock, _trimite_email)
 
     app.portal_conn = conn  # exposed for tests/seeding
     app.firm_conn = firm_conn  # exposed for tests/seeding

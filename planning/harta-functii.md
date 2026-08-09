@@ -19,6 +19,19 @@ apoi `testare` -> `dev`), fiecare urmat de promovarea rezultatului
 unificat mai departe (vezi [[etva-capacitate-server]] pentru context
 complet).
 
+Actualizat manual 2026-08-09: adaugat modulul premium **Risc Fiscal**
+(evaluare bazata pe metodologia oficiala ANAF, Anexa 2 - vezi
+`etva/risc_fiscal.py`) - nivel `simplu`/`complet` per firma
+(`firms.risc_fiscal_nivel`), tabela `risc_fiscal_perioade` (persistenta,
+`etva/risc_fiscal_store.py`), rute noi `/api/risc-fiscal/*` (§3r), tab nou
+in SPA (§2h), raport PDF (`portal/risc_fiscal_report.py`, §6.10) si un al
+treilea scheduler de fundal (`portal/risk_alerts.py`, §6.11, §7) pentru
+alerte automate la scor "ridicat". Importer-ul SAF-T D406 (planificat
+initial ca sursa de date financiare) e AMANAT - datele financiare se
+introduc manual pana exista un export D406 real de validare. In aceeasi
+lucrare, fixat si un bug pre-existent de izolare intre firme 'directe' pe
+Postgres in `etva/cod_mappings.py` (index unic global fara `firm_id`).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
@@ -44,14 +57,14 @@ modulului ei, fara sa apeleze nimic notabil intern.
 |---|---|
 | 1 | gunicorn importa modulul `portal.wsgi` |
 | 2 | `from portal.app import create_app`, `from portal.run import data_dir` |
-| 3 | la nivel de modul: `app = create_app(data_dir(), enable_backup_scheduler=True, enable_trial_reminder_scheduler=True)` - se executa o singura data, la incarcare |
+| 3 | la nivel de modul: `app = create_app(data_dir(), enable_backup_scheduler=True, enable_trial_reminder_scheduler=True, enable_risk_alerts_scheduler=True)` - se executa o singura data, la incarcare |
 | 4 | `app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)` - ca `url_for(_external=True)` sa produca `https://` cand Apache seteaza `X-Forwarded-Proto` |
 
-**Constrangere critica**: gunicorn MUST rula cu exact 1 worker process (threads sunt ok). Cele 2 fire de fundal + conexiunea SQLite/SQLCipher + `db_lock` sunt in-process; 2 workeri = conexiuni/lock-uri neserializate = coruptie posibila.
+**Constrangere critica**: gunicorn MUST rula cu exact 1 worker process (threads sunt ok). Cele 3 fire de fundal + conexiunea SQLite/SQLCipher + `db_lock` sunt in-process; 2 workeri = conexiuni/lock-uri neserializate = coruptie posibila.
 
 ### 1b. `python -m portal.run` (dezvoltare fara gunicorn)
 
-Acelasi lant, dar prin `run.py`: `data_dir()` -> `create_app(data_dir(), enable_backup_scheduler=True, enable_trial_reminder_scheduler=True)` -> `.run(host="127.0.0.1", port=ETVA_PORT)`.
+Acelasi lant, dar prin `run.py`: `data_dir()` -> `create_app(data_dir(), enable_backup_scheduler=True, enable_trial_reminder_scheduler=True, enable_risk_alerts_scheduler=True)` -> `.run(host="127.0.0.1", port=ETVA_PORT)`.
 
 ### 1c. `data_dir()` (in `run.py`, reutilizata de `wsgi.py`, `seed_master.py`, `migrare_pg.py`)
 
@@ -59,7 +72,7 @@ Citeste env `APPDATA` (fallback `~`) + env `ETVA_DATA_DIR` (default `"eTVA-Porta
 
 Pe testare/productie: `HOME=/opt/etva-{testare,productie}` + `ETVA_DATA_DIR=eTVA-Portal-{Testare,Productie}` (setate in unit-ul systemd) -> `data_dir()` = `/opt/etva-{testare,productie}/eTVA-Portal-{Testare,Productie}`.
 
-### 1d. `create_app(data_dir, enable_backup_scheduler, enable_trial_reminder_scheduler)` (portal/app.py:149-3381)
+### 1d. `create_app(data_dir, enable_backup_scheduler, enable_trial_reminder_scheduler, enable_risk_alerts_scheduler)` (portal/app.py)
 
 | # | Linie | Actiune |
 |---|-------|---------|
@@ -80,9 +93,10 @@ Pe testare/productie: `HOME=/opt/etva-{testare,productie}` + `ETVA_DATA_DIR=eTVA
 | 15 | 308-314 | `@app.context_processor _inject_pachet_reconcilieri` - injecteaza `pachet_reconcilieri` in toate template-urile |
 | 16 | 316-335 | `_log_master_action` + decoratorul `require(perm)` (folosit de toate rutele `/api/*`) |
 | 17 | 337-3370 | **inregistrarea tuturor rutelor** (vezi §3) |
-| 18 | 3372-3375 | **daca** `enable_trial_reminder_scheduler`: `remind_mod.start_scheduler(conn, db_lock, _trimite_email)` - porneste thread-ul de remindere trial (dupa ce `_trimite_email` exista deja) |
-| 19 | 3377-3380 | expune `app.portal_conn`, `app.firm_conn`, `app.portal_secret`, `app.get_valid_anaf_access_token` (folosite de teste/seeding) |
-| 20 | 3381 | `return app` |
+| 18 | ~4040 | **daca** `enable_trial_reminder_scheduler`: `remind_mod.start_scheduler(conn, db_lock, _trimite_email)` - porneste thread-ul de remindere trial (dupa ce `_trimite_email` exista deja) |
+| 18b | ~4047 | **daca** `enable_risk_alerts_scheduler`: `risk_alerts_mod.start_scheduler(conn, firm_conn, db_lock, _trimite_email)` - primeste si closure-ul `firm_conn`, spre deosebire de `remind_mod` (are nevoie de baza per-firma pentru `risc_fiscal_perioade`, nu doar de `firms`) |
+| 19 | ~4053 | expune `app.portal_conn`, `app.firm_conn`, `app.portal_secret`, `app.get_valid_anaf_access_token` (folosite de teste/seeding) |
+| 20 | final | `return app` |
 
 ### 1e. Alte puncte de intrare (scripturi CLI, nu servesc trafic HTTP)
 
@@ -199,6 +213,36 @@ opresteTurul() -> distrugeSuprapunereTur() -> marcheazaGhidTerminat()
 
 ```
 logout() -> api('/api/logout', POST) -> window.location = '/'.
+```
+
+### 2h. Flux: risc fiscal (modul premium)
+
+```
+intraInAplicatie(ident) - adaugat:
+  riscFiscalNivel = ident.risc_fiscal_nivel
+  navRiscFiscal.style.display = riscFiscalNivel ? '' : 'none'
+  rfCompletFields.style.display = riscFiscalNivel === 'complet' ? '' : 'none'
+  campRfClient.style.display = firmaDirecta ? 'none' : ''
+
+incarcaClienti() - extins sa populeze si #rfClient (aceleasi optiuni ca
+  selClient/alocClient), daca elementul exista in DOM.
+
+click nav "Risc fiscal" -> navigheaza('riscFiscal') + incarcaIstoricRiscFiscal()
+
+incarcaIstoricRiscFiscal():
+  1. clientId = campRfClient vizibil ? rfClient.value : '' (firma directa)
+  2. api('/api/risc-fiscal/istoric' + qs) GET -> backend: istoric_risc_fiscal (§3r)
+  3. populeaza #tabelRiscFiscal (perioada/nivel/scor/clasificare + link PDF
+     per rand catre /api/risc-fiscal/perioada/<perioada>/pdf)
+
+salveazaRiscFiscal():
+  1. valideaza client selectat (firme de contabilitate)
+  2. construieste FormData: client_id?, perioada, capitaluri_proprii,
+     datorii_totale, cifra_afaceri, rezultat_net + (doar nivel 'complet')
+     declaratii_nedepuse, obligatii_restante, obligatii_crescute,
+     flag_<cheie> per checkbox .rfFlag bifat (cele 9 din Sectiunea B ANAF)
+  3. api('/api/risc-fiscal/perioada', POST) -> backend: salveaza_risc_fiscal_perioada (§3r)
+  4. daca ok: incarcaIstoricRiscFiscal()
 ```
 
 ---
@@ -330,6 +374,7 @@ semneaza_contract: _contract_curent -> daca metoda=CERTIFICAT: citeste
 |---|---|---|
 | GET | `/master` | `master` |
 | POST | `/master/firma/<int:firm_id>/comutare` | `toggle_firm` |
+| POST | `/master/firma/<int:firm_id>/risc-fiscal/nivel` | `seteaza_risc_fiscal_nivel` |
 | GET | `/master/statistici` | `master_statistici` |
 | GET | `/master/utilizatori` | `master_users` |
 | GET | `/master/utilizatori/<int:user_id>/istoric` | `master_user_history` |
@@ -487,6 +532,7 @@ rularea manuala in aceeasi zi cu thread-ul nu retrimite/re-arhiveaza dublu.
 | GET | `/master/nomenclator` | `master_nomenclator` |
 | POST | `/master/nomenclator` | `salveaza_nomenclator` |
 | POST | `/master/nomenclator/pachete` | `salveaza_pachet_reconcilieri` |
+| POST | `/master/nomenclator/risc-fiscal` | `salveaza_preturi_risc_fiscal` |
 | POST | `/master/nomenclator/tva` | `salveaza_cota_tva` |
 | POST | `/master/nomenclator/tva/<int:id>/activeaza` | `activeaza_cota_tva` |
 
@@ -571,6 +617,12 @@ Toate trec prin `require(perm=None)`: `current_identity()` -> 401 daca
 None -> verifica `perm in ident["permissions"]` -> 403 daca nu -> apeleaza
 handler-ul cu `ident` ca prim argument.
 
+`me` (`/api/me`) - extins cu `risc_fiscal_nivel` (`ident.get(...)`, None
+daca modulul nu e activat pentru firma) - SPA-ul il foloseste ca sa
+arate/ascunda tab-ul nou (§2h). Masterul primeste mereu `'complet'` din
+`current_identity()` (§4), ca sa poata testa fluxul complet fara sa
+activeze plata modulul.
+
 ```
 descarca_sablon_jurnal: require() -> valideaza directie (404 daca
   invalida) -> build_model_template(directie)  [etva/importer/model.py]
@@ -616,6 +668,54 @@ export_report: require("rapoarte.export") -> firm_conn -> reconciliations
   -> audit.log(..., "raport.export") -> send_file(...)
 ```
 
+### 3r. Risc Fiscal (modul premium)
+
+| Metoda | Path | Handler | Permisiune |
+|---|---|---|---|
+| POST | `/api/risc-fiscal/perioada` | `salveaza_risc_fiscal_perioada` | `reconciliere.creare` |
+| GET | `/api/risc-fiscal/istoric` | `istoric_risc_fiscal` | (niciuna, doar `require()`) |
+| GET | `/api/risc-fiscal/perioada/<perioada>/pdf` | `risc_fiscal_pdf` | `rapoarte.export` |
+
+Gating pe `firms.risc_fiscal_nivel` (verificat manual in fiecare handler,
+NU o permisiune noua din `etva/db.py::PERMISSIONS` - vezi comentariul din
+cod) - `reconciliere.creare`/`rapoarte.export` sunt reutilizate pt.
+apropierea semantica (creezi o evaluare / exporti un raport), ca sa nu
+umfle catalogul de permisiuni pt. un add-on comercial separat.
+
+```
+_client_id_din_request(ident) [helper local, vezi §4] -> firma directa:
+  (None, None); altfel: client_id din form/query, eroare daca lipseste.
+
+salveaza_risc_fiscal_perioada:
+  require("reconciliere.creare") -> verifica ident.risc_fiscal_nivel (403
+  daca None) -> _client_id_din_request -> valideaza perioada -> parseaza
+  date_financiare (capitaluri_proprii/datorii_totale/cifra_afaceri/
+  rezultat_net) -> daca nivel=='complet': parseaza declaratii_nedepuse/
+  obligatii_restante/obligatii_crescute + flag_<cheie> per
+  etva.risc_fiscal.FLAGURI_SECTIUNE_B -> etva.risc_fiscal.calculeaza_scor(...)
+  -> firm_conn(firm_id) -> etva.risc_fiscal_store.salveaza_perioada(...)
+  [upsert pe (client_id, perioada) - vezi §5r] -> audit.log(...,
+  "risc_fiscal.evaluare") -> jsonify(scor + detaliu)
+
+istoric_risc_fiscal: require() -> verifica nivel activat ->
+  _client_id_din_request -> firm_conn -> etva.risc_fiscal_store.
+  lista_perioade(fc, client_id) -> jsonify (lista, cea mai recenta
+  perioada prima)
+
+risc_fiscal_pdf: require("rapoarte.export") -> verifica nivel activat ->
+  _client_id_din_request -> firm_conn -> etva.risc_fiscal_store.
+  obtine_perioada(...) -> 404 daca lipseste -> daca client_id: SELECT
+  name/cui din clients (pt. antetul raportului) -> portal.risc_fiscal_report.
+  generate_pdf(...)  [§6.10] -> audit.log(..., "risc_fiscal.export_pdf")
+  -> Response(pdf_bytes, mimetype="application/pdf")
+```
+
+Rutele master conexe (§3g, §3o): `seteaza_risc_fiscal_nivel` (forteaza
+`firms.risc_fiscal_nivel`, tipar identic `toggle_firm`) si
+`salveaza_preturi_risc_fiscal` (preturile lunare `risc_fiscal_simplu`/
+`risc_fiscal_complet` din `nomenclator_module`, tipar identic
+`salveaza_pachet_reconcilieri`).
+
 ---
 
 ## 4. Helper-e interne din create_app (portal/app.py)
@@ -640,7 +740,8 @@ folosite de mai multe handlere:
 | `_store_anaf_tokens(firm_id, tokens, username)` | Cripteaza + upsert tokenii OAuth ANAF |
 | `get_valid_anaf_access_token(firm_id)` | Access token valid, refresh automat |
 | `_zile_trial_ramase(trial_expira_la)` | Zile ramase pana la expirare |
-| `_luni_pentru_ciclu(ciclu)` / `_pachete_extra_lunare(firm)` / `_calculeaza_suma_plata(firm, ciclu)` / `_suma_cu_tva(suma)` | Calcule de facturare/abonament |
+| `_luni_pentru_ciclu(ciclu)` / `_pachete_extra_lunare(firm)` / `_cost_modul_risc_fiscal(firm)` / `_calculeaza_suma_plata(firm, ciclu)` / `_suma_cu_tva(suma)` | Calcule de facturare/abonament - `_cost_modul_risc_fiscal` citeste `nomenclator_module` pt. nivelul ales, 0.0 daca `risc_fiscal_nivel` e None |
+| `_client_id_din_request(ident)` | Firma directa -> `(None, None)`; altfel client_id din form/query, eroare daca lipseste - folosit de rutele §3r |
 | `_slugify(text)` / `_unique_username(desired)` | Normalizare username din nume firma |
 | `_create_firm(...)` | Creeaza firma + `user_firms` + `firm_keys`; token verificare daca e cazul |
 | `_parse_reconcilieri_estimate(form, tip)` | Valideaza estimarea lunara (firme "direct") |
@@ -753,6 +854,16 @@ FileAnafDataSource.get_etva_data(cui, period) -> pd.read_csv/read_excel
 verify_cui(cui, on_date=None) -> normalize_cui(cui) -> _fetch(numeric_cui, day)
 ```
 
+Extins 2026-08-09: dict-ul returnat mai poate avea (doar daca raspunsul
+ANAF le contine efectiv - confirmat din documentatia oficiala v9,
+`doc_WS_V9.txt`, nu ghicit) `inactiv_fiscal`/`data_inactivare`/
+`data_reactivare` (din `stare_inactiv`), `tva_incasare`/
+`data_inceput_tva_incasare`/`data_sfarsit_tva_incasare` (din
+`inregistrare_RTVAI`) si `inregistrat_ro_efactura` (din
+`date_generale.statusRO_e_Factura`) - fara schimbare de semnatura,
+backward-compatible. Folosit de modulul Risc Fiscal (§5r) pentru flag-ul
+automat "declarat inactiv" din Sectiunea B ANAF.
+
 ### 5j. etva/anaf_oauth.py (OAuth2 ANAF + RO e-Factura)
 
 ```
@@ -821,6 +932,61 @@ FirmScopedConnection.execute(sql, params) ->
   _normalizeaza(valoare) [per coloana]
 
 insert_id(conn, sql, params) -> RETURNING id (Postgres) sau .lastrowid (sqlite3)
+```
+
+### 5r. etva/risc_fiscal.py (scoring, pur - fara I/O)
+
+Implementeaza indicatorii 1-5 din Anexa 2 ANAF ("Fisa indicatorilor de
+risc fiscal") - indicatorii 6-8 (istoric rambursari TVA, date interne
+ANAF) NU sunt implementati, apar mereu ca "neaplicabil" in `detaliu`.
+Pragul/etichetele oficiale ANAF ("risc mic/mediu/mare", prag >=60 puncte
+pe toti cei 8 indicatori) NU sunt folosite - `clasificare` e o eticheta
+PROPRIE ("scazut"/"moderat"/"ridicat") pe un scor normalizat 0-100.
+
+```
+calculeaza_scor(nivel, date_financiare, declaratii_nedepuse=None,
+                obligatii_restante=None, obligatii_crescute=None,
+                flaguri_sectiune_b=None) -> ScorRiscFiscal:
+  1. valideaza nivel in NIVELURI (altfel ValueError)
+  2. _indicator_capitaluri_proprii, _indicator_grad_indatorare,
+     _indicator_profitabilitate (mereu, din date_financiare)
+  3. daca nivel=='complet': _indicator_declaratii_nedepuse,
+     _indicator_obligatii_restante (altfel marcate "necesita nivelul complet")
+  4. indicatorii 6-8: mereu marcati "date interne ANAF" (niciodata insumati)
+  5. flaguri_sectiune_b (doar la 'complet'): daca vreun flag e True ->
+     override_sectiune_b=True -> clasificare FORTATA 'ridicat' (fidel
+     metodologiei oficiale - Sectiunea B e un override categoric,
+     independent de cati indicatori din Sectiunea C sunt implementati)
+  6. altfel: _clasifica(scor_afisat) pe praguri proprii (<34/34-66/>66)
+```
+
+Constanta `FLAGURI_SECTIUNE_B` (9 chei -> etichete) - reutilizata de
+`portal/app.py` (parsare form `flag_<cheie>`) si `web/index.html`
+(checkbox-urile hardcodate din tab-ul Risc Fiscal, §2h).
+
+### 5s. etva/risc_fiscal_store.py (persistenta - upsert pe tabela per-firma)
+
+```
+salveaza_perioada(conn, client_id, perioada, sursa_date, date_financiare,
+                  scor, ..., username) -> int (id-ul randului):
+  INSERT ... ON CONFLICT (client_id, perioada) DO UPDATE SET ... [ramura
+  client_id NOT NULL] SAU ON CONFLICT (perioada) [SQLite] / (firm_id,
+  perioada) [Postgres, dbcompat.backend()] WHERE client_id IS NULL DO
+  UPDATE [ramura firma directa - branching pe backend, la fel ca
+  etva/cod_mappings.py::save_mapping si pentru exact acelasi motiv: doua
+  firme directe pot folosi aceeasi `perioada`] -> SELECT id (portabil pe
+  ambele backend-uri, evita sa se bazeze pe lastrowid/RETURNING pe conflict)
+
+lista_perioade(conn, client_id) -> toate perioadele unui client (sau ale
+  scope-ului 'direct'), cea mai recenta prima - foloseste _decodeaza
+  (json.loads pe flaguri_sectiune_b/scor_detaliu, stocate `text`, NU
+  `jsonb` - acelasi tipar ca differences.details)
+
+perioade_cu_risc_ridicat(conn) -> toate perioadele (orice client) cu
+  clasificare='ridicat', JOIN clients pt. nume/CUI - folosit exclusiv de
+  portal/risk_alerts.py (§6.11), scaneaza firma intreaga dintr-o data
+
+obtine_perioada(conn, client_id, perioada) -> un rand, sau None
 ```
 
 **Observatii structurale**: `etva/d300.py` e un hub - importat de
@@ -1035,11 +1201,46 @@ _migreaza_firma(pg_cur, firm_id, fc) - ordine interna:
 fara nicio scriere - sigur de rulat direct pe testare/productie ca
 pre-verificare.
 
+### 6.10 portal/risc_fiscal_report.py
+
+`generate_pdf(*, firm_name, firm_cui, client_name, perioada)` -> aceleasi
+conventii vizuale ca `invoicing.py::generate_pdf` (reportlab,
+`pdf_fonts.asigura_fonturi()`, `SimpleDocTemplate`/`Table`/`Paragraph`).
+Include OBLIGATORIU (ultimul paragraf) disclaimer-ul de nonechivalenta cu
+clasificarea oficiala ANAF - vezi `etva/risc_fiscal.py` pentru motiv.
+
+### 6.11 portal/risk_alerts.py
+
+Al treilea scheduler de fundal (dupa `backup.py`/`trial_reminders.py`) -
+vezi §7 pentru tabelul comparativ. Diferenta structurala: are nevoie si de
+`firm_conn` (nu doar de conexiunea portalului), pentru ca
+`risc_fiscal_perioade` traieste in baza per-firma.
+
+| Functie | Context de apel |
+|---|---|
+| `_semnatura(perioada)` | intern - `clasificare\|scor_afisat\|flaguri_active_sortate`, idempotenta alertarii |
+| `_continut_email(client_nume, perioada)` | intern |
+| `_alerteaza_firma(fc, firma_nume, email, trimite_email_fn)` | intern, per firma |
+| `verifica_si_alerteaza(portal_conn, firm_conn_fn, trimite_email_fn)` | THREAD **si** apelabil direct (nicio ruta manuala inca, spre deosebire de remindere-trial - vezi planul modulului) |
+| `start_scheduler(portal_conn, firm_conn_fn, lock, trimite_email_fn)` | **punct de intrare thread** - vezi §7 |
+
+```
+verifica_si_alerteaza:
+  firms WHERE active AND risc_fiscal_nivel IS NOT NULL AND arhivata_la IS NULL
+  -> per firma: _email_admin_firma(portal_conn, firm_id)  [reutilizat direct
+     din portal.trial_reminders, nu duplicat] -> daca fara email: skip
+  -> firm_conn_fn(firm_id) -> _alerteaza_firma:
+       etva.risc_fiscal_store.perioade_cu_risc_ridicat(fc) -> per perioada:
+       _semnatura(perioada) -> daca deja in risc_fiscal_alerte cu aceeasi
+       semnatura: skip -> altfel: trimite_email_fn(...) -> INSERT
+       risc_fiscal_alerte
+```
+
 ---
 
 ## 7. Fire de fundal (scheduler-e)
 
-Ambele pornite din `create_app()` (§1d), primesc **acelasi** `db_lock`
+Toate trei pornite din `create_app()` (§1d), primesc **acelasi** `db_lock`
 (`threading.RLock()`) - request-urile HTTP si thread-urile de fundal se
 serializeaza reciproc pe aceeasi conexiune.
 
@@ -1047,10 +1248,11 @@ serializeaza reciproc pe aceeasi conexiune.
 |---|---|---|---|
 | `backup.py` | `start_scheduler(data_dir, lock)` | `sleep(_seconds_until_due(...))` -> `with lock: create_backup(data_dir)` -> `prune_old_backups(data_dir)` -> la exceptie: `traceback.print_exc()` + `sleep(3600)` | 3 zile (calculat de la ultimul backup **de pe disc**, nu de la pornirea procesului); retry 1h |
 | `trial_reminders.py` | `start_scheduler(conn, lock, trimite_email_fn)` | verifica **imediat** la pornire (fara sleep initial): `with lock: verifica_si_trimite(...)` -> `arhiveaza_firme_neplatitoare(...)` -> `sleep(6*3600)`; la exceptie: `traceback.print_exc()` + `sleep(1800)` | 6 ore; retry 30 min |
+| `risk_alerts.py` | `start_scheduler(portal_conn, firm_conn_fn, lock, trimite_email_fn)` | verifica **imediat** la pornire: `with lock: verifica_si_alerteaza(...)` -> `sleep(6*3600)`; la exceptie: `traceback.print_exc()` + `sleep(1800)` | 6 ore; retry 30 min - acelasi tipar/interval ca `trial_reminders.py` |
 
 `pipeline.py`, `contract.py`, `invoicing.py`, `migrare_pg.py`,
-`seed_master.py` - **fara scheduler**, totul strict la cerere (rute HTTP)
-sau script CLI separat.
+`seed_master.py`, `risc_fiscal_report.py` - **fara scheduler**, totul
+strict la cerere (rute HTTP) sau script CLI separat.
 
 ---
 
@@ -1122,4 +1324,37 @@ create_app(enable_backup_scheduler=True)
              create_backup(data_dir)     [zip peste tot data_dir, exclus backups/]
            prune_old_backups(data_dir)   [pastreaza cele mai recente 20]
         -> (bucla la infinit; la eroare: log + retry in 1h)
+```
+
+### 8e. Evaluare de risc fiscal + alerta automata (modul premium)
+
+```
+Firma alege un nivel: POST /panou/plan (camp risc_fiscal_nivel) ->
+  salveaza_plan() -> UPDATE firms SET risc_fiscal_nivel=... [portal/app.py]
+  (sau masterul forteaza din /master, seteaza_risc_fiscal_nivel §3g)
+
+Contabilul completeaza formularul (§2h) -> POST /api/risc-fiscal/perioada
+  -> salveaza_risc_fiscal_perioada [§3r]
+     -> etva.risc_fiscal.calculeaza_scor(...)  [§5r - pur, indicatorii 1-5
+        ANAF + override Sectiunea B]
+     -> etva.risc_fiscal_store.salveaza_perioada(...)  [§5s - upsert]
+     -> jsonify(scor) -> frontend: incarcaIstoricRiscFiscal()
+
+Facturare lunara (daca nivelul e platit): valideaza_plata [master] ->
+  _cost_modul_risc_fiscal(firm) [§4] -> linie separata pe factura FGO
+  (CodArticol RISC_FISCAL_SIMPLU/COMPLET) -> _emite_factura_fgo(...,
+  linii_extra=[...])
+
+Alertare automata (fond, fara interactiune umana):
+create_app(enable_risk_alerts_scheduler=True)
+  -> risk_alerts_mod.start_scheduler(conn, firm_conn, db_lock, _trimite_email)
+     -> thread daemon: _loop() -> verifica imediat, apoi la 6h
+        -> with db_lock: verifica_si_alerteaza(portal_conn, firm_conn_fn, ...)
+           [§6.11] -> per firma activa cu nivel setat -> per perioada
+           'ridicat' nealertata cu semnatura curenta -> email adminului
+           firmei -> INSERT risc_fiscal_alerte
+
+Descarcare raport: GET /api/risc-fiscal/perioada/<perioada>/pdf ->
+  risc_fiscal_pdf [§3r] -> portal.risc_fiscal_report.generate_pdf [§6.10]
+  -> PDF cu disclaimer de nonechivalenta cu clasificarea oficiala ANAF
 ```

@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS firms(
   ciclu_facturare TEXT,
   trial_reminder_ultim_prag INTEGER,
   arhivata_la TEXT,
-  reconcilieri_lunare_estimate INTEGER);
+  reconcilieri_lunare_estimate INTEGER,
+  risc_fiscal_nivel TEXT);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
@@ -197,6 +198,10 @@ CREATE TABLE IF NOT EXISTS pachete_reconcilieri(
   marime_pachet INTEGER NOT NULL,
   pret_pachet_lunar_ron REAL NOT NULL,
   actualizat_de TEXT, actualizat_la TEXT);
+CREATE TABLE IF NOT EXISTS nomenclator_module(
+  modul TEXT PRIMARY KEY,
+  pret_lunar_ron REAL NOT NULL,
+  actualizat_de TEXT, actualizat_la TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
   ON setari_tva(activa) WHERE activa=1;
 """
@@ -303,6 +308,26 @@ _PACHET_RECONCILIERI_INITIAL = {
     "reconcilieri_incluse": 100,
     "marime_pachet": 50,
     "pret_pachet_lunar_ron": 19,
+}
+
+# Modulul premium "Risc Fiscal" (evaluare de risc fiscal per client, bazata
+# pe metodologia oficiala ANAF - vezi etva/risc_fiscal.py) e un add-on
+# lunar, separat de abonamentul de baza, cu doua niveluri: "simplu" (doar
+# indicatorii automatizabili din SAF-T D406 + anaf_cui) si "complet" (simplu
+# + vectorul fiscal completat manual de contabil). O firma alege un nivel
+# (sau niciunul - firms.risc_fiscal_nivel ramane NULL) din /panou/plan;
+# masterul poate forta nivelul din /master. Preturile de mai jos semeaza
+# doar tabela nomenclator_module la prima pornire (acelasi pattern ca
+# _PACHET_RECONCILIERI_INITIAL) - dupa aceea sursa de adevar e tabela,
+# editabila din /master/nomenclator.
+RISC_FISCAL_SIMPLU = "simplu"
+RISC_FISCAL_COMPLET = "complet"
+RISC_FISCAL_NIVELURI = (RISC_FISCAL_SIMPLU, RISC_FISCAL_COMPLET)
+MODUL_RISC_FISCAL_SIMPLU = "risc_fiscal_simplu"
+MODUL_RISC_FISCAL_COMPLET = "risc_fiscal_complet"
+_NOMENCLATOR_MODULE_INITIAL = {
+    MODUL_RISC_FISCAL_SIMPLU: 100,
+    MODUL_RISC_FISCAL_COMPLET: 200,
 }
 
 
@@ -622,6 +647,57 @@ def set_pachet_reconcilieri(conn: sqlite3.Connection, reconcilieri_incluse: int,
     conn.commit()
 
 
+def _migrate_add_firms_risc_fiscal_nivel(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate firms.risc_fiscal_nivel - add it,
+    defaulting existing rows to NULL (niciun nivel activ, ca o firma sa nu
+    fie facturata pentru un add-on pe care nu l-a ales explicit)."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "risc_fiscal_nivel" in cols:
+        return
+    conn.execute("ALTER TABLE firms ADD COLUMN risc_fiscal_nivel TEXT")
+    conn.commit()
+
+
+def _migrate_seed_nomenclator_module(conn: sqlite3.Connection) -> None:
+    """Semeaza preturile initiale ale modulelor premium (azi doar risc
+    fiscal simplu/complet) la prima pornire - doar randurile lipsa, ca un
+    master care a modificat deja un pret sa nu-l vada resetat la restart
+    (acelasi pattern ca _migrate_seed_pachet_reconcilieri), si ca un modul
+    nou adaugat ulterior sa fie semanat fara sa atinga preturile existente."""
+    existente = {r["modul"] for r in conn.execute(
+        "SELECT modul FROM nomenclator_module")}
+    conn.commit()  # vezi comentariul din _migrate_seed_pachet_reconcilieri
+    acum = datetime.now(timezone.utc).isoformat()
+    for modul, pret in _NOMENCLATOR_MODULE_INITIAL.items():
+        if modul in existente:
+            continue
+        conn.execute(
+            "INSERT INTO nomenclator_module(modul, pret_lunar_ron, "
+            "actualizat_de, actualizat_la) VALUES (?, ?, ?, ?)",
+            (modul, pret, "sistem", acum))
+    conn.commit()
+
+
+def get_preturi_module(conn: sqlite3.Connection) -> dict:
+    """Preturile lunare curente ale modulelor premium, {modul: pret_lunar_ron}."""
+    return {r["modul"]: r["pret_lunar_ron"] for r in conn.execute(
+        "SELECT modul, pret_lunar_ron FROM nomenclator_module")}
+
+
+def set_pret_modul(conn: sqlite3.Connection, modul: str, pret_lunar_ron: float,
+                   actualizat_de: str) -> None:
+    conn.execute(
+        "UPDATE nomenclator_module SET pret_lunar_ron=?, actualizat_de=?, "
+        "actualizat_la=? WHERE modul=?",
+        (pret_lunar_ron, actualizat_de, datetime.now(timezone.utc).isoformat(),
+         modul))
+    conn.commit()
+
+
 def _migrate_seed_planuri_facturare(conn: sqlite3.Connection) -> None:
     """Semeaza nomenclatorul de preturi la prima pornire, cu sumele care
     erau hardcodate inainte (_PRETURI_INITIALE_RON) - doar daca tabela e
@@ -833,6 +909,7 @@ def _open_db_postgres():
     _migrate_seed_planuri_facturare(conn)
     _migrate_seed_cota_tva(conn)
     _migrate_seed_pachet_reconcilieri(conn)
+    _migrate_seed_nomenclator_module(conn)
     return conn
 
 
@@ -859,11 +936,13 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firms_trial_reminder(conn)
     _migrate_add_firms_arhivare(conn)
     _migrate_add_firms_reconcilieri_estimate(conn)
+    _migrate_add_firms_risc_fiscal_nivel(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     _migrate_add_contracts_esemneaza(conn)
     _migrate_add_contract_prestator_semnare(conn)
     _migrate_seed_cota_tva(conn)
     _migrate_seed_pachet_reconcilieri(conn)
+    _migrate_seed_nomenclator_module(conn)
     conn.commit()
     return conn

@@ -265,6 +265,8 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
     <span class="ic">⚙</span> Alocari clienti</button>
   <button class="nav-btn" data-view="audit" id="btnAudit" onclick="navigheaza('audit'); incarcaAudit()" style="display:none">
     <span class="ic">☰</span> Jurnal de audit</button>
+  <button class="nav-btn" data-view="riscFiscal" id="navRiscFiscal" onclick="navigheaza('riscFiscal'); incarcaIstoricRiscFiscal()" style="display:none">
+    <span class="ic">⚠</span> Risc fiscal</button>
   <div class="jos">
     <div class="user-eticheta">
       <div class="avatar" id="avatarUser">?</div>
@@ -435,6 +437,55 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
     </div>
   </div>
 
+  <div id="riscFiscal" class="view">
+    <div class="card">
+      <h3>Evaluare de risc fiscal</h3>
+      <p class="sub">Scor calculat pe indicatorii 1-5 din metodologia oficială ANAF
+        (Anexa 2, Fișa indicatorilor de risc fiscal) — scor propriu, normalizat
+        0-100, <b>nu</b> e echivalent cu clasificarea oficială ANAF folosită la
+        soluționarea cererilor de rambursare TVA.</p>
+      <div class="field" id="campRfClient" style="display:none">
+        <label for="rfClient">Client</label><select id="rfClient" onchange="incarcaIstoricRiscFiscal()"></select>
+      </div>
+      <div class="actiuni">
+        <input id="rfPerioada" placeholder="Perioadă (ex: 2026-T2)" style="max-width:160px">
+        <input id="rfCapitaluriProprii" placeholder="Capitaluri proprii (RON)" type="number" step="0.01">
+        <input id="rfDatoriiTotale" placeholder="Datorii totale (RON)" type="number" step="0.01">
+        <input id="rfCifraAfaceri" placeholder="Cifra de afaceri (RON)" type="number" step="0.01">
+        <input id="rfRezultatNet" placeholder="Rezultat net (RON)" type="number" step="0.01">
+      </div>
+      <div id="rfCompletFields" style="display:none">
+        <p class="sub" style="margin-top:14px">Vector fiscal (nivel Complet)</p>
+        <div class="actiuni">
+          <input id="rfDeclaratiiNedepuse" placeholder="Declarații nedepuse (număr)" type="number" step="1" min="0" style="max-width:220px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:normal">
+            <input type="checkbox" id="rfObligatiiRestante" style="width:auto"> Obligații fiscale restante</label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:normal">
+            <input type="checkbox" id="rfObligatiiCrescute" style="width:auto"> ...au crescut față de începutul perioadei</label>
+        </div>
+        <p class="sub" style="margin-top:10px">Semnale de risc fiscal mare (Secțiunea B, metodologie ANAF) —
+          bifează doar dacă știi cu certitudine, altfel lasă nebifat:</p>
+        <div id="rfFlaguriSectiuneB" style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="entitate_noua" style="width:auto"> Entitate nou înființată</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_salariati" style="width:auto"> Absența salariaților</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_bunuri" style="width:auto"> Lipsa bunurilor imobile sau mobile</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="insolventa" style="width:auto"> Procedură de insolvență deschisă</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="evidenta_speciala" style="width:auto"> Înregistrare în evidență specială</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="declarat_inactiv" style="width:auto"> Declarat inactiv fiscal</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="raport_inspectie_risc_mare" style="width:auto"> Raport de risc fiscal mare de la inspecția fiscală</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="comunicare_garda_financiara" style="width:auto"> Comunicare de risc fiscal mare de la Garda Financiară</label>
+        </div>
+      </div>
+      <button class="btn-lat" style="margin-top:14px" onclick="salveazaRiscFiscal()">Calculează și salvează</button>
+      <p id="rfEroare" class="eroare"></p>
+    </div>
+    <div class="card">
+      <h3>Istoric evaluări</h3>
+      <table id="tabelRiscFiscal"></table>
+    </div>
+  </div>
+
   </div>
 </div>
 <button class="tur-fab" onclick="incepeTurul()" title="Ghid pasi de lucru">?</button>
@@ -442,7 +493,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
 
 <script>
 let permisiuni = [], reconCurent = null, userCurent = '', firmaDirecta = false;
-let anafAutorizat = false;
+let anafAutorizat = false, riscFiscalNivel = null;
 
 function comutaSursaAnaf() {
   const auto = document.getElementById('anafAutoToggle').checked;
@@ -459,7 +510,8 @@ function comutaFormatJurnal() {
 }
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
-                  admin: 'Alocari clienti', audit: 'Jurnal de audit' };
+                  admin: 'Alocari clienti', audit: 'Jurnal de audit',
+                  riscFiscal: 'Risc fiscal' };
 const TIP_DIFERENTA = { suma_diferita: 'Suma diferita', lipsa_in_anaf: 'Lipsa in ANAF',
                         lipsa_la_companie: 'Lipsa la companie', duplicat: 'Duplicat' };
 const fmt = new Intl.NumberFormat('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -542,6 +594,10 @@ async function intraInAplicatie(ident) {
   btnAdmin.style.display = esteAdmin ? '' : 'none';
   grupAdmin.style.display = esteAdmin ? '' : 'none';
   btnAudit.style.display = permisiuni.includes('audit.vizualizare') ? '' : 'none';
+  riscFiscalNivel = ident.risc_fiscal_nivel || null;
+  navRiscFiscal.style.display = riscFiscalNivel ? '' : 'none';
+  rfCompletFields.style.display = riscFiscalNivel === 'complet' ? '' : 'none';
+  campRfClient.style.display = firmaDirecta ? 'none' : '';
   cardClientNou.style.display = permisiuni.includes('clienti.creare') ? '' : 'none';
   btnExport.style.display = permisiuni.includes('rapoarte.export') ? '' : 'none';
   // O firma/PFA directa reconciliaza ca ea insasi - nu are clienti, deci
@@ -787,6 +843,63 @@ async function incarcaClienti() {
     `<option value="${c.id}">${c.name} (${c.cui})</option>`).join('');
   selClient.innerHTML = optiuni;
   if (document.getElementById('alocClient')) alocClient.innerHTML = optiuni;
+  if (document.getElementById('rfClient')) rfClient.innerHTML = optiuni;
+}
+
+async function incarcaIstoricRiscFiscal() {
+  const clientId = campRfClient.style.display !== 'none' ? rfClient.value : '';
+  if (campRfClient.style.display !== 'none' && !clientId) {
+    tabelRiscFiscal.innerHTML = '<tr><td class="gol">Adaugă întâi un client.</td></tr>';
+    return;
+  }
+  const qs = clientId ? ('?client_id=' + encodeURIComponent(clientId)) : '';
+  const r = await api('/api/risc-fiscal/istoric' + qs);
+  if (!r.ok) {
+    tabelRiscFiscal.innerHTML = '<tr><td class="gol">Nu s-a putut încărca istoricul.</td></tr>';
+    return;
+  }
+  const perioade = await r.json();
+  const chipClasa = c => c === 'ridicat' ? 'problema' : (c === 'moderat' ? 'atentie' : 'ok');
+  tabelRiscFiscal.innerHTML =
+    '<thead><tr><th>Perioadă</th><th>Nivel</th><th>Scor</th><th>Clasificare</th><th></th></tr></thead><tbody>' +
+    (perioade.map(p => `<tr><td>${p.perioada}</td><td>${p.tip_raport}</td>` +
+      `<td>${p.scor_afisat}/100</td>` +
+      `<td><span class="chip ${chipClasa(p.clasificare)}">${p.clasificare}</span></td>` +
+      `<td><a class="link-descarca" target="_blank" ` +
+      `href="/api/risc-fiscal/perioada/${encodeURIComponent(p.perioada)}/pdf${clientId ? '?client_id=' + encodeURIComponent(clientId) : ''}">PDF</a></td></tr>`
+      ).join('') ||
+     '<tr><td colspan="5" class="gol">Nicio evaluare încă — completează formularul de mai sus.</td></tr>') +
+    '</tbody>';
+}
+
+async function salveazaRiscFiscal() {
+  rfEroare.textContent = '';
+  if (campRfClient.style.display !== 'none' && !rfClient.value) {
+    rfEroare.textContent = 'Adaugă întâi un client.';
+    return;
+  }
+  const body = new URLSearchParams();
+  if (campRfClient.style.display !== 'none') body.set('client_id', rfClient.value);
+  body.set('perioada', rfPerioada.value.trim());
+  body.set('capitaluri_proprii', rfCapitaluriProprii.value);
+  body.set('datorii_totale', rfDatoriiTotale.value);
+  body.set('cifra_afaceri', rfCifraAfaceri.value);
+  body.set('rezultat_net', rfRezultatNet.value);
+  if (rfCompletFields.style.display !== 'none') {
+    body.set('declaratii_nedepuse', rfDeclaratiiNedepuse.value);
+    if (rfObligatiiRestante.checked) body.set('obligatii_restante', 'on');
+    if (rfObligatiiCrescute.checked) body.set('obligatii_crescute', 'on');
+    document.querySelectorAll('.rfFlag').forEach(cb => {
+      if (cb.checked) body.set('flag_' + cb.value, 'on');
+    });
+  }
+  const r = await api('/api/risc-fiscal/perioada', {method: 'POST', body});
+  const data = await r.json();
+  if (!r.ok) {
+    rfEroare.textContent = (data.errors || ['Eroare necunoscută.']).join(' ');
+    return;
+  }
+  await incarcaIstoricRiscFiscal();
 }
 
 async function verificaCuiNou() {

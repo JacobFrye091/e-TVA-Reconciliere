@@ -54,6 +54,19 @@ def verify_cui(cui: str, on_date: datetime.date | None = None) -> dict | None:
     ANAF has a record of it, or None if it does not exist there. Raises
     AnafCuiError if the service itself couldn't be reached — that's a
     connectivity problem, not proof the CUI is invalid.
+
+    Three extra keys are added ONLY when ANAF's response actually includes
+    that section (v9 response structure confirmed against the official
+    doc_WS_V9.txt, not guessed) - a CUI with no inactivation/TVA-la-incasare
+    history simply won't carry those objects at all, and callers that
+    ignore them see the exact same dict as before this was added:
+    - inactiv_fiscal/data_inactivare/data_reactivare, from "stare_inactiv"
+      (feeds the Risc Fiscal module's Sectiunea B "declarat inactiv" flag -
+      see etva/risc_fiscal.py).
+    - tva_incasare/data_inceput_tva_incasare/data_sfarsit_tva_incasare, from
+      "inregistrare_RTVAI" (VAT-on-collection regime - a process signal,
+      not part of the ANAF risk score itself).
+    - inregistrat_ro_efactura, from date_generale.statusRO_e_Factura.
     """
     numeric_cui = normalize_cui(cui)
     day = (on_date or datetime.date.today()).isoformat()
@@ -63,10 +76,24 @@ def verify_cui(cui: str, on_date: datetime.date | None = None) -> dict | None:
         return None
     general = found[0].get("date_generale") or {}
     scop_tva = found[0].get("inregistrare_scop_Tva") or {}
-    return {
+    info = {
         "cui": general.get("cui", numeric_cui),
         "denumire": general.get("denumire", ""),
         "adresa": general.get("adresa", ""),
         "stare_inregistrare": general.get("stare_inregistrare", ""),
         "scpTVA": scop_tva.get("scpTVA", False),
     }
+    stare_inactiv = found[0].get("stare_inactiv")
+    if stare_inactiv:
+        info["inactiv_fiscal"] = bool(stare_inactiv.get("statusInactivi", False))
+        info["data_inactivare"] = stare_inactiv.get("dataInactivare")
+        info["data_reactivare"] = stare_inactiv.get("dataReactivare")
+    rtvai = found[0].get("inregistrare_RTVAI")
+    if rtvai:
+        info["tva_incasare"] = bool(rtvai.get("statusTvaIncasare", False))
+        info["data_inceput_tva_incasare"] = rtvai.get("dataInceputTvaInc")
+        info["data_sfarsit_tva_incasare"] = rtvai.get("dataSfarsitTvaInc")
+    e_factura = general.get("statusRO_e_Factura")
+    if e_factura is not None:
+        info["inregistrat_ro_efactura"] = bool(e_factura)
+    return info

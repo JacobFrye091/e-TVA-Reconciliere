@@ -5420,3 +5420,456 @@ def test_switch_firm_shows_confirmation_message(app):
     r = c.post("/panou/comutare-firma", data={"firm_id": str(firm1_id)},
                follow_redirects=True)
     assert "Acum lucrezi cu Firma Unu SRL".encode() in r.data
+
+
+# ---------- rutele /api/risc-fiscal ----------
+
+def test_salveaza_risc_fiscal_respinge_daca_modulul_nu_e_activat(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO901", tip="direct")
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "capitaluri_proprii": "100"})
+    assert r.status_code == 403
+    assert "nu e activat" in r.get_json()["errors"][0]
+
+
+def test_salveaza_risc_fiscal_nivel_simplu_calculeaza_scor(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO902", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "-1",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "-1"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["scor_afisat"] == 100  # toti cei 3 indicatori la maxim
+    assert body["scor_max_posibil"] == 220  # doar 1-3, nu si 4-5
+
+
+def test_salveaza_risc_fiscal_ignora_campuri_complet_la_nivel_simplu(app):
+    """Chiar daca formularul trimite declaratii_nedepuse/flag-uri (UI-ul nu
+    ar trebui sa le arate la nivel 'simplu'), serverul le ignora - motorul
+    de scoring (etva/risc_fiscal.py) le ignora deja la acest nivel."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO903", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "5", "flag_declarat_inactiv": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is False
+    assert body["scor_max_posibil"] == 220
+
+
+def test_salveaza_risc_fiscal_nivel_complet_cu_flag_sectiune_b(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO904", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "complet"})
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0", "flag_declarat_inactiv": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["clasificare"] == "ridicat"
+    assert body["override_sectiune_b"] is True
+    assert "Declarat inactiv fiscal" in body["flaguri_risc_mare_active"]
+
+
+def test_salveaza_risc_fiscal_firma_contabilitate_cere_client_id(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO905", tip="contabilitate")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "capitaluri_proprii": "100"})
+    assert r.status_code == 400
+    assert "Alege clientul" in r.get_json()["errors"][0]
+
+
+def test_salveaza_risc_fiscal_firma_contabilitate_cu_client(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO906", tip="contabilitate")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    client_id = c.post("/api/clients", json={
+        "cui": "RO9999", "name": "Client Risc SRL", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "client_id": str(client_id), "perioada": "2026-T2",
+        "capitaluri_proprii": "100", "datorii_totale": "10",
+        "cifra_afaceri": "1000", "rezultat_net": "10"})
+    assert r.status_code == 200
+    istoric = c.get(
+        f"/api/risc-fiscal/istoric?client_id={client_id}").get_json()
+    assert len(istoric) == 1
+    assert istoric[0]["perioada"] == "2026-T2"
+
+
+def test_istoric_risc_fiscal_multiple_perioade_ordonate_descrescator(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO907", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    for perioada in ("2026-T1", "2026-T2", "2026-T3"):
+        c.post("/api/risc-fiscal/perioada",
+              data={"perioada": perioada, "capitaluri_proprii": "100",
+                    "datorii_totale": "10", "cifra_afaceri": "1000",
+                    "rezultat_net": "10"})
+    istoric = c.get("/api/risc-fiscal/istoric").get_json()
+    assert [p["perioada"] for p in istoric] == ["2026-T3", "2026-T2", "2026-T1"]
+
+
+def test_upsert_aceeasi_perioada_nu_creeaza_duplicat(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO908", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "capitaluri_proprii": "100",
+                "datorii_totale": "10", "cifra_afaceri": "1000",
+                "rezultat_net": "10"})
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "capitaluri_proprii": "-1",
+                "datorii_totale": "10", "cifra_afaceri": "1000",
+                "rezultat_net": "-1"})
+    istoric = c.get("/api/risc-fiscal/istoric").get_json()
+    assert len(istoric) == 1
+    assert istoric[0]["scor_afisat"] == 100  # reflecta ultima salvare
+
+
+def test_risc_fiscal_pdf_returneaza_pdf_valid(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO909", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "capitaluri_proprii": "100",
+                "datorii_totale": "10", "cifra_afaceri": "1000",
+                "rezultat_net": "10"})
+    r = c.get("/api/risc-fiscal/perioada/2026-T2/pdf")
+    assert r.status_code == 200
+    assert r.mimetype == "application/pdf"
+    assert r.data[:4] == b"%PDF"
+
+
+def test_risc_fiscal_pdf_404_pentru_perioada_inexistenta(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO910", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    r = c.get("/api/risc-fiscal/perioada/2026-T9/pdf")
+    assert r.status_code == 404
+
+
+def test_app_page_contine_tab_ul_risc_fiscal(app):
+    """Verificare de fum ca fisierul static web/index.html nu s-a corupt la
+    adaugarea tab-ului nou - nu inlocuieste o verificare vizuala in browser."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO913")
+    r = c.get("/app")
+    assert r.status_code == 200
+    assert b'id="navRiscFiscal"' in r.data
+    assert b'id="riscFiscal" class="view"' in r.data
+    assert b"incarcaIstoricRiscFiscal" in r.data
+    assert b"salveazaRiscFiscal" in r.data
+
+
+def _seteaza_risc_ridicat(c, perioada="2026-T2"):
+    """Salveaza o evaluare garantat clasificata 'ridicat' (capitaluri
+    negative + indatorare mare + pierdere = punctaj maxim pe 1-3)."""
+    return c.post("/api/risc-fiscal/perioada", data={
+        "perioada": perioada, "capitaluri_proprii": "-1",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "-1"})
+
+
+def test_verifica_si_alerteaza_trimite_pentru_scor_ridicat(app):
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO920", tip="direct", email="admin920@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    _seteaza_risc_ridicat(c)
+    trimise = []
+    n = risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn,
+        lambda dest, subiect, continut: trimise.append((dest, subiect)))
+    assert n == 1
+    assert trimise[0][0] == "admin920@exemplu.ro"
+    assert "RO920" not in trimise[0][1]  # subiectul foloseste numele firmei, nu CUI-ul
+    assert "2026-T2" in trimise[0][1]
+
+
+def test_verifica_si_alerteaza_nu_retrimite_aceeasi_semnatura(app):
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO921", tip="direct", email="admin921@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    _seteaza_risc_ridicat(c)
+    trimise = []
+    risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    assert len(trimise) == 1
+
+
+def test_verifica_si_alerteaza_retrimite_daca_semnatura_se_schimba(app):
+    """Resubmisia aceleiasi perioade care adauga un flag nou de Sectiunea B
+    trebuie sa alerteze din nou, chiar daca clasificarea/scorul raman
+    identice (erau deja 'ridicat' prin scor) - semnatura include flagurile
+    active, nu doar clasificarea si scorul."""
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO922", tip="direct", email="admin922@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "complet"})
+    # 100 (cap. proprii) + 50 (indatorare) + 70 (pierdere) + 100 (declaratii) +
+    # 50 (obligatii restante crescute) = 370/370 = scor 100, 'ridicat'.
+    date_complet = {
+        "perioada": "2026-T2", "capitaluri_proprii": "-1", "datorii_totale": "10",
+        "cifra_afaceri": "1000", "rezultat_net": "-1", "declaratii_nedepuse": "3",
+        "obligatii_restante": "on", "obligatii_crescute": "on"}
+    r = c.post("/api/risc-fiscal/perioada", data=date_complet)
+    assert r.get_json()["clasificare"] == "ridicat"
+    trimise = []
+    risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    assert len(trimise) == 1
+    c.post("/api/risc-fiscal/perioada",
+          data={**date_complet, "flag_declarat_inactiv": "on"})
+    risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    assert len(trimise) == 2
+
+
+def test_verifica_si_alerteaza_ignora_scor_moderat_sau_scazut(app):
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO923", tip="direct", email="admin923@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100", "datorii_totale": "10",
+        "cifra_afaceri": "1000", "rezultat_net": "10"})
+    trimise = []
+    n = risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    assert n == 0
+
+
+def test_verifica_si_alerteaza_ignora_firme_fara_modul_activat(app):
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO924", tip="direct", email="admin924@exemplu.ro")
+    trimise = []
+    n = risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn, lambda *a: trimise.append(a))
+    assert n == 0
+
+
+def test_verifica_si_alerteaza_include_numele_clientului_pentru_firma_contabilitate(app):
+    from portal import risk_alerts as risk_alerts_mod
+    c = app.test_client()
+    inregistreaza(c, cui="RO925", tip="contabilitate", email="admin925@exemplu.ro")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    client_id = c.post("/api/clients", json={
+        "cui": "RO9998", "name": "Client Risc Ridicat SRL",
+        "gdpr_confirmat": True}).get_json()["id"]
+    c.post("/api/risc-fiscal/perioada", data={
+        "client_id": str(client_id), "perioada": "2026-T2",
+        "capitaluri_proprii": "-1", "datorii_totale": "10",
+        "cifra_afaceri": "1000", "rezultat_net": "-1"})
+    trimise = []
+    risk_alerts_mod.verifica_si_alerteaza(
+        app.portal_conn, app.firm_conn,
+        lambda dest, subiect, continut: trimise.append((dest, subiect, continut)))
+    assert len(trimise) == 1
+    assert "Client Risc Ridicat SRL" in trimise[0][1]
+    assert "Client Risc Ridicat SRL" in trimise[0][2]
+
+
+def test_risc_fiscal_izolat_intre_firme(app):
+    """O firma nu poate vedea istoricul de risc fiscal al alteia - RLS/
+    fisierul per-firma izoleaza automat, la fel ca la reconcilieri."""
+    c1 = app.test_client()
+    inregistreaza(c1, cui="RO911", tip="direct")
+    c1.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    c1.post("/api/risc-fiscal/perioada",
+           data={"perioada": "2026-T2", "capitaluri_proprii": "100",
+                 "datorii_totale": "10", "cifra_afaceri": "1000",
+                 "rezultat_net": "10"})
+
+    c2 = app.test_client()
+    inregistreaza(c2, cui="RO912", tip="direct")
+    c2.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    assert c2.get("/api/risc-fiscal/istoric").get_json() == []
+
+
+# ---------- modulul premium Risc Fiscal: nivel, nomenclator, facturare ----------
+
+def test_salveaza_plan_stores_risc_fiscal_nivel(app):
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO801")
+    r = c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"},
+              follow_redirects=True)
+    assert "Planul a fost salvat".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE cui='RO801'").fetchone()
+    assert row["risc_fiscal_nivel"] == pdb.RISC_FISCAL_SIMPLU
+
+
+def test_salveaza_plan_allows_clearing_risc_fiscal_nivel(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO802")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "complet"})
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": ""})
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE cui='RO802'").fetchone()
+    assert row["risc_fiscal_nivel"] is None
+
+
+def test_salveaza_plan_rejects_invalid_risc_fiscal_nivel(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO803")
+    r = c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "premium"},
+              follow_redirects=True)
+    assert "Nivel invalid".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE cui='RO803'").fetchone()
+    assert row["risc_fiscal_nivel"] is None
+
+
+def test_master_poate_forta_nivel_risc_fiscal(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO804")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO804'").fetchone()["id"]
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post(f"/master/firma/{firm_id}/risc-fiscal/nivel",
+                      data={"nivel": "complet"}, follow_redirects=True)
+    assert r.status_code == 200
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert row["risc_fiscal_nivel"] == "complet"
+
+    # Un nivel invalid nu modifica nimic si redirectioneaza cu eroare.
+    r = c_master.post(f"/master/firma/{firm_id}/risc-fiscal/nivel",
+                      data={"nivel": "premium"}, follow_redirects=True)
+    assert "Nivel invalid".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert row["risc_fiscal_nivel"] == "complet"
+
+
+def test_master_poate_dezactiva_nivel_risc_fiscal(app):
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO805")
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO805'").fetchone()["id"]
+    app.portal_conn.execute(
+        "UPDATE firms SET risc_fiscal_nivel='simplu' WHERE id=?", (firm_id,))
+    app.portal_conn.commit()
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/firma/{firm_id}/risc-fiscal/nivel", data={"nivel": ""})
+    row = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert row["risc_fiscal_nivel"] is None
+
+
+def test_seteaza_risc_fiscal_nivel_requires_master(app):
+    c = app.test_client()
+    r = c.post("/master/firma/1/risc-fiscal/nivel", data={"nivel": "simplu"},
+              follow_redirects=False)
+    assert r.status_code == 302 and "/autentificare" in r.headers["Location"]
+
+
+def test_master_identity_are_nivel_complet(app):
+    """Masterul trebuie sa poata testa fluxul complet (indicatorii 4-5 +
+    Sectiunea B) fara sa activeze plata modulul - vezi current_identity."""
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.get("/api/me")
+    assert r.get_json()["risc_fiscal_nivel"] == "complet"
+
+
+def test_api_me_returns_risc_fiscal_nivel_for_firm(app):
+    from portal import db as pdb
+    c = app.test_client()
+    inregistreaza(c, cui="RO806")
+    assert c.get("/api/me").get_json()["risc_fiscal_nivel"] is None
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    assert c.get("/api/me").get_json()["risc_fiscal_nivel"] == pdb.RISC_FISCAL_SIMPLU
+
+
+def test_salveaza_preturi_risc_fiscal_din_nomenclator(app):
+    from portal import db as pdb
+    _seed_master(app)
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post("/master/nomenclator/risc-fiscal", data={
+        "risc_fiscal_simplu": "120", "risc_fiscal_complet": "250"},
+        follow_redirects=True)
+    assert "au fost actualizate".encode() in r.data
+    preturi = pdb.get_preturi_module(app.portal_conn)
+    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU] == 120
+    assert preturi[pdb.MODUL_RISC_FISCAL_COMPLET] == 250
+
+
+def test_salveaza_preturi_risc_fiscal_respinge_valori_invalide(app):
+    from portal import db as pdb
+    _seed_master(app)
+    c = app.test_client()
+    c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c.post("/master/nomenclator/risc-fiscal", data={
+        "risc_fiscal_simplu": "-5", "risc_fiscal_complet": "250"},
+        follow_redirects=True)
+    assert "trebuie sa fie un numar pozitiv".encode() in r.data
+    preturi = pdb.get_preturi_module(app.portal_conn)
+    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU] == 100  # neschimbat
+
+
+def test_valideaza_plata_adauga_linie_separata_pentru_risc_fiscal(app, monkeypatch):
+    """Cand firma are un nivel de Risc Fiscal activ, factura lunara emisa
+    prin FGO capata o a doua linie, cu CodArticol propriu si pretul din
+    nomenclator - iar valoare_neta insumeaza ambele linii (vezi
+    _emite_factura_fgo/linii_extra si valideaza_plata)."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO807", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    _apropie_trial_de_final(app, "RO807")
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    plata_id = app.portal_conn.execute(
+        "SELECT p.id FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO807'").fetchone()["id"]
+
+    _seed_master(app)
+    continuturi_capturate = []
+
+    def _fake_emite_factura(cod_unic, cheie_privata, platforma_url, mediu, *,
+                            serie, continut, **kw):
+        continuturi_capturate.append(continut)
+        return {"Numar": "0099", "Serie": serie,
+                "Link": "https://fgo.testuat/n/p/fake", "LinkPlata": None}
+    monkeypatch.setattr(fgo, "emite_factura", _fake_emite_factura)
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"}, follow_redirects=True)
+    assert "Incasarea a fost validata".encode() in r.data
+
+    continut = continuturi_capturate[0]
+    assert len(continut) == 2
+    assert continut[0]["CodArticol"] == "ABONAMENT"
+    assert continut[1]["CodArticol"] == "RISC_FISCAL_SIMPLU"
+    assert continut[1]["PretUnitar"] == 100
+
+    invoice_id = app.portal_conn.execute(
+        "SELECT invoice_id FROM payments WHERE id=?", (plata_id,)).fetchone()["invoice_id"]
+    factura = app.portal_conn.execute(
+        "SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+    # abonament direct lunar (59) + risc fiscal simplu (100) = 159
+    assert factura["valoare_neta"] == 59 + 100
+    assert factura["valoare_totala"] == round((59 + 100) * _multiplicator_tva(app), 2)

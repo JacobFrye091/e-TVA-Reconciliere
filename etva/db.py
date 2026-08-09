@@ -65,6 +65,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cod_mappings_client
   ON cod_mappings(client_id, direction, cod) WHERE client_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cod_mappings_direct
   ON cod_mappings(direction, cod) WHERE client_id IS NULL;
+CREATE TABLE IF NOT EXISTS risc_fiscal_perioade(
+  id INTEGER PRIMARY KEY, client_id INTEGER, perioada TEXT NOT NULL,
+  tip_raport TEXT NOT NULL, sursa_date TEXT NOT NULL,
+  capitaluri_proprii REAL, datorii_totale REAL, cifra_afaceri REAL,
+  rezultat_net REAL, declaratii_nedepuse_manual INTEGER,
+  obligatii_restante_manual INTEGER, obligatii_crescute_manual INTEGER,
+  flaguri_sectiune_b TEXT, scor_total_indicatori INTEGER,
+  scor_max_posibil INTEGER, scor_afisat INTEGER, clasificare TEXT,
+  scor_detaliu TEXT, creat_de TEXT NOT NULL, creat_la TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risc_fiscal_perioade_client
+  ON risc_fiscal_perioade(client_id, perioada) WHERE client_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risc_fiscal_perioade_direct
+  ON risc_fiscal_perioade(perioada) WHERE client_id IS NULL;
+CREATE TABLE IF NOT EXISTS risc_fiscal_alerte(
+  id INTEGER PRIMARY KEY, perioada_id INTEGER NOT NULL,
+  semnatura TEXT NOT NULL, trimis_la TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risc_fiscal_alerte_semnatura
+  ON risc_fiscal_alerte(perioada_id, semnatura);
 """
 
 

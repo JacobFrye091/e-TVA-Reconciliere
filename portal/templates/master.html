@@ -186,7 +186,7 @@ a.mic:hover { background:var(--paper); }
       blocheaza autentificarea tuturor utilizatorilor ei. "Istoric XML"
       descarca toate actiunile inregistrate ale firmei respective.</p>
     <table>
-      <tr><th>Firma</th><th>CUI</th><th>Utilizatori</th><th>Status</th><th></th></tr>
+      <tr><th>Firma</th><th>CUI</th><th>Utilizatori</th><th>Status</th><th>Risc Fiscal</th><th></th></tr>
       {% for f in firms %}
       <tr>
         <td>{{ f['name'] }}</td>
@@ -194,6 +194,16 @@ a.mic:hover { background:var(--paper); }
         <td>{{ f['n_users'] }}</td>
         <td>{% if f['active'] %}<span class="chip ok">Activa</span>
             {% else %}<span class="chip oprit">Dezactivata</span>{% endif %}</td>
+        <td>
+          <form class="inline" method="post" action="/master/firma/{{ f['id'] }}/risc-fiscal/nivel">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="nivel" onchange="this.form.submit()" class="mic">
+              <option value="" {% if not f['risc_fiscal_nivel'] %}selected{% endif %}>Niciunul</option>
+              <option value="simplu" {% if f['risc_fiscal_nivel'] == 'simplu' %}selected{% endif %}>Simplu</option>
+              <option value="complet" {% if f['risc_fiscal_nivel'] == 'complet' %}selected{% endif %}>Complet</option>
+            </select>
+          </form>
+        </td>
         <td style="text-align:right">
           <a class="mic" style="text-decoration:none;margin-right:6px;display:inline-block"
              href="/master/firme/{{ f['id'] }}/istoric.xml">Istoric XML</a>
@@ -205,7 +215,7 @@ a.mic:hover { background:var(--paper); }
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" style="color:var(--muted)">Nicio firma inregistrata inca.</td></tr>
+      <tr><td colspan="6" style="color:var(--muted)">Nicio firma inregistrata inca.</td></tr>
       {% endfor %}
     </table>
   </div>

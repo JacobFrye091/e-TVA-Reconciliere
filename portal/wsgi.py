@@ -2,13 +2,14 @@
 
 Mirrors run.py's `python -m portal.run` invocation - same data_dir(),
 same create_app(..., enable_backup_scheduler=True,
-enable_trial_reminder_scheduler=True) - but exposes a module-level `app`
-object instead of calling Flask's own dev server, since gunicorn needs an
-importable WSGI callable rather than a `.run()` call.
+enable_trial_reminder_scheduler=True, enable_risk_alerts_scheduler=True) -
+but exposes a module-level `app` object instead of calling Flask's own dev
+server, since gunicorn needs an importable WSGI callable rather than a
+`.run()` call.
 
-MUST be run as exactly one worker process. create_app() starts two
-in-process daemon threads (see portal/backup.py and
-portal/trial_reminders.py) that share one threading.RLock and one
+MUST be run as exactly one worker process. create_app() starts daemon
+threads (see portal/backup.py, portal/trial_reminders.py and
+portal/risk_alerts.py) that share one threading.RLock and one
 long-lived sqlite3/SQLCipher connection per database file. A second
 worker process would open its own, unsynchronized connections and its
 own lock to the same files - at best duplicate backups/reminder emails,
@@ -23,7 +24,8 @@ from portal.app import create_app
 from portal.run import data_dir
 
 app = create_app(data_dir(), enable_backup_scheduler=True,
-                 enable_trial_reminder_scheduler=True)
+                 enable_trial_reminder_scheduler=True,
+                 enable_risk_alerts_scheduler=True)
 
 # Apache sits in front of gunicorn and talks to it over plain HTTP on
 # 127.0.0.1, even when the public-facing connection is HTTPS - without this,

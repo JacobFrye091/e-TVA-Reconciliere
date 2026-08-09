@@ -41,6 +41,7 @@ EXPECTED_SCHEMA = {
         "ciclu_facturare": "text", "trial_reminder_ultim_prag": "integer",
         "arhivata_la": "timestamp with time zone",
         "reconcilieri_lunare_estimate": "integer",
+        "risc_fiscal_nivel": "text",
     },
     "users": {
         "id": "integer", "username": "text", "pw_hash": "text",
@@ -132,6 +133,11 @@ EXPECTED_SCHEMA = {
         "actualizat_de": "text",
         "actualizat_la": "timestamp with time zone",
     },
+    "nomenclator_module": {
+        "modul": "text", "pret_lunar_ron": "numeric",
+        "actualizat_de": "text",
+        "actualizat_la": "timestamp with time zone",
+    },
     "contracts": {
         "id": "integer", "firm_id": "integer", "numar": "integer",
         "ciclu_facturare": "text", "suma": "numeric",
@@ -189,6 +195,24 @@ EXPECTED_SCHEMA = {
         "id": "integer", "firm_id": "integer", "client_id": "integer",
         "direction": "text", "cod": "text", "line_no": "text",
         "updated_at": "timestamp with time zone", "updated_by": "text",
+    },
+    "risc_fiscal_perioade": {
+        "id": "integer", "firm_id": "integer", "client_id": "integer",
+        "perioada": "text", "tip_raport": "text", "sursa_date": "text",
+        "capitaluri_proprii": "numeric", "datorii_totale": "numeric",
+        "cifra_afaceri": "numeric", "rezultat_net": "numeric",
+        "declaratii_nedepuse_manual": "integer",
+        "obligatii_restante_manual": "boolean",
+        "obligatii_crescute_manual": "boolean",
+        "flaguri_sectiune_b": "text",
+        "scor_total_indicatori": "integer", "scor_max_posibil": "integer",
+        "scor_afisat": "integer", "clasificare": "text",
+        "scor_detaliu": "text", "creat_de": "text",
+        "creat_la": "timestamp with time zone",
+    },
+    "risc_fiscal_alerte": {
+        "id": "integer", "firm_id": "integer", "perioada_id": "integer",
+        "semnatura": "text", "trimis_la": "timestamp with time zone",
     },
 }
 
