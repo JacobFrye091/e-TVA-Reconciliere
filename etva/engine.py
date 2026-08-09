@@ -99,3 +99,40 @@ def reconcile_d300(company_lines: dict, anaf_lines: dict,
         if line_no not in totals_company:
             diff("lipsa_la_companie", line_no, None, a)
     return result
+
+
+def find_candidate_invoices(rows: list, delta_base: float, delta_vat: float,
+                            tolerance: float = 0.05) -> set:
+    """Indices into `rows` (each with "base"/"vat") whose sum most likely
+    explains a line-level difference - a single invoice first, then a
+    pair, matched tightly on BOTH base and vat (not base alone) to avoid
+    flagging an innocent invoice by coincidence: on real data, a company's
+    largest invoice on a line can land within a leu or two of the delta
+    purely by chance while having nothing to do with the actual cause
+    (e.g. ANAF's e-Factura source simply not covering several unrelated
+    invoices) - requiring both values to agree filters that out.
+
+    Only searches when delta_base > 0 (the company's total exceeds
+    ANAF's, i.e. an extra/duplicate/misclassified invoice could plausibly
+    be among these) - for delta_base <= 0 (ANAF has more than the
+    company) the cause isn't among the company's own listed invoices at
+    all, so nothing is searched.
+
+    An empty result means "no confident match found", not "no invoices
+    exist" - callers should say so explicitly rather than falling back to
+    a looser, less trustworthy guess.
+    """
+    if delta_base <= 0:
+        return set()
+    n = len(rows)
+    for i in range(n):
+        if (abs(rows[i]["base"] - delta_base) <= tolerance
+                and abs(rows[i]["vat"] - delta_vat) <= tolerance):
+            return {i}
+    if n <= 300:  # O(n^2) below - safety cap for lines with very many invoices
+        for i in range(n):
+            for j in range(i + 1, n):
+                if (abs(rows[i]["base"] + rows[j]["base"] - delta_base) <= tolerance
+                        and abs(rows[i]["vat"] + rows[j]["vat"] - delta_vat) <= tolerance):
+                    return {i, j}
+    return set()

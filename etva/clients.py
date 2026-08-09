@@ -20,6 +20,8 @@ def create_client(conn, cui: str, name: str,
     acopera prelucrarea datelor lui in platforma (art. 28 GDPR) - cerut
     obligatoriu de portal/app.py::add_client; pastrat pe rand, cu momentul
     confirmarii, ca proba."""
+    if not name.strip():
+        raise ClientError("Denumirea clientului nu poate fi goala.")
     if conn.execute("SELECT 1 FROM clients WHERE cui=?", (cui,)).fetchone():
         raise ClientError("Exista deja un client cu acest CUI.")
     new_id = dbcompat.insert_id(

@@ -1366,6 +1366,20 @@ def _saga_vanzari_bytes():
     return buf
 
 
+def test_new_reconciliation_rejects_empty_period(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "   ",
+        "company_file": (_saga_vanzari_bytes(), "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(b"%PDF-fake"), "decont.pdf"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "perioada" in r.get_json()["errors"][0].lower()
+
+
 def test_d300_line_reconciliation_via_pdf_and_saga(app, monkeypatch):
     import portal.app as app_module
     monkeypatch.setattr(app_module, "parse_p300_pdf", lambda path: AnafP300(
@@ -1442,12 +1456,46 @@ def test_facturi_endpoint_returns_company_invoice_for_direct_line(app, monkeypat
     assert rf.status_code == 200
     facturi = rf.get_json()
     assert facturi == [{"date": "2026-06-01", "invoice_no": "F1",
-                        "partner_cui": "RO999", "base": 1000.0, "vat": 210.0}]
+                        "partner_cui": "RO999", "base": 1000.0, "vat": 210.0,
+                        "candidat": False}]
 
     # O linie D300 valida, dar fara nicio factura clasificata pe ea.
     assert c.get(f"/api/reconciliations/{rid}/facturi?linie=24").get_json() == []
     # Linie D300 inexistenta.
     assert c.get(f"/api/reconciliations/{rid}/facturi?linie=999").status_code == 400
+
+
+def test_facturi_endpoint_marks_matching_invoice_as_candidat(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # Doua facturi pe linia 9 (cota 21%) - ANAF are precompletata doar
+    # prima (100/21), a doua (60.5/12.705) e exact deltul - trebuie
+    # marcata candidat, prima nu.
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         100.0, 21.0, _eticheta_model("vanzari", "9")),
+        ("2026-06-02", "F2", "Client B", "RO222",
+         60.5, 12.705, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 100.0, "RD9_TVA": 21.0}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    rid = r.get_json()["id"]
+
+    facturi = c.get(f"/api/reconciliations/{rid}/facturi?linie=9").get_json()
+    by_doc = {f["invoice_no"]: f for f in facturi}
+    assert by_doc["F1"]["candidat"] is False
+    assert by_doc["F2"]["candidat"] is True
 
 
 def test_facturi_endpoint_resolves_derived_line(app):

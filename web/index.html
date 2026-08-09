@@ -852,6 +852,10 @@ async function ruleazaReconciliere() {
   reconErr.textContent = '';
   btnRuleaza.disabled = true; btnRuleaza.textContent = 'Se proceseaza...';
   try {
+    if (!perioada.value.trim()) {
+      reconErr.textContent = 'Completeaza perioada (ex: 2026-06).';
+      return;
+    }
     const fisiereJurnal = [...fisierVanzari.files, ...fisierCumparari.files];
     if (!fisiereJurnal.length) {
       reconErr.textContent = 'Incarca cel putin un jurnal (de vanzari sau de cumparari) - '
@@ -1067,13 +1071,22 @@ async function toggleFacturiLinie(btn, linie) {
       cell.innerHTML = '<p class="sub" style="margin:8px 0">' +
         'Detaliul pe facturi nu e disponibil pentru aceasta rulare.</p>';
     } else {
+      const areCandidati = rows.some(f => f.candidat);
+      const nota = areCandidati
+        ? 'Facturile evidentiate mai jos au suma cea mai apropiata de diferenta ' +
+          '— verifica-le primele.'
+        : 'Nu am putut identifica automat o factura anume care sa explice ' +
+          'diferenta — poate veni din mai multe facturi mici sau dintr-o ' +
+          'operatiune pe care ANAF nu a inregistrat-o.';
       cell.innerHTML =
         '<div class="avert"><p class="sub" style="margin:0 0 8px">Facturile firmei clasificate pe aceasta ' +
         'linie (decontul precompletat ANAF nu are detaliu pe factura — nu e o comparatie ' +
-        'factura-cu-factura, doar evidenta firmei).</p>' +
+        `factura-cu-factura, doar evidenta firmei). ${nota}</p>` +
         '<table style="margin:0;width:100%"><thead><tr><th>Data</th><th>Document</th>' +
         '<th>CUI partener</th><th class="num">Baza</th><th class="num">TVA</th></tr></thead><tbody>' +
-        rows.map(f => `<tr><td>${f.date || ''}</td><td class="cod">${f.invoice_no || ''}</td>` +
+        rows.map(f => `<tr${f.candidat ? ' class="sever"' : ''}><td>${f.date || ''}</td>` +
+          `<td class="cod">${f.invoice_no || ''}` +
+          (f.candidat ? ' <span class="chip problema">Posibila cauza</span>' : '') + `</td>` +
           `<td class="cod">${f.partner_cui || ''}</td><td class="num">${num(f.base)}</td>` +
           `<td class="num">${num(f.vat)}</td></tr>`).join('') + '</tbody></table></div>';
     }

@@ -17,6 +17,13 @@ def test_create_and_duplicate(conn):
     with pytest.raises(clients.ClientError):
         clients.create_client(conn, "RO123", "Alta")
 
+def test_create_rejects_empty_name(conn):
+    with pytest.raises(clients.ClientError):
+        clients.create_client(conn, "RO123", "")
+    with pytest.raises(clients.ClientError):
+        clients.create_client(conn, "RO123", "   ")
+    assert clients.visible_clients(conn, ADMIN) == []
+
 def test_visibility_assigned_only(conn):
     c1 = clients.create_client(conn, "RO1", "A")
     clients.create_client(conn, "RO2", "B")

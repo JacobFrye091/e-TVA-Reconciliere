@@ -44,7 +44,7 @@ from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
 from etva.d300 import (classify_legend, expand_derived_lines, D300_LINES,
                        valid_lines_for_direction, MappingSectionError,
                        resolve_codes, resolve_invoice_lines)
-from etva.engine import reconcile, reconcile_d300
+from etva.engine import reconcile, reconcile_d300, find_candidate_invoices
 from etva.advisor import suggest_d300, suggest_d300_lines
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -3514,7 +3514,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     "daca lista e goala, adauga intai clientul in cardul "
                     "de mai sus."]}), 400
             client_id = int(brut)
-        period = request.form["period"]
+        period = request.form.get("period", "").strip()
+        if not period:
+            return jsonify({"errors": [
+                "Completeaza perioada reconcilierii (ex: 2026-06)."]}), 400
         format_jurnal = request.form.get("format_jurnal", "saga")
         company_files = request.files.getlist("company_file")
         if not company_files:
@@ -3698,6 +3701,22 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             (rid, *line_nos))
         return [dict(r) for r in rows]
 
+    def _load_line_delta(fc, rid, linie):
+        """Delta bruta ({delta_base, delta_vat}) pentru diferenta de tip
+        "suma_diferita" de pe `linie` (linia ceruta literal, nu liniile
+        reale intoarse de resolve_invoice_lines - deltele raman mereu pe
+        linia originala, chiar daca e derivata). None daca nu exista o
+        astfel de diferenta pe acea linie (ex. linia nu are diferenta, sau
+        e "lipsa_in_anaf"/"lipsa_la_companie", unde nu are sens o cautare
+        de facturi candidate)."""
+        for row in fc.execute(
+                "SELECT details FROM differences WHERE reconciliation_id=? "
+                "AND diff_type='suma_diferita'", (rid,)):
+            d = json.loads(row["details"])
+            if d.get("line_no") == linie:
+                return d
+        return None
+
     @app.get("/api/reconciliations/<int:rid>/facturi")
     @require()
     def get_reconciliation_facturi(ident, rid):
@@ -3708,21 +3727,31 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         linie = (request.args.get("linie") or "").strip()
         if linie not in D300_LINES:
             return jsonify({"error": "Linie D300 necunoscuta."}), 400
-        return jsonify(_load_company_invoices(fc, rid, resolve_invoice_lines(linie)))
+        rows = _load_company_invoices(fc, rid, resolve_invoice_lines(linie))
+        delta = _load_line_delta(fc, rid, linie)
+        candidati = (find_candidate_invoices(rows, delta["delta_base"], delta["delta_vat"])
+                    if delta else set())
+        for i, r in enumerate(rows):
+            r["candidat"] = i in candidati
+        return jsonify(rows)
 
     @app.get("/api/reconciliations/<int:rid>/export")
     @require("rapoarte.export")
     def export_report(ident, rid):
         fc = firm_conn(ident["firm_id"])
         row = fc.execute(
-            "SELECT r.period, c.name FROM reconciliations r "
+            "SELECT r.period, c.name, c.cui FROM reconciliations r "
             "LEFT JOIN clients c ON c.id = r.client_id WHERE r.id=?",
             (rid,)).fetchone()
         if row is None:
             return jsonify({"error": "Reconciliere inexistenta"}), 404
         # O firma directa nu are client (reconciliaza ca ea insasi) - numele
-        # de afisat pe raport e atunci al firmei, nu al unui client.
-        nume_raport = row["name"] or ident["firm_name"]
+        # de afisat pe raport e atunci al firmei, nu al unui client. Daca
+        # totusi exista un client dar fara nume (nu ar trebui, vezi
+        # etva.clients.create_client - validare adaugata dupa un caz real
+        # gasit in productie), CUI-ul e mai util decat sa cada pe numele
+        # firmei de contabilitate, care n-are nicio legatura cu clientul.
+        nume_raport = row["name"] or row["cui"] or ident["firm_name"]
         path = os.path.join(upload_dir, f"raport_{ident['firm_id']}_{rid}.xlsx")
         if _reconciliation_mode(fc, rid) == "d300_lines":
             comp = _load_lines(fc, rid, "invoices_company")

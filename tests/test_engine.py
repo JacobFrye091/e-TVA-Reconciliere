@@ -1,4 +1,4 @@
-from etva.engine import reconcile, reconcile_d300
+from etva.engine import reconcile, reconcile_d300, find_candidate_invoices
 
 def row(cui="RO1", no="F1", base=100.0, vat=19.0, cat="livrari_interne"):
     return {"partner_cui": cui, "invoice_no": no, "date": "2026-01-10",
@@ -76,3 +76,38 @@ def test_d300_no_duplicate_concept_at_line_level():
     r = reconcile_d300({"9": {"base": 1.0, "vat": 0.0}},
                        {"9": {"base": 1.0, "vat": 0.0}})
     assert all(d["diff_type"] != "duplicat" for d in r.differences)
+
+
+def fact(base, vat):
+    return {"base": base, "vat": vat}
+
+
+def test_find_candidate_single_exact_match():
+    rows = [fact(100.0, 21.0), fact(60.5, 0.0)]
+    assert find_candidate_invoices(rows, 60.5, 0.0) == {1}
+
+
+def test_find_candidate_pair_match():
+    rows = [fact(30.0, 6.0), fact(30.5, 6.1)]
+    assert find_candidate_invoices(rows, 60.5, 12.1) == {0, 1}
+
+
+def test_find_candidate_negative_delta_never_searches():
+    # ANAF has more than the company - the cause isn't among these invoices.
+    rows = [fact(60.5, 0.0)]
+    assert find_candidate_invoices(rows, -60.5, 0.0) == set()
+
+
+def test_find_candidate_ignores_a_near_but_not_matching_invoice():
+    # Cazul real din conversatie: delta 4214.96/885.48, cea mai apropiata
+    # factura e la 0.10/0.36 distanta - o coincidenta, nu cauza reala
+    # (cauza reala fiind mai multe facturi necuprinse de e-Factura, nu una
+    # singura). Nu trebuie marcata cu incredere falsa.
+    rows = [fact(360.0, 75.6), fact(4214.86, 885.12), fact(600.83, 126.17)]
+    assert find_candidate_invoices(rows, 4214.96, 885.48) == set()
+
+
+def test_find_candidate_requires_both_base_and_vat_close():
+    # Baza se potriveste exact, dar TVA nu - nu trebuie marcata.
+    rows = [fact(60.5, 99.0)]
+    assert find_candidate_invoices(rows, 60.5, 0.0) == set()
