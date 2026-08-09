@@ -11,6 +11,7 @@ ce utilizatorul alege dintr-o lista deja restransa la liniile valide.
 """
 from datetime import datetime, timezone
 
+from etva import dbcompat
 from etva.d300 import valid_lines_for_direction
 
 
@@ -30,10 +31,17 @@ def save_mapping(conn, client_id: "int | None", direction: str, cod: str,
             f"Linia '{line_no}' nu e valida pentru un jurnal de {direction}.")
     now = datetime.now(timezone.utc).isoformat()
     if client_id is None:
+        # Doua firme 'directe' diferite pot alege acelasi (direction, cod) -
+        # pe Postgres (tabela partajata) tinta ON CONFLICT trebuie scopata pe
+        # firm_id (idx_cod_mappings_direct_firm, vezi pg_schema.sql), altfel
+        # a doua firma lovea indexul unic al primeia. SQLite ramane pe
+        # indexul vechi: fisier per firma, deci nu are coloana firm_id.
+        conflict = ("(firm_id, direction, cod)" if dbcompat.backend() == "postgres"
+                   else "(direction, cod)")
         conn.execute(
             "INSERT INTO cod_mappings(client_id, direction, cod, line_no, "
             "updated_at, updated_by) VALUES(NULL,?,?,?,?,?) "
-            "ON CONFLICT (direction, cod) WHERE client_id IS NULL "
+            f"ON CONFLICT {conflict} WHERE client_id IS NULL "
             "DO UPDATE SET line_no=excluded.line_no, "
             "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
             (direction, cod, line_no, now, username))
