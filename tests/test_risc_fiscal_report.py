@@ -27,6 +27,15 @@ def test_explicatie_flag_sectiune_b_raspunde_diferit_pe_da_si_nu():
     assert "verificat automat, live, la ANAF" in nu
 
 
+def test_explicatie_flag_sectiune_b_entitate_noua_mentioneaza_pragul():
+    da = rfr._explicatie_flag_sectiune_b("entitate_noua", True)
+    nu = rfr._explicatie_flag_sectiune_b("entitate_noua", False)
+    assert "sub 12 luni" in da
+    assert "12 luni" in nu
+    assert "nu se bazează pe o declarație" in da
+    assert "nu se bazează pe o declarație" in nu
+
+
 def test_explicatie_flag_sectiune_b_acopera_toate_cele_9_conditii():
     """Fiecare cheie din FLAGURI_SECTIUNE_B_LABEL trebuie sa aiba o
     explicatie proprie, distincta de placeholder-ul generic - altfel PDF-ul

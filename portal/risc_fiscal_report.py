@@ -56,10 +56,13 @@ _EXPLICATIE_FLAG_SECTIUNE_B = {
         "Nu au fost raportate înscrieri în cazierul fiscal al firmei sau al "
         "administratorilor acesteia."),
     "entitate_noua": (
-        "Firma este nou înființată, cu vechime redusă în activitate, conform "
-        "declarației contabilului.",
-        "Firma nu este considerată nou înființată, având o vechime consolidată "
-        "în activitate, conform declarației contabilului."),
+        "Firma este nou înființată (sub 12 luni de la data înregistrării la "
+        "ANAF). Acest răspuns e stabilit automat, la momentul fiecărei "
+        "evaluări, din data reală de înregistrare - nu se bazează pe o declarație.",
+        "Firma nu este considerată nou înființată, având peste 12 luni "
+        "vechime de la data înregistrării la ANAF. Acest răspuns e stabilit "
+        "automat, la momentul fiecărei evaluări, din data reală de "
+        "înregistrare - nu se bazează pe o declarație."),
     "fara_salariati": (
         "Firma nu are niciun salariat cu carte de muncă înregistrat, conform "
         "declarației contabilului.",

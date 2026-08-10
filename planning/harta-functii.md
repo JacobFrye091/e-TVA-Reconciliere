@@ -165,6 +165,36 @@ un API public oficial identificat - automatizarea lor ar insemna scraping
 pe portaluri fara API documentat (fragil, zona gri ToS) - lasate deliberat
 manuale, decizie in asteptare de la Andrei daca merita totusi investitia.
 
+Actualizat manual 2026-08-10 (a cincea interventie): la intrebarea directa
+"astea pot fi verificate dupa CUI, de ce nu faci asta" pentru grupele
+B/C, s-a verificat CONCRET (nu presupus) fiecare caz, direct pe surse
+oficiale ANAF/ONRC/BPI:
+- **cazier_fiscal**: confirmat ca NU se poate - pentru o firma (CUI),
+  cazierul fiscal se cere exclusiv prin SPV-ul PROPRIU al firmei (cu
+  certificatul ei digital), nu exista o cautare publica dupa CUI ca la
+  TVA. Ramane manual.
+- **REVISAL (fara_salariati)**: confirmat ca NU se poate - numarul de
+  salariati e o informatie protejata, fara API/pagina publica. Ramane
+  manual.
+- **obligatii restante** (indicator deja manual, nu Sectiunea B): ANAF
+  publica trimestrial o "Lista contribuabililor cu obligatii restante",
+  DAR doar peste praguri mari (100.000-500.000 RON dupa categorie) - ar
+  rata sistematic restantele mici/medii ale clientilor tipici ai acestei
+  aplicatii, deci NU e o sursa fiabila pentru auto-verificare. Ramane
+  neschimbat (SPV, manual).
+- **entitate_noua**: acum AUTOMATIZATA complet, la decizia lui Andrei -
+  Anexa 2 nu are un prag oficial, dar Andrei a ales explicit "sub 12 luni"
+  (`portal/app.py::RISC_FISCAL_PRAG_ENTITATE_NOUA_ZILE = 365`), aplicat pe
+  `data_inregistrare` de la ANAF (acelasi apel live folosit si pentru
+  declarat_inactiv) - suprascrie bifa manuala in ambele sensuri, cu
+  fallback pe bifa daca data lipseste/nu poate fi interpretata. Checkbox-ul
+  din UI e acum disabled, la fel ca la declarat_inactiv.
+- **insolventa (BPI)**: Andrei a ales varianta "cont propriu ONRC (gratuit,
+  dar fragil)" - RAMANE DE IMPLEMENTAT intr-o interventie viitoare (necesita
+  cont ONRC real, creat de Andrei, plus cercetarea fluxului de autentificare
+  al portal.onrc.ro pentru sectiunea BPI gratuita "persoane publicate in
+  BPI" - nu e un API documentat, deci integrarea va fi pe baza de sesiune).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.

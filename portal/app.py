@@ -106,6 +106,11 @@ FGO_PLATFORMA_URL = os.environ.get("FGO_PLATFORMA_URL", "https://ereconciliere.r
 FGO_COD_ARTICOL_RISC_FISCAL_SIMPLU = "RISC_FISCAL_SIMPLU"
 FGO_COD_ARTICOL_RISC_FISCAL_COMPLET = "RISC_FISCAL_COMPLET"
 
+# "Entitate nou infiintata" (Sectiunea B) - Anexa 2 nu defineste un prag
+# numeric oficial, deci am ales unul explicit, la decizia lui Andrei
+# (2026-08-10): sub 12 luni de la data_inregistrare intoarsa de ANAF.
+RISC_FISCAL_PRAG_ENTITATE_NOUA_ZILE = 365
+
 # Judetele Romaniei, exact cum le intoarce FGO la GET /nomenclator/judet
 # (confirmat live 2026-08-02, fara diacritice) - lista stabila, nu se
 # schimba, de-asta e hardcodata aici in loc sa fie interogata la fiecare
@@ -4487,6 +4492,23 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             if info_anaf_live and "inactiv_fiscal" in info_anaf_live:
                 flaguri_sectiune_b["declarat_inactiv"] = info_anaf_live["inactiv_fiscal"]
 
+            # "Entitate nou infiintata": Anexa 2 nu are un prag numeric
+            # oficial, dar avem data reala de inregistrare de la ANAF - se
+            # aplica pragul ales de Andrei (sub 12 luni), nu se mai lasa pe
+            # mana bifei manuale. Daca data lipseste sau nu poate fi
+            # interpretata (format neasteptat), ramanem pe bifa manuala.
+            entitate_noua_verificat_live = False
+            data_inregistrare_anaf = (info_anaf_live or {}).get("data_inregistrare")
+            if data_inregistrare_anaf:
+                try:
+                    data_inreg = datetime.strptime(data_inregistrare_anaf, "%Y-%m-%d")
+                    vechime_zile = (datetime.now() - data_inreg).days
+                    flaguri_sectiune_b["entitate_noua"] = (
+                        vechime_zile < RISC_FISCAL_PRAG_ENTITATE_NOUA_ZILE)
+                    entitate_noua_verificat_live = True
+                except ValueError:
+                    pass
+
         scor = risc_fiscal.calculeaza_scor(
             nivel, date_financiare, declaratii_nedepuse=declaratii_nedepuse,
             obligatii_restante=obligatii_restante,
@@ -4507,6 +4529,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             verificari_automate = {
                 "declarat_inactiv_verificat_live": bool(
                     info_anaf_live and "inactiv_fiscal" in info_anaf_live),
+                "entitate_noua_verificat_live": entitate_noua_verificat_live,
                 "data_inregistrare_anaf": (info_anaf_live or {}).get("data_inregistrare") or None,
                 "sold_imobilizari_saft": date_financiare.get("sold_imobilizari"),
             }

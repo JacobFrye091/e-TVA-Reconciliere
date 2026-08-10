@@ -493,20 +493,21 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
           bifează doar dacă știi cu certitudine, altfel lasă nebifat:</p>
 
         <p class="sub" style="margin-top:10px;margin-bottom:2px;display:flex;align-items:center;gap:8px;font-weight:600">
-          Verificate prin portal ANAF <span class="chip neutru">portal ANAF</span></p>
+          Verificate automat, live, la ANAF <span class="chip neutru">portal ANAF</span></p>
         <div style="display:flex;flex-direction:column;gap:4px">
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal
-            <span class="rf-hint" title="Firma sau administratorii ei au sancțiuni fiscale definitive înscrise în cazierul fiscal. Se verifică gratuit pe portalul ANAF, la secțiunea cazier fiscal.">(?)</span></label>
           <label style="font-weight:normal;color:var(--muted)"><input type="checkbox" class="rfFlag" value="declarat_inactiv" disabled style="width:auto"> Declarat inactiv fiscal
             <span class="chip neutru" style="font-size:10px;padding:1px 8px">verificat automat la calcul</span>
             <span class="rf-hint" title="Nu mai depinde de bifă - la fiecare calcul, aplicația întreabă live ANAF (Registrul contribuabililor inactivi) și folosește răspunsul oficial, indiferent ce ai bifa aici. Dacă ANAF nu răspunde chiar atunci, rămânem pe ultima bifă manuală.">(?)</span></label>
+          <label style="font-weight:normal;color:var(--muted)"><input type="checkbox" class="rfFlag" value="entitate_noua" disabled style="width:auto"> Entitate nou înființată
+            <span class="chip neutru" style="font-size:10px;padding:1px 8px">verificat automat la calcul</span>
+            <span class="rf-hint" title="Nu mai depinde de bifă - se ia data reală de înregistrare la ANAF și se consideră firma nou înființată dacă are sub 12 luni vechime de la acea dată. Dacă ANAF nu răspunde chiar atunci, rămânem pe ultima bifă manuală.">(?)</span></label>
         </div>
 
         <p class="sub" style="margin-top:12px;margin-bottom:2px;display:flex;align-items:center;gap:8px;font-weight:600">
-          Verificabile prin surse externe (ONRC, BPI, REVISAL, bilanț propriu) <span class="chip neutru">surse externe</span></p>
+          Verificabile prin portal ANAF / surse externe (BPI, REVISAL, bilanț propriu) <span class="chip neutru">surse externe</span></p>
         <div style="display:flex;flex-direction:column;gap:4px">
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="entitate_noua" style="width:auto"> Entitate nou înființată
-            <span class="rf-hint" title="Firma e la început de drum, cu puțină vechime în spate. Te uiți pur și simplu la data înregistrării din certificatul ONRC - după calcul îți arătăm și data de înregistrare la ANAF, ca reper.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal
+            <span class="rf-hint" title="Firma sau administratorii ei au sancțiuni fiscale definitive înscrise în cazierul fiscal. Se cere exclusiv prin SPV-ul propriu al firmei (cu certificatul digital) - nu există o cautare publica dupa CUI, ca la TVA.">(?)</span></label>
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_salariati" style="width:auto"> Absența salariaților
             <span class="rf-hint" title="Firma nu are niciun angajat cu carte de muncă. Se vede din REVISAL sau din declarația 112, dar de obicei o știi direct.">(?)</span></label>
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_bunuri" style="width:auto"> Lipsa bunurilor imobile sau mobile
@@ -982,7 +983,6 @@ async function salveazaRiscFiscal() {
     });
   }
   const bifaFaraBunuri = document.querySelector('.rfFlag[value="fara_bunuri"]')?.checked;
-  const bifaEntitateNoua = document.querySelector('.rfFlag[value="entitate_noua"]')?.checked;
   const r = await api('/api/risc-fiscal/perioada', {method: 'POST', body});
   const data = await r.json();
   if (!r.ok) {
@@ -990,19 +990,19 @@ async function salveazaRiscFiscal() {
     return;
   }
   // Nu ne incredem orbeste in bifele Sectiunii B unde avem cum sa verificam
-  // singuri: "declarat inactiv" e verificat live la ANAF la fiecare
-  // evaluare (vezi portal/app.py), iar pentru "entitate noua"/"lipsa
-  // bunuri" aratam reperul real (data de la ANAF / soldul din SAF-T), ca
-  // sa nu se bazeze doar pe ce a bifat contabilul din memorie.
+  // singuri: "declarat inactiv" si "entitate noua" sunt verificate live la
+  // ANAF la fiecare evaluare (vezi portal/app.py), iar pentru "lipsa
+  // bunuri" aratam reperul real (soldul din SAF-T), ca sa nu se bazeze doar
+  // pe ce a bifat contabilul din memorie.
   const va = data.verificari_automate;
   if (va) {
     const notite = [];
     if (va.declarat_inactiv_verificat_live) {
       notite.push('Am verificat live la ANAF - "declarat inactiv fiscal" a fost stabilit din răspunsul oficial, nu doar din bifă.');
     }
-    if (va.data_inregistrare_anaf) {
-      notite.push(`Firma e înregistrată la ANAF din ${va.data_inregistrare_anaf}` +
-        (bifaEntitateNoua ? ' - verifică dacă bifa "Entitate nouă înființată" mai corespunde.' : '.'));
+    if (va.entitate_noua_verificat_live) {
+      notite.push(`Am verificat live la ANAF - firma e înregistrată din ${va.data_inregistrare_anaf}, ` +
+        'iar "entitate nouă înființată" s-a stabilit automat din această dată (prag: sub 12 luni vechime), nu din bifă.');
     }
     if (va.sold_imobilizari_saft && bifaFaraBunuri) {
       notite.push(`Atenție: balanța SAF-T arată ${va.sold_imobilizari_saft} RON în conturile de imobilizări (clasa 2), ` +

@@ -6198,6 +6198,66 @@ def test_salveaza_risc_fiscal_pastreaza_bifa_daca_anaf_nu_raspunde(app, monkeypa
     assert body["verificari_automate"]["declarat_inactiv_verificat_live"] is False
 
 
+def test_salveaza_risc_fiscal_entitate_noua_verificata_live_sub_prag(app, monkeypatch):
+    """"Entitate nou infiintata" nu mai e o bifa - se stabileste din data
+    reala de inregistrare la ANAF (sub 12 luni = nou infiintata), chiar
+    daca bifa e lasata NEBIFATA."""
+    from datetime import datetime, timedelta
+    from etva import anaf_cui
+    data_recenta = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: {
+        "cui": anaf_cui.normalize_cui(cui), "denumire": "Firma Test",
+        "adresa": "", "stare_inregistrare": "INREGISTRAT", "scpTVA": True,
+        "data_inregistrare": data_recenta})
+    c = _client_risc_fiscal_platit(app, "RO9045", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is True
+    assert "Entitate nou infiintata" in body["flaguri_risc_mare_active"]
+    assert body["verificari_automate"]["entitate_noua_verificat_live"] is True
+    assert body["verificari_automate"]["data_inregistrare_anaf"] == data_recenta
+
+
+def test_salveaza_risc_fiscal_entitate_noua_corecteaza_bifa_peste_prag(app, monkeypatch):
+    """Invers: contabilul bifeaza gresit "entitate noua" pentru o firma cu
+    multi ani vechime - verificarea live trebuie sa corecteze bifa."""
+    from etva import anaf_cui
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: {
+        "cui": anaf_cui.normalize_cui(cui), "denumire": "Firma Test",
+        "adresa": "", "stare_inregistrare": "INREGISTRAT", "scpTVA": True,
+        "data_inregistrare": "2015-01-01"})
+    c = _client_risc_fiscal_platit(app, "RO9046", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0", "flag_entitate_noua": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is False
+    assert body["flaguri_risc_mare_active"] == []
+    assert body["verificari_automate"]["entitate_noua_verificat_live"] is True
+
+
+def test_salveaza_risc_fiscal_entitate_noua_pastreaza_bifa_daca_data_lipseste(app):
+    """Mock-ul implicit (_mock_anaf_cui) nu include data_inregistrare - ca
+    un CUI real fara acel camp in raspuns - trebuie sa ramana pe bifa
+    manuala, fara sa presupuna nimic."""
+    c = _client_risc_fiscal_platit(app, "RO9047", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0", "flag_entitate_noua": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is True
+    assert "Entitate nou infiintata" in body["flaguri_risc_mare_active"]
+    assert body["verificari_automate"]["entitate_noua_verificat_live"] is False
+
+
 def test_salveaza_risc_fiscal_verificari_automate_include_sold_imobilizari_saft(app):
     """sold_imobilizari_saft (clasa 2 din balanta SAF-T) e trimis in
     raspuns ca reper - portal-ul nu forteaza bifa "Lipsa bunurilor", doar
