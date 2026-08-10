@@ -215,6 +215,27 @@ vechiul plafon `n<=300` de la perechi) - peste plafon, cautarea se opreste
 silentios la marimea anterioara, la fel ca inainte cand o linie avea peste
 300 de facturi.
 
+Actualizat manual 2026-08-10 (a saptea interventie): testand pe un caz
+real (delta 4214.96/885.48, nicio combinatie de facturi nu explica exact
+diferenta, dar o factura era la 0.10/0.36 lei distanta), Andrei a cerut un
+al doilea nivel, mai slab, de sugestie. Functie noua `find_closest_invoices`
+(`etva/engine.py`, §5b) - apelata de `get_reconciliation_facturi` (§3q)
+DOAR cand `find_candidate_invoices` n-a gasit nicio potrivire exacta -
+cauta acelasi fel de subseturi (marime 1-4, acelasi plafon de combinatii),
+dar dupa cea mai mica DISTANTA combinata fata de delta (nu potrivire
+exacta), acceptand un raspuns doar daca cel mai apropiat subset e sub un
+prag relativ la marimea diferentei (1%, intre 0.50 si 50 lei) SI de cel
+putin 2x mai aproape decat a doua cea mai apropiata suma de aceeasi
+marime - altfel nu exista un raspuns clar si nu se ghiceste. Raspunsul
+`/api/reconciliations/<id>/facturi` are acum si campul `aproximativ` per
+factura (langa `candidat`, existent). Frontend (`toggleFacturiLinie`,
+§2d): randurile `aproximativ` primesc un chenar galben PUNCTAT
+(`tr.factura-apropiata`, `outline: dashed`) si chipul "Cea mai apropiata",
+distinct de chenarul rosu SOLID + chipul "Posibila cauza" de la o
+potrivire confirmata - aceeasi interventie a eliminat si nota explicativa
+afisata deasupra listei de facturi (nu mai era necesara odata ce
+evidentierea vorbeste de la sine).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
@@ -979,6 +1000,12 @@ find_candidate_invoices(rows, delta_base, delta_vat) -> nu apeleaza
   altceva - cauta cel mai mic subset de facturi (marime 1-4) a caror suma
   explica deltul unei linii, apelata din get_reconciliation_facturi (§3q)
   ca sa marcheze randurile "candidat" in raspunsul "Vezi facturile"
+
+find_closest_invoices(rows, delta_base, delta_vat) -> nu apeleaza altceva
+  - ghicit mai slab, apelata din get_reconciliation_facturi (§3q) DOAR
+  cand find_candidate_invoices n-a gasit nimic, ca sa marcheze randurile
+  "aproximativ" (subsetul cu cea mai mica distanta fata de delta, daca e
+  clar mai aproape decat alternativele)
 ```
 
 ### 5c. etva/advisor.py (sugestii)

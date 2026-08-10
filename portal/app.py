@@ -50,7 +50,8 @@ from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
 from etva.d300 import (classify_legend, expand_derived_lines, D300_LINES,
                        valid_lines_for_direction, MappingSectionError,
                        resolve_codes, resolve_invoice_lines)
-from etva.engine import reconcile, reconcile_d300, find_candidate_invoices
+from etva.engine import (reconcile, reconcile_d300, find_candidate_invoices,
+                         find_closest_invoices)
 from etva.advisor import suggest_d300, suggest_d300_lines
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -4347,8 +4348,13 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         delta = _load_line_delta(fc, rid, linie)
         candidati = (find_candidate_invoices(rows, delta["delta_base"], delta["delta_vat"])
                     if delta else set())
+        # Ghicit mai slab (posibil mai multe facturi), incercat doar cand
+        # n-a fost gasita nicio combinatie care sa explice exact diferenta.
+        apropiate = (find_closest_invoices(rows, delta["delta_base"], delta["delta_vat"])
+                    if delta and not candidati else set())
         for i, r in enumerate(rows):
             r["candidat"] = i in candidati
+            r["aproximativ"] = i in apropiate
         return jsonify(rows)
 
     @app.get("/api/reconciliations/<int:rid>/export")

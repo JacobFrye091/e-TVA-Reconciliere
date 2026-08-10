@@ -196,3 +196,66 @@ def find_candidate_invoices(rows: list, delta_base: float, delta_vat: float,
         if best is not None:
             return set(best)
     return set()
+
+
+# Praguri pentru find_closest_invoices: distanta admisa scaleaza cu marimea
+# diferentei (1%), cu un plafon minim (diferente foarte mici tot trebuie
+# sa admita o suma la cativa bani distanta) si unul maxim (o diferenta de
+# mii de lei nu face "apropiata" o suma la zeci de lei distanta). Un
+# candidat e acceptat doar daca e cel putin de doua ori mai aproape decat
+# a doua cea mai apropiata suma la aceeasi marime de subset - altfel doua
+# explicatii la fel de plauzibile ar insemna ca nu avem de fapt un raspuns
+# clar.
+_CLOSEST_MIN_ABS = 0.50
+_CLOSEST_MAX_ABS = 50.0
+_CLOSEST_RELATIVE = 0.01
+_CLOSEST_MARGIN = 2.0
+
+
+def find_closest_invoices(rows: list, delta_base: float, delta_vat: float) -> set:
+    """Indici in `rows` ai celui mai mic subset de facturi (marime 1-4, ca
+    la find_candidate_invoices) a carui suma e clar mai aproape de delta
+    decat orice alt subset de aceeasi marime - un ghicit mai slab,
+    folosit doar cand find_candidate_invoices n-a gasit nicio combinatie
+    care sa explice EXACT diferenta. Rezultatul trebuie prezentat
+    userului cu incredere vizibil mai mica (alt stil, alta eticheta)
+    decat o potrivire confirmata - se poate intampla ca diferenta sa vina
+    de fapt din facturi absente cu totul din lista (ex. necuprinse de
+    e-Factura), caz in care orice "cea mai apropiata" e doar o coincidenta.
+
+    Cauta crescator pe marime (1, apoi 2, apoi 3, apoi 4 facturi - aceiasi
+    idx filtrati de facturi cu baza/TVA ~0, acelasi plafon de combinatii
+    _CANDIDATE_COMBO_BUDGET ca la find_candidate_invoices) si se opreste
+    la prima marime cu un raspuns clar: subsetul cu distanta minima fata
+    de delta trebuie sa fie sub pragul de apropiere SI cel putin de
+    _CLOSEST_MARGIN ori mai aproape decat al doilea cel mai apropiat
+    subset de aceeasi marime - altfel nu exista un raspuns clar la acea
+    marime si se incearca marimea urmatoare.
+
+    Aceeasi garda ca la find_candidate_invoices: cauta doar cand
+    delta_base > 0.
+    """
+    if delta_base <= 0:
+        return set()
+    idx = [i for i, r in enumerate(rows)
+           if abs(r["base"]) > 0.05 or abs(r["vat"]) > 0.05]
+    n = len(idx)
+    max_dist = min(_CLOSEST_MAX_ABS,
+                    max(_CLOSEST_MIN_ABS, _CLOSEST_RELATIVE * (abs(delta_base) + abs(delta_vat))))
+    for k in range(1, _CANDIDATE_MAX_SIZE + 1):
+        if k > n or comb(n, k) > _CANDIDATE_COMBO_BUDGET:
+            break
+        best_combo, best_dist, second_dist = None, None, None
+        for combo in combinations(idx, k):
+            base_sum = sum(rows[i]["base"] for i in combo)
+            vat_sum = sum(rows[i]["vat"] for i in combo)
+            dist = abs(base_sum - delta_base) + abs(vat_sum - delta_vat)
+            if dist > max_dist:
+                continue
+            if best_dist is None or dist < best_dist:
+                best_combo, best_dist, second_dist = combo, dist, best_dist
+            elif second_dist is None or dist < second_dist:
+                second_dist = dist
+        if best_combo is not None and (second_dist is None or second_dist > _CLOSEST_MARGIN * best_dist):
+            return set(best_combo)
+    return set()

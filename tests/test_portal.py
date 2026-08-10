@@ -1459,7 +1459,7 @@ def test_facturi_endpoint_returns_company_invoice_for_direct_line(app, monkeypat
     facturi = rf.get_json()
     assert facturi == [{"date": "2026-06-01", "invoice_no": "F1",
                         "partner_cui": "RO999", "base": 1000.0, "vat": 210.0,
-                        "candidat": False}]
+                        "candidat": False, "aproximativ": False}]
 
     # O linie D300 valida, dar fara nicio factura clasificata pe ea.
     assert c.get(f"/api/reconciliations/{rid}/facturi?linie=24").get_json() == []
@@ -1539,6 +1539,85 @@ def test_facturi_endpoint_marks_three_invoices_as_candidat(app):
     assert by_doc["F2"]["candidat"] is True
     assert by_doc["F3"]["candidat"] is True
     assert by_doc["F4"]["candidat"] is True
+    # O potrivire confirmata exista deja - nu mai are sens sa mai ghicim
+    # si "cea mai apropiata" pe deasupra.
+    assert all(f["aproximativ"] is False for f in facturi)
+
+
+def test_facturi_endpoint_marks_closest_when_no_exact_combination(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # Cazul real din conversatie: delta 4214.96/885.48, nicio factura sau
+    # combinatie de facturi nu explica exact diferenta, dar F2
+    # (4214.86/885.12, la 0.10/0.36 distanta) e vizibil mai aproape decat
+    # F1 - trebuie marcata "aproximativ", nu "candidat".
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         360.0, 75.6, _eticheta_model("vanzari", "9")),
+        ("2026-06-02", "F2", "Client B", "RO222",
+         4214.86, 885.12, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 359.90, "RD9_TVA": 75.24}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    diff = next(d for d in body["differences"] if d["line_no"] == "9")
+    assert diff["delta_base"] == 4214.96 and diff["delta_vat"] == 885.48
+    rid = body["id"]
+
+    facturi = c.get(f"/api/reconciliations/{rid}/facturi?linie=9").get_json()
+    by_doc = {f["invoice_no"]: f for f in facturi}
+    assert by_doc["F1"]["candidat"] is False and by_doc["F1"]["aproximativ"] is False
+    assert by_doc["F2"]["candidat"] is False and by_doc["F2"]["aproximativ"] is True
+
+
+def test_facturi_endpoint_marks_closest_pair_when_no_single_is_close(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # Nicio factura singura nu e aproape de diferenta (100/21), dar F1+F2
+    # insumeaza 100.3/21.1 - o pereche clar mai aproape decat orice alta
+    # combinatie. Ambele trebuie marcate "aproximativ", F3 (filler) nu.
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         40.0, 8.4, _eticheta_model("vanzari", "9")),
+        ("2026-06-02", "F2", "Client B", "RO222",
+         60.3, 12.7, _eticheta_model("vanzari", "9")),
+        ("2026-06-03", "F3", "Client C", "RO333",
+         500.0, 0.0, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 500.3, "RD9_TVA": 0.1}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    diff = next(d for d in body["differences"] if d["line_no"] == "9")
+    assert diff["delta_base"] == 100.0 and diff["delta_vat"] == 21.0
+    rid = body["id"]
+
+    facturi = c.get(f"/api/reconciliations/{rid}/facturi?linie=9").get_json()
+    by_doc = {f["invoice_no"]: f for f in facturi}
+    assert by_doc["F1"]["candidat"] is False and by_doc["F1"]["aproximativ"] is True
+    assert by_doc["F2"]["candidat"] is False and by_doc["F2"]["aproximativ"] is True
+    assert by_doc["F3"]["candidat"] is False and by_doc["F3"]["aproximativ"] is False
 
 
 def test_facturi_endpoint_resolves_derived_line(app):

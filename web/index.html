@@ -177,6 +177,7 @@ td.cod { font-family: var(--font-num); font-size: 13px; }
 tr.sever td { background: var(--danger-bg); box-shadow: inset 3px 0 0 var(--danger); }
 tr.sever:hover td { background: #f7e8e6; }
 tr.factura-problema { outline: 2px solid var(--danger); outline-offset: -2px; }
+tr.factura-apropiata { outline: 2px dashed var(--warn); outline-offset: -2px; }
 td.delta-neg { color: var(--danger); font-weight: 600; }
 td.delta-poz { color: var(--warn); font-weight: 600; }
 .gol { color: var(--muted); text-align: center; padding: 28px 22px !important; }
@@ -1311,14 +1312,23 @@ async function toggleFacturiLinie(btn, linie) {
       cell.innerHTML = '<p class="sub" style="margin:8px 0">' +
         'Detaliul pe facturi nu e disponibil pentru aceasta rulare.</p>';
     } else {
+      const randFactura = f => {
+        const clasa = f.candidat ? ' class="factura-problema"'
+          : f.aproximativ ? ' class="factura-apropiata"' : '';
+        const chip = f.candidat
+          ? ' <span class="chip problema">Posibila cauza</span>'
+          : f.aproximativ
+            ? ' <span class="chip atentie" title="Nu explica exact diferenta, ' +
+              'dar e cea mai apropiata suma gasita.">Cea mai apropiata</span>'
+            : '';
+        return `<tr${clasa}><td>${f.date || ''}</td><td class="cod">${f.invoice_no || ''}${chip}</td>` +
+          `<td class="cod">${f.partner_cui || ''}</td><td class="num">${num(f.base)}</td>` +
+          `<td class="num">${num(f.vat)}</td></tr>`;
+      };
       cell.innerHTML =
         '<table style="margin:0;width:100%"><thead><tr><th>Data</th><th>Document</th>' +
         '<th>CUI partener</th><th class="num">Baza</th><th class="num">TVA</th></tr></thead><tbody>' +
-        rows.map(f => `<tr${f.candidat ? ' class="factura-problema"' : ''}><td>${f.date || ''}</td>` +
-          `<td class="cod">${f.invoice_no || ''}` +
-          (f.candidat ? ' <span class="chip problema">Posibila cauza</span>' : '') + `</td>` +
-          `<td class="cod">${f.partner_cui || ''}</td><td class="num">${num(f.base)}</td>` +
-          `<td class="num">${num(f.vat)}</td></tr>`).join('') + '</tbody></table>';
+        rows.map(randFactura).join('') + '</tbody></table>';
     }
     sub.appendChild(cell);
     tr.after(sub);

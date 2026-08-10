@@ -1,4 +1,5 @@
-from etva.engine import reconcile, reconcile_d300, find_candidate_invoices
+from etva.engine import (reconcile, reconcile_d300, find_candidate_invoices,
+                         find_closest_invoices)
 
 def row(cui="RO1", no="F1", base=100.0, vat=19.0, cat="livrari_interne"):
     return {"partner_cui": cui, "invoice_no": no, "date": "2026-01-10",
@@ -180,3 +181,46 @@ def test_find_candidate_triple_not_searched_beyond_combo_budget():
     filler = [fact(1000.0 + i, 210.0 + i * 0.21) for i in range(400)]
     rows = filler + [fact(10.0, 2.1), fact(20.0, 4.2), fact(30.0, 6.3)]
     assert find_candidate_invoices(rows, 60.0, 12.6) == set()
+
+
+def test_find_closest_picks_the_clear_single_winner():
+    # Cazul real din conversatie: nicio factura sau combinatie nu explica
+    # exact diferenta (find_candidate_invoices ramane la set() - vezi
+    # test_find_candidate_ignores_a_near_but_not_matching_invoice), dar
+    # factura de la 4214.86/885.12 e vizibil mai aproape decat restul.
+    rows = [fact(360.0, 75.6), fact(4214.86, 885.12), fact(600.83, 126.17)]
+    assert find_closest_invoices(rows, 4214.96, 885.48) == {1}
+
+
+def test_find_closest_picks_a_pair_when_no_single_invoice_is_close():
+    # Nicio factura singura nu e aproape de delta, dar o pereche e clar
+    # mai aproape decat orice alta combinatie - trebuie evidentiate
+    # ambele, nu doar una.
+    rows = [fact(40.0, 8.4), fact(60.3, 12.7), fact(500.0, 0.0)]
+    assert find_closest_invoices(rows, 100.0, 21.0) == {0, 1}
+
+
+def test_find_closest_returns_nothing_when_two_are_similarly_close():
+    # Doua facturi la distanta similara de delta (si nicio combinatie mai
+    # mare suficient de aproape) - nu exista un raspuns clar, deci nu se
+    # ghiceste nimic.
+    rows = [fact(100.4, 21.0), fact(99.7, 21.0), fact(500.0, 0.0)]
+    assert find_closest_invoices(rows, 100.0, 21.0) == set()
+
+
+def test_find_closest_returns_nothing_when_nothing_is_close_enough():
+    rows = [fact(500.0, 0.0), fact(10.0, 0.0)]
+    assert find_closest_invoices(rows, 100.0, 21.0) == set()
+
+
+def test_find_closest_negative_delta_never_searches():
+    rows = [fact(100.4, 21.0)]
+    assert find_closest_invoices(rows, -100.0, -21.0) == set()
+
+
+def test_find_closest_ignores_zero_amount_rows():
+    # Fara filtrare, randul 0.00/0.00 ar fi si el "apropiat" de un delta
+    # foarte mic, creand o ambiguitate falsa care ar ascunde singurul
+    # raspuns real.
+    rows = [fact(0.0, 0.0), fact(0.32, 0.05)]
+    assert find_closest_invoices(rows, 0.3, 0.05) == {1}
