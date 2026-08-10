@@ -697,18 +697,42 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         n = (peste + pachet["marime_pachet"] - 1) // pachet["marime_pachet"]
         return n, round(n * pachet["pret_pachet_lunar_ron"], 2)
 
+    def _rapoarte_risc_fiscal_luna_curenta(fc) -> int:
+        """Cate evaluari de risc fiscal (randuri risc_fiscal_perioade, orice
+        client al firmei) au fost create/actualizate in luna calendaristica
+        curenta - baza de calcul a suplimentului peste pragul inclus (vezi
+        _cost_modul_risc_fiscal mai jos). O resubmisie a ACELEIASI perioade
+        (client, perioada) actualizeaza randul existent (upsert - vezi
+        etva/risc_fiscal_store.py), deci nu se numara de doua ori: un
+        "raport" e o evaluare distincta per (client, perioada), nu un click
+        de salvare."""
+        inceput_luna = datetime.now(timezone.utc).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        return fc.execute(
+            "SELECT COUNT(*) AS n FROM risc_fiscal_perioade WHERE creat_la>=?",
+            (inceput_luna,)).fetchone()["n"]
+
     def _cost_modul_risc_fiscal(firm) -> float:
         """Costul lunar (fara TVA) al modulului premium Risc Fiscal, daca
         firma a ales un nivel (firms.risc_fiscal_nivel - 'simplu'/'complet',
-        sau NULL daca niciunul). Pretul vine din nomenclator
-        (pdb.get_preturi_module), editabil din /master/nomenclator, nu
-        hardcodat - la fel ca restul preturilor din acest modul."""
+        sau NULL daca niciunul). Abonamentul lunar din nomenclator
+        (pdb.get_preturi_module, editabil din /master/nomenclator) include
+        un prag de rapoarte ("rapoarte_incluse"); peste prag, fiecare raport
+        generat in luna curenta se factureaza suplimentar la
+        "pret_raport_extra_ron" - acelasi tipar ca _pachete_extra_lunare
+        pentru reconcilieri, doar ca aici pragul e masurat din uz real
+        (risc_fiscal_perioade), nu dintr-o estimare autodeclarata."""
         nivel = firm["risc_fiscal_nivel"]
         if not nivel:
             return 0.0
         modul = {pdb.RISC_FISCAL_SIMPLU: pdb.MODUL_RISC_FISCAL_SIMPLU,
                 pdb.RISC_FISCAL_COMPLET: pdb.MODUL_RISC_FISCAL_COMPLET}[nivel]
-        return pdb.get_preturi_module(conn).get(modul, 0.0)
+        preturi = pdb.get_preturi_module(conn).get(modul)
+        if not preturi:
+            return 0.0
+        folosite = _rapoarte_risc_fiscal_luna_curenta(firm_conn(firm["id"]))
+        peste = max(0, folosite - (preturi["rapoarte_incluse"] or 0))
+        return preturi["pret_lunar_ron"] + peste * (preturi["pret_raport_extra_ron"] or 0)
 
     def _calculeaza_suma_plata(firm, ciclu: str) -> float:
         """Pretul de baza, fara TVA - firma 'contabilitate' plateste per
@@ -1182,6 +1206,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         suma_tva_curenta = (round(suma_curenta - suma_neta_curenta, 2)
                            if suma_curenta is not None else None)
         n_pachete_extra, cost_lunar_extra = _pachete_extra_lunare(firm)
+        rapoarte_risc_fiscal_folosite = (
+            _rapoarte_risc_fiscal_luna_curenta(firm_conn(firm["id"]))
+            if firm["risc_fiscal_nivel"] else 0)
         return render_template(
             "alege_plan.html", user=user, firm=firm,
             preturi=pdb.get_preturi(conn)[firm["tip"]],
@@ -1189,6 +1216,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             n_pachete_extra=n_pachete_extra,
             cost_lunar_extra=cost_lunar_extra,
             preturi_risc_fiscal=pdb.get_preturi_module(conn),
+            rapoarte_risc_fiscal_folosite=rapoarte_risc_fiscal_folosite,
             zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
             suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
             cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
@@ -2784,10 +2812,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # fixata mai sus (nu recalculata din nomenclatorul curent), ca
         # totalul facturat sa ramana identic cu ce s-a cerut efectiv la plata
         # (acelasi motiv ca la desprinderea bazei/TVA de mai sus). Pretul
-        # liniei foloseste totusi nomenclatorul curent - o diferenta fata de
-        # nomenclatorul de la momentul cererii de plata ar insemna ca masterul
-        # a schimbat pretul intre timp, caz rar, acceptat ca aproximare pe
-        # eticheta liniei, nu pe totalul facturat.
+        # liniei foloseste totusi starea CURENTA (nomenclator + numarul de
+        # rapoarte generate luna aceasta la momentul validarii, nu la
+        # momentul cererii de plata) - poate diferi usor de suma ceruta initial
+        # daca masterul a schimbat pretul sau firma a mai generat rapoarte
+        # intre timp; acceptat ca aproximare pe eticheta liniei, nu pe
+        # totalul facturat (care ramane exact ce s-a cerut/incasat).
         linii_extra = []
         cost_risc_fiscal = round(_cost_modul_risc_fiscal(firma) * _luni_pentru_ciclu(
             plata["ciclu_facturare"]), 2)
@@ -3182,29 +3212,40 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     @app.post("/master/nomenclator/risc-fiscal")
     def salveaza_preturi_risc_fiscal():
-        """Preturile lunare ale celor doua niveluri ale modulului premium
-        Risc Fiscal - validate integral inainte de a scrie ceva, ca la
-        salveaza_nomenclator."""
+        """Abonamentul lunar + pragul de rapoarte incluse + suplimentul per
+        raport peste prag, pentru fiecare din cele doua niveluri ale
+        modulului premium Risc Fiscal - validate integral inainte de a
+        scrie ceva, ca la salveaza_nomenclator."""
         user = current_user()
         if user is None or not user["is_master"]:
             return redirect(url_for("login"))
         valori = {}
         for modul in (pdb.MODUL_RISC_FISCAL_SIMPLU, pdb.MODUL_RISC_FISCAL_COMPLET):
-            bruta = request.form.get(modul, "").strip().replace(",", ".")
+            bruta_pret = request.form.get(modul, "").strip().replace(",", ".")
+            bruta_incluse = request.form.get(f"{modul}_incluse", "").strip()
+            bruta_extra = request.form.get(f"{modul}_extra", "").strip().replace(",", ".")
             try:
-                pret = float(bruta)
+                pret = float(bruta_pret)
+                incluse = int(bruta_incluse)
+                extra = float(bruta_extra)
             except ValueError:
-                pret = None
-            if pret is None or pret <= 0:
                 return redirect(url_for(
                     "master_nomenclator",
-                    eroare=f"Pretul pentru {modul} trebuie sa fie un numar pozitiv."))
-            valori[modul] = pret
-        for modul, pret in valori.items():
-            pdb.set_pret_modul(conn, modul, pret, user["username"])
+                    eroare=f"Valorile pentru {modul} trebuie sa fie numere valide."))
+            if pret <= 0 or incluse < 0 or extra < 0:
+                return redirect(url_for(
+                    "master_nomenclator",
+                    eroare=f"Pretul abonamentului pentru {modul} trebuie sa fie "
+                          "pozitiv, iar rapoartele incluse/pretul suplimentar "
+                          "nu pot fi negative."))
+            valori[modul] = (pret, incluse, extra)
+        for modul, (pret, incluse, extra) in valori.items():
+            pdb.set_pret_modul(conn, modul, pret, incluse, extra, user["username"])
         _log_master_action(
             user, "nomenclator.risc_fiscal",
-            ", ".join(f"{modul}={pret:g}" for modul, pret in valori.items()))
+            ", ".join(f"{modul}={pret:g} RON/luna, {incluse} incluse, "
+                     f"{extra:g} RON/raport extra"
+                     for modul, (pret, incluse, extra) in valori.items()))
         return redirect(url_for(
             "master_nomenclator",
             mesaj="Preturile modulului Risc Fiscal au fost actualizate."))

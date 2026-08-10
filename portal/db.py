@@ -201,6 +201,8 @@ CREATE TABLE IF NOT EXISTS pachete_reconcilieri(
 CREATE TABLE IF NOT EXISTS nomenclator_module(
   modul TEXT PRIMARY KEY,
   pret_lunar_ron REAL NOT NULL,
+  rapoarte_incluse INTEGER,
+  pret_raport_extra_ron REAL,
   actualizat_de TEXT, actualizat_la TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
   ON setari_tva(activa) WHERE activa=1;
@@ -316,18 +318,27 @@ _PACHET_RECONCILIERI_INITIAL = {
 # indicatorii automatizabili din SAF-T D406 + anaf_cui) si "complet" (simplu
 # + vectorul fiscal completat manual de contabil). O firma alege un nivel
 # (sau niciunul - firms.risc_fiscal_nivel ramane NULL) din /panou/plan;
-# masterul poate forta nivelul din /master. Preturile de mai jos semeaza
-# doar tabela nomenclator_module la prima pornire (acelasi pattern ca
-# _PACHET_RECONCILIERI_INITIAL) - dupa aceea sursa de adevar e tabela,
-# editabila din /master/nomenclator.
+# masterul poate forta nivelul din /master.
+#
+# Facturare (decizie Andrei, 2026-08-10): abonamentul lunar include un prag
+# de rapoarte generate ("rapoarte_incluse" - o evaluare distincta per
+# (client, perioada), nu per click de salvare - resubmisia aceleiasi
+# perioade nu conteaza a doua oara); peste prag, fiecare raport suplimentar
+# se factureaza separat la "pret_raport_extra_ron" - vezi
+# portal/app.py::_cost_modul_risc_fiscal / _rapoarte_risc_fiscal_luna_curenta.
+# Preturile de mai jos semeaza doar tabela nomenclator_module la prima
+# pornire (acelasi pattern ca _PACHET_RECONCILIERI_INITIAL) - dupa aceea
+# sursa de adevar e tabela, editabila din /master/nomenclator.
 RISC_FISCAL_SIMPLU = "simplu"
 RISC_FISCAL_COMPLET = "complet"
 RISC_FISCAL_NIVELURI = (RISC_FISCAL_SIMPLU, RISC_FISCAL_COMPLET)
 MODUL_RISC_FISCAL_SIMPLU = "risc_fiscal_simplu"
 MODUL_RISC_FISCAL_COMPLET = "risc_fiscal_complet"
 _NOMENCLATOR_MODULE_INITIAL = {
-    MODUL_RISC_FISCAL_SIMPLU: 100,
-    MODUL_RISC_FISCAL_COMPLET: 200,
+    MODUL_RISC_FISCAL_SIMPLU: {"pret_lunar_ron": 200, "rapoarte_incluse": 5,
+                               "pret_raport_extra_ron": 50},
+    MODUL_RISC_FISCAL_COMPLET: {"pret_lunar_ron": 350, "rapoarte_incluse": 5,
+                                "pret_raport_extra_ron": 100},
 }
 
 
@@ -662,39 +673,78 @@ def _migrate_add_firms_risc_fiscal_nivel(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_nomenclator_module_rapoarte(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate rapoarte_incluse/pret_raport_extra_ron
+    (introduse 2026-08-10 odata cu trecerea la facturare cu prag inclus +
+    supliment per raport) - adauga coloanele, nullable (populate imediat
+    dupa de _migrate_seed_nomenclator_module, care detecteaza NULL ca semn
+    ca randul predateaza aceasta schimbare)."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "nomenclator_module" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nomenclator_module)")}
+    if "rapoarte_incluse" not in cols:
+        conn.execute("ALTER TABLE nomenclator_module ADD COLUMN rapoarte_incluse INTEGER")
+    if "pret_raport_extra_ron" not in cols:
+        conn.execute("ALTER TABLE nomenclator_module ADD COLUMN pret_raport_extra_ron REAL")
+    conn.commit()
+
+
 def _migrate_seed_nomenclator_module(conn: sqlite3.Connection) -> None:
     """Semeaza preturile initiale ale modulelor premium (azi doar risc
-    fiscal simplu/complet) la prima pornire - doar randurile lipsa, ca un
-    master care a modificat deja un pret sa nu-l vada resetat la restart
-    (acelasi pattern ca _migrate_seed_pachet_reconcilieri), si ca un modul
-    nou adaugat ulterior sa fie semanat fara sa atinga preturile existente."""
-    existente = {r["modul"] for r in conn.execute(
-        "SELECT modul FROM nomenclator_module")}
+    fiscal simplu/complet) la prima pornire - doar randurile complet lipsa,
+    ca un master care a modificat deja un pret sa nu-l vada resetat la
+    restart (acelasi pattern ca _migrate_seed_pachet_reconcilieri).
+    Actualizeaza O SINGURA DATA (semn: rapoarte_incluse IS NULL) randurile
+    semanate INAINTE de introducerea pragului inclus/suplimentului per
+    raport (2026-08-10) la noile valori implicite - dupa aceasta migrare,
+    sursa de adevar ramane exclusiv tabela."""
+    existente = {r["modul"]: r["rapoarte_incluse"] for r in conn.execute(
+        "SELECT modul, rapoarte_incluse FROM nomenclator_module")}
     conn.commit()  # vezi comentariul din _migrate_seed_pachet_reconcilieri
     acum = datetime.now(timezone.utc).isoformat()
-    for modul, pret in _NOMENCLATOR_MODULE_INITIAL.items():
-        if modul in existente:
-            continue
-        conn.execute(
-            "INSERT INTO nomenclator_module(modul, pret_lunar_ron, "
-            "actualizat_de, actualizat_la) VALUES (?, ?, ?, ?)",
-            (modul, pret, "sistem", acum))
+    for modul, valori in _NOMENCLATOR_MODULE_INITIAL.items():
+        if modul not in existente:
+            conn.execute(
+                "INSERT INTO nomenclator_module(modul, pret_lunar_ron, "
+                "rapoarte_incluse, pret_raport_extra_ron, actualizat_de, "
+                "actualizat_la) VALUES (?, ?, ?, ?, ?, ?)",
+                (modul, valori["pret_lunar_ron"], valori["rapoarte_incluse"],
+                 valori["pret_raport_extra_ron"], "sistem", acum))
+        elif existente[modul] is None:
+            conn.execute(
+                "UPDATE nomenclator_module SET pret_lunar_ron=?, "
+                "rapoarte_incluse=?, pret_raport_extra_ron=?, "
+                "actualizat_de=?, actualizat_la=? WHERE modul=?",
+                (valori["pret_lunar_ron"], valori["rapoarte_incluse"],
+                 valori["pret_raport_extra_ron"], "sistem", acum, modul))
     conn.commit()
 
 
 def get_preturi_module(conn: sqlite3.Connection) -> dict:
-    """Preturile lunare curente ale modulelor premium, {modul: pret_lunar_ron}."""
-    return {r["modul"]: r["pret_lunar_ron"] for r in conn.execute(
-        "SELECT modul, pret_lunar_ron FROM nomenclator_module")}
+    """Preturile curente ale modulelor premium: {modul: {pret_lunar_ron,
+    rapoarte_incluse, pret_raport_extra_ron}}."""
+    out = {}
+    for r in conn.execute(
+            "SELECT modul, pret_lunar_ron, rapoarte_incluse, "
+            "pret_raport_extra_ron FROM nomenclator_module"):
+        out[r["modul"]] = {
+            "pret_lunar_ron": r["pret_lunar_ron"],
+            "rapoarte_incluse": r["rapoarte_incluse"],
+            "pret_raport_extra_ron": r["pret_raport_extra_ron"],
+        }
+    return out
 
 
 def set_pret_modul(conn: sqlite3.Connection, modul: str, pret_lunar_ron: float,
+                   rapoarte_incluse: int, pret_raport_extra_ron: float,
                    actualizat_de: str) -> None:
     conn.execute(
-        "UPDATE nomenclator_module SET pret_lunar_ron=?, actualizat_de=?, "
-        "actualizat_la=? WHERE modul=?",
-        (pret_lunar_ron, actualizat_de, datetime.now(timezone.utc).isoformat(),
-         modul))
+        "UPDATE nomenclator_module SET pret_lunar_ron=?, rapoarte_incluse=?, "
+        "pret_raport_extra_ron=?, actualizat_de=?, actualizat_la=? WHERE modul=?",
+        (pret_lunar_ron, rapoarte_incluse, pret_raport_extra_ron, actualizat_de,
+         datetime.now(timezone.utc).isoformat(), modul))
     conn.commit()
 
 
@@ -943,6 +993,7 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_contract_prestator_semnare(conn)
     _migrate_seed_cota_tva(conn)
     _migrate_seed_pachet_reconcilieri(conn)
+    _migrate_add_nomenclator_module_rapoarte(conn)
     _migrate_seed_nomenclator_module(conn)
     conn.commit()
     return conn

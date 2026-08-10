@@ -89,15 +89,19 @@ a.mic:hover { background:var(--paper); }
         </div>
         <div class="plan-card">
           <span class="nota" style="margin:0">SIMPLU</span><br>
-          <b>{{ preturi_risc_fiscal['risc_fiscal_simplu'] }} RON</b><span class="nota" style="margin:0">/lună</span>
+          <b>{{ preturi_risc_fiscal['risc_fiscal_simplu']['pret_lunar_ron'] }} RON</b><span class="nota" style="margin:0">/lună</span>
           <label><input type="radio" name="risc_fiscal_nivel" value="simplu"
                  {% if firm['risc_fiscal_nivel'] == 'simplu' %}checked{% endif %}> Activează Simplu</label>
+          <p class="nota" style="margin-top:6px">{{ preturi_risc_fiscal['risc_fiscal_simplu']['rapoarte_incluse'] }}
+            rapoarte incluse/lună, apoi {{ preturi_risc_fiscal['risc_fiscal_simplu']['pret_raport_extra_ron'] }} RON/raport</p>
         </div>
         <div class="plan-card">
           <span class="nota" style="margin:0">COMPLET</span><br>
-          <b>{{ preturi_risc_fiscal['risc_fiscal_complet'] }} RON</b><span class="nota" style="margin:0">/lună</span>
+          <b>{{ preturi_risc_fiscal['risc_fiscal_complet']['pret_lunar_ron'] }} RON</b><span class="nota" style="margin:0">/lună</span>
           <label><input type="radio" name="risc_fiscal_nivel" value="complet"
                  {% if firm['risc_fiscal_nivel'] == 'complet' %}checked{% endif %}> Activează Complet</label>
+          <p class="nota" style="margin-top:6px">{{ preturi_risc_fiscal['risc_fiscal_complet']['rapoarte_incluse'] }}
+            rapoarte incluse/lună, apoi {{ preturi_risc_fiscal['risc_fiscal_complet']['pret_raport_extra_ron'] }} RON/raport</p>
         </div>
       </div>
       <button class="btn-lat" type="submit">Salvează alegerea</button>
@@ -116,9 +120,15 @@ a.mic:hover { background:var(--paper); }
       <b>{{ n_pachete_extra }}</b>
       {{ 'pachet extra de reconcilieri' if n_pachete_extra == 1 else 'pachete extra de reconcilieri' }}
       (+{{ cost_lunar_extra }} RON/lună, fără TVA).{% endif %}
-      {% if firm['risc_fiscal_nivel'] %}Include și modulul Risc Fiscal
-      ({{ firm['risc_fiscal_nivel'] }}), +{{ preturi_risc_fiscal['risc_fiscal_' + firm['risc_fiscal_nivel']] }}
-      RON/lună, fără TVA.{% endif %}</p>
+      {% if firm['risc_fiscal_nivel'] %}
+      {% set pmod = preturi_risc_fiscal['risc_fiscal_' + firm['risc_fiscal_nivel']] %}
+      Include și modulul Risc Fiscal ({{ firm['risc_fiscal_nivel'] }}),
+      +{{ pmod['pret_lunar_ron'] }} RON/lună (fără TVA) — {{ rapoarte_risc_fiscal_folosite }}
+      din {{ pmod['rapoarte_incluse'] }} rapoarte incluse folosite luna aceasta
+      {% if rapoarte_risc_fiscal_folosite > pmod['rapoarte_incluse'] %}
+      (+{{ (rapoarte_risc_fiscal_folosite - pmod['rapoarte_incluse']) * pmod['pret_raport_extra_ron'] }}
+      RON supliment pentru {{ rapoarte_risc_fiscal_folosite - pmod['rapoarte_incluse'] }} rapoarte peste prag)
+      {% endif %}.{% endif %}</p>
     <table style="margin:10px 0">
       <tr><td>Preț fără TVA</td><td style="text-align:right">{{ suma_neta_curenta }} RON</td></tr>
       <tr><td>TVA ({{ cota_tva }}%)</td><td style="text-align:right">{{ suma_tva_curenta }} RON</td></tr>

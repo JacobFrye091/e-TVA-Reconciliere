@@ -5808,12 +5808,17 @@ def test_salveaza_preturi_risc_fiscal_din_nomenclator(app):
     c_master = app.test_client()
     c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     r = c_master.post("/master/nomenclator/risc-fiscal", data={
-        "risc_fiscal_simplu": "120", "risc_fiscal_complet": "250"},
+        "risc_fiscal_simplu": "120", "risc_fiscal_simplu_incluse": "3",
+        "risc_fiscal_simplu_extra": "40",
+        "risc_fiscal_complet": "250", "risc_fiscal_complet_incluse": "10",
+        "risc_fiscal_complet_extra": "80"},
         follow_redirects=True)
     assert "au fost actualizate".encode() in r.data
     preturi = pdb.get_preturi_module(app.portal_conn)
-    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU] == 120
-    assert preturi[pdb.MODUL_RISC_FISCAL_COMPLET] == 250
+    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU] == {
+        "pret_lunar_ron": 120, "rapoarte_incluse": 3, "pret_raport_extra_ron": 40}
+    assert preturi[pdb.MODUL_RISC_FISCAL_COMPLET] == {
+        "pret_lunar_ron": 250, "rapoarte_incluse": 10, "pret_raport_extra_ron": 80}
 
 
 def test_salveaza_preturi_risc_fiscal_respinge_valori_invalide(app):
@@ -5822,11 +5827,14 @@ def test_salveaza_preturi_risc_fiscal_respinge_valori_invalide(app):
     c = app.test_client()
     c.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
     r = c.post("/master/nomenclator/risc-fiscal", data={
-        "risc_fiscal_simplu": "-5", "risc_fiscal_complet": "250"},
+        "risc_fiscal_simplu": "-5", "risc_fiscal_simplu_incluse": "5",
+        "risc_fiscal_simplu_extra": "50",
+        "risc_fiscal_complet": "250", "risc_fiscal_complet_incluse": "5",
+        "risc_fiscal_complet_extra": "100"},
         follow_redirects=True)
-    assert "trebuie sa fie un numar pozitiv".encode() in r.data
+    assert "trebuie sa fie" in r.get_data(as_text=True)
     preturi = pdb.get_preturi_module(app.portal_conn)
-    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU] == 100  # neschimbat
+    assert preturi[pdb.MODUL_RISC_FISCAL_SIMPLU]["pret_lunar_ron"] == 200  # neschimbat
 
 
 def test_valideaza_plata_adauga_linie_separata_pentru_risc_fiscal(app, monkeypatch):
@@ -5864,12 +5872,34 @@ def test_valideaza_plata_adauga_linie_separata_pentru_risc_fiscal(app, monkeypat
     assert len(continut) == 2
     assert continut[0]["CodArticol"] == "ABONAMENT"
     assert continut[1]["CodArticol"] == "RISC_FISCAL_SIMPLU"
-    assert continut[1]["PretUnitar"] == 100
+    assert continut[1]["PretUnitar"] == 200  # niciun raport generat -> doar abonamentul
 
     invoice_id = app.portal_conn.execute(
         "SELECT invoice_id FROM payments WHERE id=?", (plata_id,)).fetchone()["invoice_id"]
     factura = app.portal_conn.execute(
         "SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
-    # abonament direct lunar (59) + risc fiscal simplu (100) = 159
-    assert factura["valoare_neta"] == 59 + 100
-    assert factura["valoare_totala"] == round((59 + 100) * _multiplicator_tva(app), 2)
+    # abonament direct lunar (59) + risc fiscal simplu (200) = 259
+    assert factura["valoare_neta"] == 59 + 200
+    assert factura["valoare_totala"] == round((59 + 200) * _multiplicator_tva(app), 2)
+
+
+def test_cost_modul_risc_fiscal_adauga_supliment_peste_pragul_inclus(app, monkeypatch):
+    """Fiecare raport generat peste pragul inclus (5/luna la nivelul
+    simplu) se adauga la suma de plata la pretul per raport din
+    nomenclator - verificat prin fluxul real de facturare (payments.suma),
+    nu direct pe closure-ul intern _cost_modul_risc_fiscal."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO926", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"})
+    for i in range(7):  # 5 incluse + 2 peste prag * 50 RON = 100 RON supliment
+        c.post("/api/risc-fiscal/perioada", data={
+            "perioada": f"2026-T{i}", "capitaluri_proprii": "100",
+            "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10"})
+    _apropie_trial_de_final(app, "RO926")
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    plata = app.portal_conn.execute(
+        "SELECT p.suma FROM payments p JOIN firms f ON f.id=p.firm_id "
+        "WHERE f.cui='RO926'").fetchone()
+    # abonament direct lunar (59) + risc fiscal simplu (200 + 2*50) = 359
+    assert plata["suma"] == round((59 + 200 + 100) * _multiplicator_tva(app), 2)

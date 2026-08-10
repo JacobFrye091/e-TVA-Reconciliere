@@ -135,6 +135,7 @@ EXPECTED_SCHEMA = {
     },
     "nomenclator_module": {
         "modul": "text", "pret_lunar_ron": "numeric",
+        "rapoarte_incluse": "integer", "pret_raport_extra_ron": "numeric",
         "actualizat_de": "text",
         "actualizat_la": "timestamp with time zone",
     },

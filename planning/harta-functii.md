@@ -712,9 +712,17 @@ risc_fiscal_pdf: require("rapoarte.export") -> verifica nivel activat ->
 
 Rutele master conexe (§3g, §3o): `seteaza_risc_fiscal_nivel` (forteaza
 `firms.risc_fiscal_nivel`, tipar identic `toggle_firm`) si
-`salveaza_preturi_risc_fiscal` (preturile lunare `risc_fiscal_simplu`/
-`risc_fiscal_complet` din `nomenclator_module`, tipar identic
-`salveaza_pachet_reconcilieri`).
+`salveaza_preturi_risc_fiscal` (3 campuri per nivel din `nomenclator_module`
+- `pret_lunar_ron`/`rapoarte_incluse`/`pret_raport_extra_ron` - tipar
+similar `salveaza_pachet_reconcilieri`, dar cu 2x3 campuri in loc de 3).
+
+**Facturare cu prag inclus (decizie Andrei, 2026-08-10)**: abonamentul
+lunar (200 RON simplu / 350 RON complet) include 5 rapoarte/luna; peste
+prag, fiecare raport suplimentar generat in luna calendaristica curenta se
+factureaza la `pret_raport_extra_ron` (50/100 RON) - vezi
+`_rapoarte_risc_fiscal_luna_curenta`/`_cost_modul_risc_fiscal` in §4. Un
+"raport" = o evaluare distincta per (client, perioada) - resubmisia
+aceleiasi perioade (upsert, §5s) nu se numara a doua oara.
 
 ---
 
@@ -740,7 +748,7 @@ folosite de mai multe handlere:
 | `_store_anaf_tokens(firm_id, tokens, username)` | Cripteaza + upsert tokenii OAuth ANAF |
 | `get_valid_anaf_access_token(firm_id)` | Access token valid, refresh automat |
 | `_zile_trial_ramase(trial_expira_la)` | Zile ramase pana la expirare |
-| `_luni_pentru_ciclu(ciclu)` / `_pachete_extra_lunare(firm)` / `_cost_modul_risc_fiscal(firm)` / `_calculeaza_suma_plata(firm, ciclu)` / `_suma_cu_tva(suma)` | Calcule de facturare/abonament - `_cost_modul_risc_fiscal` citeste `nomenclator_module` pt. nivelul ales, 0.0 daca `risc_fiscal_nivel` e None |
+| `_luni_pentru_ciclu(ciclu)` / `_pachete_extra_lunare(firm)` / `_rapoarte_risc_fiscal_luna_curenta(fc)` / `_cost_modul_risc_fiscal(firm)` / `_calculeaza_suma_plata(firm, ciclu)` / `_suma_cu_tva(suma)` | Calcule de facturare/abonament - `_rapoarte_risc_fiscal_luna_curenta` numara randurile `risc_fiscal_perioade` (orice client) create/actualizate in luna curenta; `_cost_modul_risc_fiscal` = abonamentul din `nomenclator_module` + (rapoarte peste prag) x `pret_raport_extra_ron`, 0.0 daca `risc_fiscal_nivel` e None |
 | `_client_id_din_request(ident)` | Firma directa -> `(None, None)`; altfel client_id din form/query, eroare daca lipseste - folosit de rutele §3r |
 | `_slugify(text)` / `_unique_username(desired)` | Normalizare username din nume firma |
 | `_create_firm(...)` | Creeaza firma + `user_firms` + `firm_keys`; token verificare daca e cazul |

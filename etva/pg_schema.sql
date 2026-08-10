@@ -235,12 +235,22 @@ CREATE TABLE IF NOT EXISTS pachete_reconcilieri(
 -- Preturi lunare ale modulelor premium (azi: risc_fiscal_simplu/complet -
 -- vezi etva/risc_fiscal.py) - editabil din /master/nomenclator (vezi
 -- portal/db.py::get/set_pret_modul). O firma opteaza pentru un modul prin
--- firms.risc_fiscal_nivel; NULL inseamna niciun modul activ.
+-- firms.risc_fiscal_nivel; NULL inseamna niciun modul activ. Abonamentul
+-- lunar (pret_lunar_ron) include un prag de rapoarte (rapoarte_incluse) -
+-- peste prag, fiecare raport suplimentar se factureaza la
+-- pret_raport_extra_ron (decizie Andrei, 2026-08-10) - vezi
+-- portal/app.py::_cost_modul_risc_fiscal.
 CREATE TABLE IF NOT EXISTS nomenclator_module(
   modul text PRIMARY KEY,
   pret_lunar_ron numeric NOT NULL,
+  rapoarte_incluse integer,
+  pret_raport_extra_ron numeric,
   actualizat_de text,
   actualizat_la timestamptz);
+-- Bazele create inainte de coloanele de mai sus se aduc la zi aici (no-op pe
+-- bazele deja corecte).
+ALTER TABLE nomenclator_module ADD COLUMN IF NOT EXISTS rapoarte_incluse integer;
+ALTER TABLE nomenclator_module ADD COLUMN IF NOT EXISTS pret_raport_extra_ron numeric;
 
 -- ===== tabele per-firma (in SQLite: fisiere SQLCipher separate; aici RLS) =====
 -- firm_id are DEFAULT current_setting('app.firm_id')::int ca INSERT-urile
