@@ -452,31 +452,30 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         <label>Sursa datelor financiare</label>
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:2px">
           <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
-            <input type="radio" name="rfSursaDate" id="rfSursaManual" value="manual" checked
-                   onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Completare manuală</label>
-          <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
-            <input type="radio" name="rfSursaDate" id="rfSursaSaft" value="saft_d406"
+            <input type="radio" name="rfSursaDate" id="rfSursaSaft" value="saft_d406" checked
                    onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Import din fișier SAF-T (D406)</label>
+          <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
+            <input type="radio" name="rfSursaDate" id="rfSursaManual" value="manual"
+                   onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Completare manuală</label>
         </div>
-        <p class="sub" style="margin-top:4px">Recomandăm SAF-T pe termen lung — pregătim extragerea automată a
-          cifrelor direct din contabilitate, ca rezultatul să fie mai concret și mai aproape de realitate decât
-          din date tastate manual. Deocamdată însă, alegând SAF-T doar salvezi fișierul pentru mai târziu —
-          indicatorii financiari (1-3) se calculează în continuare numai din datele completate manual.</p>
+        <p class="sub" style="margin-top:4px">Recomandăm SAF-T — cifrele vin direct din balanța contabilă
+          (capitaluri proprii, datorii totale, cifra de afaceri, rezultat net), nu sunt tastate, deci rezultatul e
+          mai concret și mai aproape de realitate.</p>
       </div>
       <div class="actiuni">
         <input id="rfPerioada" placeholder="Perioadă (ex: 2026-T2)" style="max-width:160px">
       </div>
-      <div class="actiuni" id="rfManualFields">
+      <div class="actiuni" id="rfManualFields" style="display:none">
         <input id="rfCapitaluriProprii" placeholder="Capitaluri proprii (RON)" type="number" step="0.01">
         <input id="rfDatoriiTotale" placeholder="Datorii totale (RON)" type="number" step="0.01">
         <input id="rfCifraAfaceri" placeholder="Cifra de afaceri (RON)" type="number" step="0.01">
         <input id="rfRezultatNet" placeholder="Rezultat net (RON)" type="number" step="0.01">
       </div>
-      <div id="rfSaftUpload" style="display:none">
+      <div id="rfSaftUpload">
         <input type="file" id="rfSaftFile" accept=".xml">
         <p class="sub" style="margin-top:4px">Încarcă exportul SAF-T D406 (XML) generat din Saga, WinMentor sau alt
-          program de contabilitate. Deocamdată fișierul se salvează pentru evaluare ulterioară — extragerea
-          automată a cifrelor din el urmează, imediat ce validăm parserul pe fișiere reale.</p>
+          program de contabilitate compatibil - extragem automat capitalurile proprii, datoriile totale, cifra de
+          afaceri și rezultatul net direct din balanța contabilă (secțiunea GeneralLedgerAccounts a fișierului).</p>
       </div>
       <div id="rfCompletFields" style="display:none">
         <p class="sub" style="margin-top:14px">Vector fiscal (nivel Complet)</p>

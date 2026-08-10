@@ -283,16 +283,39 @@
           comuta rapid între toți clienții tăi dintr-un singur cont.</p>
       </details>
       <details class="faq-item reveal">
-        <summary>Ce este modulul de Risc Fiscal și cum se calculează scorul?</summary>
-        <p>E un add-on opțional care evaluează riscul fiscal al unui client pe
-          indicatorii publici din Anexa 2 ANAF ("Fișa indicatorilor de risc
-          fiscal", folosită de ANAF la soluționarea cererilor de rambursare
-          TVA). Scorul afișat (0–100) e propriu, normalizat pe indicatorii pe
-          care îi poți calcula efectiv din datele disponibile — nu e
-          echivalent cu o clasificare oficială ANAF, iar raportul PDF explică
-          exact ce indicatori intră în calcul. Nivelul „Simplu" folosește doar
-          indicatori automați; „Complet" adaugă și un vector fiscal completat
-          manual de contabil, pentru un scor mai precis.</p>
+        <summary>Ce este modulul de Risc Fiscal și cum se calculează exact scorul?</summary>
+        <p>E un add-on opțional care evaluează riscul fiscal al unui client pe 5
+          din cei 8 indicatori din Anexa 2 ANAF ("Fișa indicatorilor de risc
+          fiscal", folosită oficial de ANAF la soluționarea cererilor de
+          rambursare TVA) — publicăm formula exactă, spre deosebire de alte
+          instrumente similare de pe piață, care nu își arată metodologia:</p>
+        <ul style="margin:10px 0 10px 20px; line-height:1.7">
+          <li><b>Capitaluri proprii</b> — sub sau egal cu zero: risc maxim pe
+            acest indicator; peste zero: risc zero.</li>
+          <li><b>Grad de îndatorare</b> (datorii/capital propriu) — sub sau
+            egal cu 1: risc zero; peste 1: risc.</li>
+          <li><b>Profitabilitate</b> (rezultat net) — pierdere sau zero: risc;
+            profit: risc zero.</li>
+          <li><b>Declarații fiscale nedepuse</b> (doar nivel Complet) — niciuna:
+            risc zero; una: risc mediu; mai multe: risc maxim.</li>
+          <li><b>Obligații fiscale restante</b> (doar nivel Complet) — fără:
+            risc zero; cu, în creștere: risc mare; cu, dar stabile ori în
+            scădere: risc moderat.</li>
+        </ul>
+        <p>Fiecare indicator are punctajul lui fix din metodologia oficială;
+          suma se normalizează la un scor propriu 0–100, afișat cu etichetele
+          proprii „scăzut/moderat/ridicat" — <b>nu</b> e identic cu pragul
+          oficial ANAF „≥60 puncte = risc mare", care se calculează pe suma
+          tuturor celor 8 indicatori, nu doar pe cei 5 reproductibili public.
+          Indicatorii 6–8 (istoricul cererilor de rambursare TVA soluționate)
+          sunt date strict interne ANAF, imposibil de reprodus din exterior —
+          nu intră niciodată în scor, doar marcate explicit ca atare în raport.
+          La nivelul „Simplu", indicatorii 1–3 se calculează automat direct
+          din exportul SAF-T (D406) al firmei, generat din programul de
+          contabilitate (Saga, WinMentor etc.) — sau, dacă preferi, din date
+          introduse manual. Nivelul „Complet" adaugă și vectorul fiscal
+          (indicatorii 4–5, completați manual de contabil), pentru un scor
+          mai precis.</p>
       </details>
       <details class="faq-item reveal">
         <summary>Pot să șterg contul și datele oricând?</summary>

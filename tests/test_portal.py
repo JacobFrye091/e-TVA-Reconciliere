@@ -6013,29 +6013,68 @@ def test_salveaza_risc_fiscal_saft_respinge_fisier_invalid(app):
         "perioada": "2026-T2", "sursa_date": "saft_d406",
         "saft_file": (io.BytesIO(b"nu sunt deloc un fisier SAF-T"), "fals.xml")})
     assert r.status_code == 400
-    assert "nu pare un export SAF-T" in r.get_json()["errors"][0]
+    assert "nu e XML valid" in r.get_json()["errors"][0]
 
 
-def test_salveaza_risc_fiscal_saft_salveaza_fisierul_brut_fara_extragere(app):
-    """Alegerea SAF-T doar salveaza fisierul brut (fara parser inca) - scorul
-    ramane 0 pe indicatorii financiari (1-3), pentru ca acestia raman None."""
+def test_salveaza_risc_fiscal_saft_respinge_xml_fara_conturi(app):
+    import io
+    c = _client_risc_fiscal_platit(app, "RO901499", tip="direct", risc_fiscal_nivel="simplu")
+    continut = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<nsSAFT:AuditFile xmlns:nsSAFT="mfp:anaf:dgti:d406:declaratie:v1">'
+        b'<nsSAFT:Header/></nsSAFT:AuditFile>')
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "sursa_date": "saft_d406",
+        "saft_file": (io.BytesIO(continut), "gol.xml")})
+    assert r.status_code == 400
+    assert "GeneralLedgerAccounts" in r.get_json()["errors"][0]
+
+
+def test_salveaza_risc_fiscal_saft_extrage_automat_datele_financiare(app):
+    """Alegerea SAF-T extrage automat capitalurile proprii, datoriile,
+    cifra de afaceri si rezultatul net direct din conturile fisierului
+    (etva/importer/saft_d406.py) - nu mai raman None ca inainte de parser."""
     import io
     c = _client_risc_fiscal_platit(app, "RO9014", tip="direct", risc_fiscal_nivel="simplu")
+    ns = "mfp:anaf:dgti:d406:declaratie:v1"
     continut_saft = (
-        b'<?xml version="1.0" encoding="UTF-8"?>'
-        b'<AuditFile xmlns="urn:StandardAuditFile-Taxation-Financial:RO">'
-        b'<Header/></AuditFile>')
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<nsSAFT:AuditFile xmlns:nsSAFT="{ns}">'
+        f'<nsSAFT:Header/>'
+        f'<nsSAFT:MasterFiles><nsSAFT:GeneralLedgerAccounts>'
+        f'<nsSAFT:Account><nsSAFT:AccountID>1012</nsSAFT:AccountID>'
+        f'<nsSAFT:AccountType>Pasiv</nsSAFT:AccountType>'
+        f'<nsSAFT:ClosingCreditBalance>-1</nsSAFT:ClosingCreditBalance></nsSAFT:Account>'
+        f'<nsSAFT:Account><nsSAFT:AccountID>401</nsSAFT:AccountID>'
+        f'<nsSAFT:AccountType>Pasiv</nsSAFT:AccountType>'
+        f'<nsSAFT:ClosingCreditBalance>10</nsSAFT:ClosingCreditBalance></nsSAFT:Account>'
+        f'<nsSAFT:Account><nsSAFT:AccountID>704</nsSAFT:AccountID>'
+        f'<nsSAFT:AccountType>Pasiv</nsSAFT:AccountType>'
+        f'<nsSAFT:ClosingCreditBalance>1000</nsSAFT:ClosingCreditBalance></nsSAFT:Account>'
+        f'<nsSAFT:Account><nsSAFT:AccountID>121</nsSAFT:AccountID>'
+        f'<nsSAFT:AccountType>Bifunctional</nsSAFT:AccountType>'
+        f'<nsSAFT:ClosingDebitBalance>1</nsSAFT:ClosingDebitBalance></nsSAFT:Account>'
+        f'</nsSAFT:GeneralLedgerAccounts></nsSAFT:MasterFiles>'
+        f'</nsSAFT:AuditFile>'
+    ).encode("utf-8")
     r = c.post("/api/risc-fiscal/perioada", data={
         "perioada": "2026-T2", "sursa_date": "saft_d406",
         "saft_file": (io.BytesIO(continut_saft), "export-d406.xml")})
     assert r.status_code == 200
-    assert r.get_json()["scor_afisat"] == 0
+    body = r.get_json()
+    # capitaluri proprii=-1<=0 -> 100p; datorii/capital nedefinit (<=0) -> 50p;
+    # rezultat net=-1<=0 -> 70p => scor_total=220/220=100.
+    assert body["scor_afisat"] == 100
 
     istoric = c.get("/api/risc-fiscal/istoric").get_json()
-    assert len(istoric) == 1
     assert istoric[0]["sursa_date"] == "saft_d406"
     assert istoric[0]["are_fisier_saft"] is True
-    assert istoric[0]["capitaluri_proprii"] is None
+    # 1012 (-1) + 121 (net_credit -1, tot clasa 1) = -2 - contul 121
+    # contribuie si la capitaluri proprii (e clasa 1), nu doar la rezultat_net.
+    assert istoric[0]["capitaluri_proprii"] == -2.0
+    assert istoric[0]["datorii_totale"] == 10.0
+    assert istoric[0]["cifra_afaceri"] == 1000.0
+    assert istoric[0]["rezultat_net"] == -1.0
 
     firm_id = app.portal_conn.execute(
         "SELECT id FROM firms WHERE cui='RO9014'").fetchone()["id"]

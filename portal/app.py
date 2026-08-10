@@ -44,6 +44,7 @@ from etva.importer.saga import parse_saga_journal, NotSagaFormat
 from etva.importer.model import (parse_model_journal, NotModelFormat,
                                  build_model_template)
 from etva.importer.anaf_p300 import parse_p300_pdf, NotAnafP300
+from etva.importer import saft_d406
 from etva.importer.anaf_p300_json import (parse_p300_json, parse_p300_json_data,
                                           NotAnafP300Json)
 from etva.d300 import (classify_legend, expand_derived_lines, D300_LINES,
@@ -4425,21 +4426,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     "Incarca fisierul SAF-T (D406) sau alege completarea "
                     "manuala a datelor financiare."]}), 400
             saft_xml_original = fisier.read()
-            # Verificare minimala, nu parsare: doar confirma ca fisierul
-            # pare intr-adevar un export SAF-T (element radacina <AuditFile>,
-            # conform documentatiei ANAF), ca sa nu salvam orice fisier
-            # incarcat din greseala drept "SAF-T". Extragerea automata a
-            # cifrelor din el ramane pentru cand parserul va exista (vezi
-            # planul modulului) - deocamdata fisierul se salveaza doar brut.
-            inceput = saft_xml_original[:4096].decode("utf-8", "ignore")
-            if not saft_xml_original or "<AuditFile" not in inceput:
-                return jsonify({"errors": [
-                    "Fisierul nu pare un export SAF-T (D406) valid - "
-                    "elementul radacina asteptat e <AuditFile>."]}), 400
-            date_financiare = {
-                "capitaluri_proprii": None, "datorii_totale": None,
-                "cifra_afaceri": None, "rezultat_net": None,
-            }
+            # Extrage automat capitaluri/datorii/cifra de afaceri/rezultat
+            # net direct din MasterFiles/GeneralLedgerAccounts - vezi
+            # etva/importer/saft_d406.py pentru maparea exacta, validata
+            # empiric pe un export real (nu doar pe documentatia ANAF).
+            try:
+                date_financiare = saft_d406.extrage_date_financiare(saft_xml_original)
+            except saft_d406.SaftD406Error as e:
+                return jsonify({"errors": [str(e)]}), 400
         else:
             def _numar(camp):
                 bruta = (request.form.get(camp) or "").strip().replace(",", ".")

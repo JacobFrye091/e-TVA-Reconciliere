@@ -60,21 +60,37 @@ schimbarile programate).
 
 Actualizat manual 2026-08-10 (a doua interventie din aceeasi zi): modulul
 Risc Fiscal primeste optiunea "sursa date financiare" (SAF-T vs. manual) in
-formularul din `web/index.html` - alegerea SAF-T incarca fisierul D406 (XML)
-si il salveaza brut in `risc_fiscal_perioade.saft_xml_original` (coloana
-noua), FARA extragere automata inca (parserul ramane amanat - vezi nota din
-2026-08-09); indicatorii financiari 1-3 raman `None`/nescorati pana atunci.
-Validare minimala pe upload: elementul radacina trebuie sa fie `<AuditFile>`
-(confirmat din documentatia oficiala ANAF SAF-T). Cele 9 bife din Sectiunea
-B au acum tooltip-uri (`title=`) cu explicatii in limbaj natural. Fix
-important de acces: `current_identity()` (`portal/app.py`) nu mai considera
-`firms.risc_fiscal_nivel` suficient pentru acces la `/api/risc-fiscal/*` -
-cere si o plata `payments.tip='abonament'` deja `validata` de master (altfel
-o firma putea alege nivelul in trial si folosi modulul premium nelimitat,
-gratuit, fara sa fi platit vreodata). Zeci de teste din `tests/test_portal.py`
-au fost adaptate sa treaca printr-un ciclu complet de plata inainte de a
-apela rutele risc-fiscal (vezi helper-ul `_firma_cu_abonament_platit`/
+formularul din `web/index.html`, cu SAF-T ca implicit recomandat. Alegerea
+SAF-T incarca fisierul D406 (XML), il salveaza brut in
+`risc_fiscal_perioade.saft_xml_original` (coloana noua) SI acum extrage
+automat cei 4 indicatori financiari. Fix important de acces:
+`current_identity()` (`portal/app.py`) nu mai considera `firms.risc_fiscal_nivel`
+suficient pentru acces la `/api/risc-fiscal/*` - cere si o plata
+`payments.tip='abonament'` deja `validata` de master (altfel o firma putea
+alege nivelul in trial si folosi modulul premium nelimitat, gratuit, fara sa
+fi platit vreodata). Zeci de teste din `tests/test_portal.py` au fost
+adaptate sa treaca printr-un ciclu complet de plata inainte de a apela
+rutele risc-fiscal (vezi helper-ul `_firma_cu_abonament_platit`/
 `_client_risc_fiscal_platit`).
+
+Actualizat manual 2026-08-10 (a treia interventie): **Pasul 4 (importer
+SAF-T D406), amanat din 2026-08-09, e acum LIVRAT** - `etva/importer/saft_d406.py`,
+validat empiric pe un export real (SAGA C, nu doar sintetic). Extrage
+direct din `MasterFiles/GeneralLedgerAccounts`: capitaluri proprii (suma
+soldurilor clasa 1), rezultat net (contul 121, tinut cumulat pe anul fiscal
+de programele de contabilitate), datorii totale (clasa 4 marcata
+Pasiv/Bifunctional de `AccountType` + eventual cont 519, EXCLUZAND explicit
+conturile de creanta din clasa 4 - clienti 411, debitori 461 etc. - si toata
+clasa 5 de trezorerie), cifra de afaceri (doar grupa 70, nu toata clasa 7).
+Parsarea foloseste namespace URI XML (`mfp:anaf:dgti:d406:declaratie:v1`),
+nu prefixul `nsSAFT:` din document (alte programe pot exporta cu alt prefix
+sau namespace implicit). Fisierul real de test NU e in depozit (depozitul
+GitHub e public, fisierul continea IBAN/telefon/email/solduri ale unei
+firme reale) - `tests/test_saft_d406.py` foloseste fixture-uri sintetice
+calibrate pe aceeasi structura. Limitari cunoscute, de revalidat pe alte
+programe de contabilitate: presupunerea ca soldurile claselor 6/7 sunt
+tinute cumulat pe an (nu resetate lunar), si contul 519 (nevalidat inca,
+absent din fisierul de test).
 
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
