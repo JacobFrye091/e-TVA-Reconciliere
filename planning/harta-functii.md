@@ -236,6 +236,41 @@ potrivire confirmata - aceeasi interventie a eliminat si nota explicativa
 afisata deasupra listei de facturi (nu mai era necesara odata ce
 evidentierea vorbeste de la sine).
 
+Incident 2026-08-10: promovarea de mai sus in productie a scos site-ul din
+functiune (503, ~30 min) - NU din cauza schimbarilor de azi (D300), ci
+pentru ca `main` era ramas mult in urma: modulul Risc Fiscal (2026-08-09)
+si schimbarea self-service a abonamentului (2026-08-10) au ajuns pe
+dev/testare cu schema Postgres aferenta niciodata migrata pe productie
+(go2). Butonul de promovare a impins tot codul acumulat pe `main` +
+restart pe go2 dintr-o data; gunicorn a intrat in bucla de crash la
+pornire (`RuntimeError` din `etva/pg.py::verify_schema` - coloane/tabele
+lipsa: `firms.risc_fiscal_nivel`, `firms.abonament_activ_pana`,
+`payments.tip`, `payments.reconcilieri_lunare_estimate_nou`,
+`payments.risc_fiscal_nivel_nou`, `payments.contract_id`, tabelele
+`nomenclator_module`/`plan_schimbari_programate`/`risc_fiscal_perioade`/
+`risc_fiscal_alerte`). **Gotcha de retinut**: scriptul
+`etva-promoveaza-productie.sh` raporteaza "ok" doar pe baza codului de
+iesire al `systemctl restart` - NU verifica daca serviciul chiar a ramas
+sus - deci un crash-loop imediat dupa restart nu e detectat automat de
+pipeline (de investigat: un `sleep`+`systemctl is-active` dupa restart, in
+script). Remediere: rollback rapid pe go2 la ultimul commit bun
+(`git reset --hard 44679c0` + restart, fara sa atinga DB) cat s-a
+diagnosticat cauza, apoi backup (`pg_dump -Fc`, verificat cu
+`pg_restore --list`) + aplicarea manuala a `etva/pg_schema.sql` (idempotent,
+`psql -v ON_ERROR_STOP=1 -d etva_productie < pg_schema.sql` - **fara
+`-1`**: fisierul are `CREATE INDEX CONCURRENTLY` la final, incompatibil cu
+o singura tranzactie) direct pe go2, apoi re-deploy la `cbd42f6`. **Gotcha
+de retinut #2**: `sudo -u postgres pg_dump/psql -f <fisier>` esueaza cu
+"Permission denied" daca fisierul e in `/root` (mod 700, userul
+`postgres` nu poate traversa directorul) - solutie: redirectare
+shell (`< fisier` / `> fisier`), nu `-f`/`-f`, ca fisierul sa fie deschis
+de shell-ul root, nu de procesul `postgres`. Concluzie pe termen lung:
+promovarile mari (schema noua) ar trebui migrate pe productie **inainte**
+sau **odata cu** codul, nu descoperite abia la crash - de discutat daca
+`promote_to_productie` ar trebui sa verifice `verify_schema()` pe go2
+inainte de push, ca sa blocheze promovarea cu un mesaj clar in loc sa
+scoata site-ul din functiune.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
