@@ -46,6 +46,60 @@ FLAGURI_SECTIUNE_B_LABEL = {
     "comunicare_garda_financiara": "Comunicare de risc fiscal mare de la Garda Financiară",
 }
 
+# Formulare in limbaj profesional contabil, per conditie si per raspuns
+# (Da/Nu) - motivul din spatele explicatiei_flag_sectiune_b(), afisat in PDF
+# ca sa nu se vada doar o eticheta bifata, ci si "de ce" inseamna ce inseamna.
+_EXPLICATIE_FLAG_SECTIUNE_B = {
+    "cazier_fiscal": (
+        "Firma sau administratorii acesteia au înscrieri de sancțiuni fiscale "
+        "definitive în cazierul fiscal, conform verificării declarate de contabil.",
+        "Nu au fost raportate înscrieri în cazierul fiscal al firmei sau al "
+        "administratorilor acesteia."),
+    "entitate_noua": (
+        "Firma este nou înființată, cu vechime redusă în activitate, conform "
+        "declarației contabilului.",
+        "Firma nu este considerată nou înființată, având o vechime consolidată "
+        "în activitate, conform declarației contabilului."),
+    "fara_salariati": (
+        "Firma nu are niciun salariat cu carte de muncă înregistrat, conform "
+        "declarației contabilului.",
+        "Firma are cel puțin un salariat cu carte de muncă înregistrat."),
+    "fara_bunuri": (
+        "Firma nu deține bunuri imobile sau mobile semnificative (clădiri, "
+        "terenuri, utilaje) în patrimoniu, conform declarației contabilului.",
+        "Firma deține bunuri imobile sau mobile înregistrate în patrimoniu."),
+    "insolventa": (
+        "Firma se află într-o procedură de insolvență, reorganizare judiciară "
+        "sau faliment aflată în derulare.",
+        "Firma nu se află în nicio procedură de insolvență, reorganizare "
+        "judiciară sau faliment."),
+    "evidenta_speciala": (
+        "Firma este înscrisă într-un registru special de monitorizare al ANAF.",
+        "Nu a fost raportată nicio înscriere a firmei în evidența specială a ANAF."),
+    "declarat_inactiv": (
+        "Firma figurează ca inactivă fiscal (Registrul contribuabililor "
+        "inactivi/reactivați). Acest răspuns e verificat automat, live, la "
+        "ANAF, la momentul fiecărei evaluări - nu se bazează pe o declarație.",
+        "Firma NU figurează ca inactivă fiscal (Registrul contribuabililor "
+        "inactivi/reactivați). Acest răspuns e verificat automat, live, la "
+        "ANAF, la momentul fiecărei evaluări - nu se bazează pe o declarație."),
+    "raport_inspectie_risc_mare": (
+        "O inspecție fiscală anterioară a clasificat firma drept risc fiscal "
+        "mare, conform raportului de inspecție fiscală (RIF) primit de firmă.",
+        "Nu a fost raportat niciun raport de inspecție fiscală care să "
+        "clasifice firma drept risc fiscal mare."),
+    "comunicare_garda_financiara": (
+        "Direcția Generală Antifraudă Fiscală (fosta Gardă Financiară) a "
+        "comunicat oficial un risc fiscal mare pe numele firmei.",
+        "Nu a fost primită nicio comunicare oficială din partea Direcției "
+        "Generale Antifraudă Fiscală privind un risc fiscal mare."),
+}
+
+
+def _explicatie_flag_sectiune_b(cheie: str, activ: bool) -> str:
+    da, nu = _EXPLICATIE_FLAG_SECTIUNE_B.get(cheie, ("Da.", "Nu."))
+    return da if activ else nu
+
 
 def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
                  perioada: dict) -> bytes:
@@ -104,14 +158,32 @@ def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
     elems.append(scor_tbl)
     elems.append(Spacer(1, 6 * mm))
 
-    if perioada.get("flaguri_sectiune_b"):
-        active = [FLAGURI_SECTIUNE_B_LABEL.get(k, k)
-                 for k, v in perioada["flaguri_sectiune_b"].items() if v]
-        if active:
-            elems.append(Paragraph(
-                "<b>Risc mare (Secțiunea B, metodologie ANAF):</b> "
-                + ", ".join(active), body))
-            elems.append(Spacer(1, 4 * mm))
+    if perioada.get("tip_raport") == "complet":
+        flaguri = perioada.get("flaguri_sectiune_b") or {}
+        elems.append(Paragraph(
+            "<b>Semnale de risc fiscal mare (Secțiunea B, metodologie ANAF)</b> "
+            "— fiecare condiție de mai jos duce, dacă e adevărată, la încadrarea "
+            "automată în risc fiscal mare, indiferent de punctajul indicatorilor "
+            "1-5:", body))
+        elems.append(Spacer(1, 2 * mm))
+        sectiune_b_rows = [[Paragraph("CONDIȚIE", label), Paragraph("RĂSPUNS", label),
+                           Paragraph("EXPLICAȚIE", label)]]
+        for cheie, eticheta in FLAGURI_SECTIUNE_B_LABEL.items():
+            activ = bool(flaguri.get(cheie))
+            sectiune_b_rows.append([
+                Paragraph(eticheta, body),
+                Paragraph(f"<b>{'Da' if activ else 'Nu'}</b>", body),
+                Paragraph(_explicatie_flag_sectiune_b(cheie, activ), small)])
+        sectiune_b_tbl = Table(sectiune_b_rows, colWidths=[48 * mm, 18 * mm, 108 * mm])
+        sectiune_b_tbl.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 0.75, _INK),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, _BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elems.append(sectiune_b_tbl)
+        elems.append(Spacer(1, 6 * mm))
 
     detaliu_rows = [[Paragraph("INDICATOR", label), Paragraph("VALOARE", label),
                      Paragraph("PUNCTAJ", label)]]
