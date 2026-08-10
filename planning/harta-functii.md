@@ -102,6 +102,25 @@ mic, daca toti indicatorii financiari erau in favoarea firmei). Acum
 cu eticheta - `scor_total_indicatori`/`scor_max_posibil` raman neschimbate
 (punctajul brut ramane vizibil separat in raport).
 
+Verificat exhaustiv (2026-08-10, la cererea explicita a lui Andrei "aplica
+exact legea in vigoare"), direct din sursa oficiala ANAF (nu din bloguri
+tertiare): toti indicatorii 1-5 si cele 9 conditii din Sectiunea B din
+`etva/risc_fiscal.py` corespund EXACT textului oficial "Fisa indicatorilor
+de risc fiscal" (Anexa nr. 2 la procedura OPANAF 3699/2015, modificat prin
+OPANAF 1232/2017 - confirmat inca in vigoare in 2026). Niciun cod modificat
+in urma verificarii - implementarea era deja corecta. Separat, s-a
+clarificat ca OPANAF 417/2025 (accize, destinatari inregistrati/antrepozitari)
+e o reglementare COMPLET SEPARATA, fara legatura cu Anexa 2/rambursari TVA -
+ramane doar informativ, neintegrat in modul (decizie in asteptare de la
+Andrei: modul separat pentru accize, sau deloc).
+
+Actualizat manual 2026-08-10 (UX): `etva/risc_fiscal_store.py::lista_perioade`
+ordoneaza acum dupa `creat_la DESC` (momentul rularii), nu dupa eticheta
+`perioada` - o resubmisie recenta a unei perioade "mai vechi" ca eticheta
+trebuie sa apara sus. In `web/index.html`, dupa `salveazaRiscFiscal()`,
+pagina deruleaza automat la cardul "Istoric evaluari" (`scrollIntoView`),
+ca utilizatorul sa vada rezultatul fara sa caute manual.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.

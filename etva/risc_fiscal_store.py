@@ -92,17 +92,20 @@ def _decodeaza(row) -> dict:
 
 
 def lista_perioade(conn, client_id: "int | None") -> list:
-    """Istoricul perioadelor evaluate pentru un client (sau pentru scope-ul
-    'direct' al firmei daca client_id e None), cea mai recenta perioada
-    prima - folosit pentru evolutia scorului in timp."""
+    """Istoricul evaluarilor pentru un client (sau pentru scope-ul 'direct'
+    al firmei daca client_id e None), cea mai recenta RULARE prima (creat_la
+    DESC) - nu cea mai recenta perioada declarata. O resubmisie a unei
+    perioade mai vechi (ex. completezi acum "2026-T1" desi ai deja
+    "2026-T3") trebuie sa apara sus, fiindca e activitatea cea mai recenta,
+    nu perioada cea mai recenta."""
     if client_id is None:
         rows = conn.execute(
             "SELECT * FROM risc_fiscal_perioade WHERE client_id IS NULL "
-            "ORDER BY perioada DESC").fetchall()
+            "ORDER BY creat_la DESC").fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM risc_fiscal_perioade WHERE client_id=? "
-            "ORDER BY perioada DESC", (client_id,)).fetchall()
+            "ORDER BY creat_la DESC", (client_id,)).fetchall()
     return [_decodeaza(r) for r in rows]
 
 

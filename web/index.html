@@ -512,7 +512,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <button class="btn-lat" style="margin-top:14px" onclick="salveazaRiscFiscal()">Calculează și salvează</button>
       <p id="rfEroare" class="eroare"></p>
     </div>
-    <div class="card">
+    <div class="card" id="cardIstoricRiscFiscal">
       <h3>Istoric evaluări</h3>
       <table id="tabelRiscFiscal"></table>
     </div>
@@ -948,6 +948,10 @@ async function salveazaRiscFiscal() {
     return;
   }
   await incarcaIstoricRiscFiscal();
+  // Istoricul e ordonat dupa momentul rularii (nu dupa eticheta perioadei),
+  // deci evaluarea tocmai calculata e mereu primul rand - dus-o direct in
+  // vedere, ca utilizatorul sa vada rezultatul fara sa mai deruleze manual.
+  cardIstoricRiscFiscal.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 async function verificaCuiNou() {
