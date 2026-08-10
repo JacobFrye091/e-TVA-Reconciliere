@@ -884,6 +884,19 @@ async function incarcaClienti() {
   if (document.getElementById('rfClient')) rfClient.innerHTML = optiuni;
 }
 
+// Oglindeste etva.risc_fiscal.FLAGURI_SECTIUNE_B - doar pentru afisare (tooltip).
+const ETICHETE_FLAGURI_SECTIUNE_B = {
+  cazier_fiscal: 'înscrieri în cazierul fiscal',
+  entitate_noua: 'entitate nou înființată',
+  fara_salariati: 'absența salariaților',
+  fara_bunuri: 'lipsa bunurilor imobile sau mobile',
+  insolventa: 'procedură de insolvență deschisă',
+  evidenta_speciala: 'înregistrare în evidență specială',
+  declarat_inactiv: 'declarat inactiv fiscal',
+  raport_inspectie_risc_mare: 'raport de risc fiscal mare de la inspecția fiscală',
+  comunicare_garda_financiara: 'comunicare de risc fiscal mare de la Garda Financiară',
+};
+
 async function incarcaIstoricRiscFiscal() {
   const clientId = campRfClient.style.display !== 'none' ? rfClient.value : '';
   if (campRfClient.style.display !== 'none' && !clientId) {
@@ -898,15 +911,24 @@ async function incarcaIstoricRiscFiscal() {
   }
   const perioade = await r.json();
   const chipClasa = c => c === 'ridicat' ? 'problema' : (c === 'moderat' ? 'atentie' : 'ok');
+  const rulatLa = iso => new Date(iso).toLocaleString('ro-RO',
+    {dateStyle: 'medium', timeStyle: 'medium'});
+  const explicatieClasificare = p => {
+    const active = Object.entries(p.flaguri_sectiune_b || {})
+      .filter(([, activ]) => activ).map(([cheie]) => ETICHETE_FLAGURI_SECTIUNE_B[cheie] || cheie);
+    if (!active.length) return '';
+    return 'Risc ridicat impus automat, indiferent de scor, din cauza: ' + active.join('; ') +
+      ' (Secțiunea B, metodologie ANAF).';
+  };
   tabelRiscFiscal.innerHTML =
-    '<thead><tr><th>Perioadă</th><th>Nivel</th><th>Scor</th><th>Clasificare</th><th></th></tr></thead><tbody>' +
-    (perioade.map(p => `<tr><td>${p.perioada}</td><td>${p.tip_raport}</td>` +
+    '<thead><tr><th>Rulat la</th><th>Perioadă</th><th>Nivel</th><th>Scor</th><th>Clasificare</th><th></th></tr></thead><tbody>' +
+    (perioade.map(p => `<tr><td>${rulatLa(p.creat_la)}</td><td>${p.perioada}</td><td>${p.tip_raport}</td>` +
       `<td>${p.scor_afisat}/100</td>` +
-      `<td><span class="chip ${chipClasa(p.clasificare)}">${p.clasificare}</span></td>` +
+      `<td><span class="chip ${chipClasa(p.clasificare)}" title="${explicatieClasificare(p)}">${p.clasificare}</span></td>` +
       `<td><a class="link-descarca" target="_blank" ` +
       `href="/api/risc-fiscal/perioada/${encodeURIComponent(p.perioada)}/pdf${clientId ? '?client_id=' + encodeURIComponent(clientId) : ''}">PDF</a></td></tr>`
       ).join('') ||
-     '<tr><td colspan="5" class="gol">Nicio evaluare încă — completează formularul de mai sus.</td></tr>') +
+     '<tr><td colspan="6" class="gol">Nicio evaluare încă — completează formularul de mai sus.</td></tr>') +
     '</tbody>';
 }
 
@@ -947,6 +969,17 @@ async function salveazaRiscFiscal() {
     rfEroare.textContent = (data.errors || ['Eroare necunoscută.']).join(' ');
     return;
   }
+  // Reseteaza formularul dupa fiecare salvare reusita - altfel un semnal de
+  // Sectiunea B bifat pentru o evaluare (sau cifre trecute manual) ramane
+  // bifat/completat si la urmatoarea, fortand tacit "risc ridicat" pe orice
+  // perioada calculata dupa aceea, fara ca utilizatorul sa mai stie de ce.
+  rfPerioada.value = '';
+  rfCapitaluriProprii.value = ''; rfDatoriiTotale.value = '';
+  rfCifraAfaceri.value = ''; rfRezultatNet.value = '';
+  rfSaftFile.value = '';
+  rfDeclaratiiNedepuse.value = '';
+  rfObligatiiRestante.checked = false; rfObligatiiCrescute.checked = false;
+  document.querySelectorAll('.rfFlag').forEach(cb => { cb.checked = false; });
   await incarcaIstoricRiscFiscal();
   // Istoricul e ordonat dupa momentul rularii (nu dupa eticheta perioadei),
   // deci evaluarea tocmai calculata e mereu primul rand - dus-o direct in

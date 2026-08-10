@@ -88,6 +88,12 @@ def _decodeaza(row) -> dict:
     # pe /api/risc-fiscal/istoric ar crapa incercand sa serializeze bytes.
     # In loc, doar semnaleaza daca exista (util pentru UI), fara continutul.
     d["are_fisier_saft"] = d.pop("saft_xml_original", None) is not None
+    # SQLite intoarce creat_la ca text ISO (asa a fost scris), Postgres
+    # (timestamptz) il intoarce ca datetime - Flask.jsonify serializeaza cele
+    # doua diferit (ISO vs. RFC 1123), ceea ce ar rupe formatarea din UI in
+    # functie de backend. Normalizat aici la ISO 8601, identic pe ambele.
+    if hasattr(d.get("creat_la"), "isoformat"):
+        d["creat_la"] = d["creat_la"].isoformat()
     return d
 
 

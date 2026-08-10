@@ -6177,6 +6177,25 @@ def test_istoric_risc_fiscal_ordonat_dupa_momentul_rularii_nu_dupa_eticheta(app)
     assert [p["perioada"] for p in istoric] == ["2026-T1", "2026-T3"]
 
 
+def test_istoric_risc_fiscal_are_timestamp_iso_indiferent_de_backend(app):
+    """creat_la trebuie sa fie mereu text ISO 8601 in raspunsul JSON, chiar
+    daca backend-ul de baza de date intoarce un obiect datetime (Postgres,
+    coloana timestamptz) - altfel Flask.jsonify il serializeaza diferit fata
+    de SQLite (text simplu), rupand formatarea din UI in functie de backend."""
+    from datetime import datetime, timezone
+    c = _client_risc_fiscal_platit(app, "RO9072", tip="direct", risc_fiscal_nivel="simplu")
+    inainte = datetime.now(timezone.utc)
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "capitaluri_proprii": "100",
+                "datorii_totale": "10", "cifra_afaceri": "1000",
+                "rezultat_net": "10"})
+    istoric = c.get("/api/risc-fiscal/istoric").get_json()
+    creat = datetime.fromisoformat(istoric[0]["creat_la"])
+    if creat.tzinfo is None:
+        creat = creat.replace(tzinfo=timezone.utc)
+    assert abs((creat - inainte).total_seconds()) < 30
+
+
 def test_upsert_aceeasi_perioada_nu_creeaza_duplicat(app):
     c = _client_risc_fiscal_platit(app, "RO908", tip="direct", risc_fiscal_nivel="simplu")
     c.post("/api/risc-fiscal/perioada",

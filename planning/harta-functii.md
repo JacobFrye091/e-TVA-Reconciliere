@@ -121,6 +121,25 @@ trebuie sa apara sus. In `web/index.html`, dupa `salveazaRiscFiscal()`,
 pagina deruleaza automat la cardul "Istoric evaluari" (`scrollIntoView`),
 ca utilizatorul sa vada rezultatul fara sa caute manual.
 
+Fix descoperit de Andrei (screenshot cu "risc ridicat 100/100" pe orice
+perioada calculata): formularul din `web/index.html` nu reseta niciodata
+bifele de Sectiunea B (`.rfFlag`) dupa `salveazaRiscFiscal()` - o bifa
+lasata activa dintr-un test anterior ramanea bifata la infinit, fortand
+override-ul (§ mai sus) pe toate evaluarile urmatoare, indiferent de cifre.
+Confirmat direct in baza `risc_fiscal_perioade` de pe `testare`: 3 randuri
+consecutive cu toate cele 9 flaguri `true`. Fix: `salveazaRiscFiscal()`
+goleste acum tot formularul (bife, campuri manuale, fisier SAF-T) dupa
+fiecare salvare reusita. In aceeasi interventie: coloana noua "Rulat la"
+(prima in tabelul de istoric, `creat_la` formatat cu `toLocaleString`) si
+tooltip pe chip-ul de clasificare care numeste explicit conditia din
+Sectiunea B care a fortat "ridicat", cand e cazul (`ETICHETE_FLAGURI_SECTIUNE_B`
+in JS, oglindeste `risc_fiscal.FLAGURI_SECTIUNE_B`). `risc_fiscal_store._decodeaza`
+normalizeaza acum `creat_la` la text ISO 8601 indiferent de backend (Postgres
+intorcea `datetime`, serializat altfel de `jsonify` decat textul simplu din
+SQLite). Verificate si doua surse noi trimise de Andrei (pagina oficiala ANAF
+`Anexanr2laproceduraFisaindicriscfiscal.htm` si un articol cabinetexpert.ro) -
+ambele confirma metodologia deja implementata, fara nicio schimbare de cod.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
