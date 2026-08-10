@@ -112,6 +112,8 @@ def _mock_esemneaza(monkeypatch):
                         lambda *a, **kw: {"certificateUrl": "https://fake/cert"})
     monkeypatch.setattr(esemneaza, "fetch_url_bytes",
                         lambda url: b"%PDF-fake-signed-bytes")
+    monkeypatch.setattr(esemneaza, "cancel_sign_request",
+                        lambda *a, **kw: {"status": "CANCELLED"})
 
 
 @pytest.fixture(autouse=True)
@@ -3640,6 +3642,47 @@ def test_valideaza_plata_creates_invoice_and_updates_state(app):
     assert row["suma"] == round(49 * 6 * _multiplicator_tva(app), 2)
 
 
+def test_valideaza_plata_seteaza_abonament_activ_pana(app):
+    from datetime import datetime
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui="RO2061", tip="direct")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO2061")
+    _semneaza_contract_esemneaza(app, c)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO2061'").fetchone()["id"]
+    assert app.portal_conn.execute(
+        "SELECT abonament_activ_pana FROM firms WHERE id=?",
+        (firm_id,)).fetchone()["abonament_activ_pana"] is None
+
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+
+    def _valideaza_ultima_plata():
+        plata_id = app.portal_conn.execute(
+            "SELECT id FROM payments WHERE firm_id=? AND stare='in_asteptare'",
+            (firm_id,)).fetchone()["id"]
+        c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"})
+        return app.portal_conn.execute(
+            "SELECT abonament_activ_pana FROM firms WHERE id=?",
+            (firm_id,)).fetchone()["abonament_activ_pana"]
+
+    c.post("/panou/plata", data={})
+    pana1 = _valideaza_ultima_plata()
+    assert pana1 is not None  # de la NULL, prima plata
+
+    # Renew anticipat (abonament_activ_pana ramas inca in viitor) - trebuie
+    # sa adauge ciclul la finalul perioadei deja platite, nu de la "acum",
+    # altfel firma ar pierde zile platite deja la fiecare renew din timp.
+    c.post("/panou/plata", data={})
+    pana2 = _valideaza_ultima_plata()
+    assert pana2 > pana1
+    delta_zile = (datetime.fromisoformat(pana2) - datetime.fromisoformat(pana1)).days
+    assert delta_zile == 30  # o luna, aproximat ca in pdb.TRIAL_ZILE
+
+
 def test_valideaza_plata_rejects_already_validated(app):
     _seed_master(app)
     c = app.test_client()
@@ -4068,6 +4111,479 @@ def test_descarca_backup_rejects_unknown_names(app):
     for nume in ("portal.db", "etva-backup-20260101-000000.zip"):
         r = c_master.get(f"/master/backup/{nume}/descarca", follow_redirects=False)
         assert r.status_code == 302 and "/master/backup" in r.headers["Location"]
+
+
+# ---------- schimbare self-service de plan (upgrade/downgrade + contract automat) ----------
+
+def _firma_cu_abonament_platit(app, cui, tip="contabilitate", ciclu="lunar",
+                               risc_fiscal_nivel=None, reconcilieri_estimate=None):
+    """Inregistreaza o firma, ii alege un plan initial, ii semneaza
+    contractul (mock eSemneaza) si valideaza o prima plata de abonament -
+    starea de baza necesara pentru orice test al schimbarii self-service de
+    plan (are_plata_validata=True in schimba_plan). Returneaza
+    (client firma, firm_id, client master deja autentificat)."""
+    _seed_master(app)
+    c = app.test_client()
+    inregistreaza(c, cui=cui, tip=tip, reconcilieri_estimate=reconcilieri_estimate)
+    data = {"ciclu": ciclu}
+    if tip == "direct":
+        data["reconcilieri_estimate"] = str(reconcilieri_estimate or 10)
+    if risc_fiscal_nivel:
+        data["risc_fiscal_nivel"] = risc_fiscal_nivel
+    c.post("/panou/plan", data=data)
+    _apropie_trial_de_final(app, cui)
+    _semneaza_contract_esemneaza(app, c)
+    c.post("/panou/plata", data={})
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui=?", (cui,)).fetchone()["id"]
+    plata_id = app.portal_conn.execute(
+        "SELECT id FROM payments WHERE firm_id=? AND stare=?",
+        (firm_id, "in_asteptare")).fetchone()["id"]
+    c_master = app.test_client()
+    c_master.post("/autentificare", data={"cui": "sef", "password": "ParolaMaster123!"})
+    c_master.post(f"/master/plati/{plata_id}/valideaza", data={"judet": "Bucuresti"})
+    return c, firm_id, c_master
+
+
+def test_schimba_plan_fallback_fara_ciclu_ales(app):
+    """Firma care inca nu si-a ales niciun ciclu de facturare (prima
+    alegere) foloseste tot fluxul vechi, simplu, direct pe firms - nicio
+    logica de contract/timing nu se aplica inainte de prima alegere."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO301")
+    r = c.post("/panou/plan/schimbare", data={"ciclu": "an"}, follow_redirects=True)
+    assert "Planul a fost salvat".encode() in r.data
+    row = app.portal_conn.execute(
+        "SELECT ciclu_facturare FROM firms WHERE cui='RO301'").fetchone()
+    assert row["ciclu_facturare"] == "an"
+
+
+def test_schimba_plan_fara_plata_validata_actualizeaza_direct(app):
+    """Firma care nu a platit inca niciodata (dar are deja ciclu ales si
+    contract semnat) - update direct pe firms, fara niciun contract nou."""
+    c = app.test_client()
+    inregistreaza(c, cui="RO302", tip="contabilitate")
+    c.post("/panou/plan", data={"ciclu": "lunar"})
+    _apropie_trial_de_final(app, "RO302")
+    _semneaza_contract_esemneaza(app, c)
+    firm_id = app.portal_conn.execute(
+        "SELECT id FROM firms WHERE cui='RO302'").fetchone()["id"]
+    n_contracte_inainte = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"},
+              follow_redirects=True)
+    assert "Planul a fost actualizat".encode() in r.data
+    firm = app.portal_conn.execute(
+        "SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] == "simplu"
+    n_contracte_dupa = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+    assert n_contracte_dupa == n_contracte_inainte
+
+
+def test_schimba_plan_nimic_schimbat_e_no_op(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO303")
+    r = c.post("/panou/plan/schimbare", data={"ciclu": "lunar"},
+              follow_redirects=True)
+    assert "Nu ai schimbat nimic".encode() in r.data
+
+
+def test_schimba_plan_upgrade_fara_timing_arata_alegerea(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO304")
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu"},
+              follow_redirects=False)
+    assert r.status_code == 302
+    assert "alegere_timing=1" in r.headers["Location"]
+    firm = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] is None  # nimic scris inca
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"] == 0
+
+    r2 = c.get(r.headers["Location"], follow_redirects=True)
+    assert "imediat".encode() in r2.data.lower() or "programat".encode() in r2.data.lower() \
+        or b"200" in r2.data  # pagina reda macar diferenta de cost undeva
+
+
+def test_schimba_plan_upgrade_programat_creeaza_schimbare_fara_contract(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO305")
+    n_contracte_inainte = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                    "timing": "programat"},
+              follow_redirects=True)
+    assert "programata".encode() in r.data
+
+    rand = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()
+    assert rand is not None
+    assert rand["stare"] == "in_asteptare"
+    assert rand["risc_fiscal_nivel_nou"] == "simplu"
+    assert rand["tip"] == "upgrade"
+
+    firm = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] is None  # neaplicat inca
+    n_contracte_dupa = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM contracts WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+    assert n_contracte_dupa == n_contracte_inainte  # niciun contract nou
+
+
+def test_schimba_plan_upgrade_imediat_trimite_contract_si_plata_diferenta(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO306")
+
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                    "timing": "imediat"},
+              follow_redirects=True)
+    assert "diferenta".encode() in r.data.lower() or "diferență".encode() in r.data
+
+    contract = app.portal_conn.execute(
+        "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+        (firm_id,)).fetchone()
+    assert contract is not None
+    assert contract["stare"] == "in_asteptare"
+    assert contract["esemneaza_request_id"] == "fake-request-id"
+
+    plata = app.portal_conn.execute(
+        "SELECT * FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()
+    assert plata is not None
+    assert plata["stare"] == "in_asteptare"
+    assert plata["contract_id"] == contract["id"]
+    assert plata["risc_fiscal_nivel_nou"] == "simplu"
+    # diferenta = 200 RON (pretul modulului simplu) - firma nu avea niciun
+    # nivel activ inainte - cu TVA aplicat, la fel ca orice alta suma ceruta.
+    assert plata["suma"] == round(200 * _multiplicator_tva(app), 2)
+
+    firm = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] is None  # neaplicat pana la validarea platii
+
+
+def test_valideaza_plata_diferenta_upgrade_refuza_contract_nesemnat(app):
+    c, firm_id, c_master = _firma_cu_abonament_platit(app, "RO311")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "imediat"})
+    plata_id = app.portal_conn.execute(
+        "SELECT id FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()["id"]
+
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"}, follow_redirects=True)
+    assert "nu este inca semnat".encode() in r.data
+
+    plata = app.portal_conn.execute(
+        "SELECT stare FROM payments WHERE id=?", (plata_id,)).fetchone()
+    assert plata["stare"] == "in_asteptare"  # claim-ul a fost eliberat
+    firm = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] is None
+
+
+def test_valideaza_plata_diferenta_upgrade_aplica_planul_imediat(app):
+    c, firm_id, c_master = _firma_cu_abonament_platit(app, "RO312")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "imediat"})
+    c.get("/panou/contract")  # semneaza contractul nou (mock eSemneaza)
+    pana_inainte = app.portal_conn.execute(
+        "SELECT abonament_activ_pana FROM firms WHERE id=?",
+        (firm_id,)).fetchone()["abonament_activ_pana"]
+
+    plata_id = app.portal_conn.execute(
+        "SELECT id FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()["id"]
+    r = c_master.post(f"/master/plati/{plata_id}/valideaza",
+                      data={"judet": "Bucuresti"}, follow_redirects=True)
+    assert "validata".encode() in r.data
+
+    plata = app.portal_conn.execute(
+        "SELECT * FROM payments WHERE id=?", (plata_id,)).fetchone()
+    assert plata["stare"] == "validata"
+    assert plata["invoice_id"] is not None
+
+    factura = app.portal_conn.execute(
+        "SELECT * FROM invoices WHERE id=?", (plata["invoice_id"],)).fetchone()
+    assert "Diferenta upgrade".encode() in factura["descriere"].encode()
+    assert factura["valoare_totala"] == plata["suma"]
+
+    firm = app.portal_conn.execute(
+        "SELECT risc_fiscal_nivel, abonament_activ_pana FROM firms WHERE id=?",
+        (firm_id,)).fetchone()
+    assert firm["risc_fiscal_nivel"] == "simplu"  # aplicat imediat
+    assert firm["abonament_activ_pana"] == pana_inainte  # neatins
+
+
+def test_schimba_plan_downgrade_e_mereu_programat_ignora_timing_imediat(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(
+        app, "RO307", risc_fiscal_nivel="complet")
+
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "timing": "imediat"},  # cerere de downgrade
+              follow_redirects=True)
+    assert "programata".encode() in r.data
+
+    rand = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()
+    assert rand is not None
+    assert rand["tip"] == "downgrade"
+    assert rand["risc_fiscal_nivel_nou"] is None
+    assert app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()["n"] == 0
+
+
+def test_schimba_plan_schimbare_ciclu_e_mereu_programata(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO308")
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "an", "timing": "imediat"},
+              follow_redirects=True)
+    assert "programata".encode() in r.data
+    rand = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()
+    assert rand is not None
+    assert rand["ciclu_facturare_nou"] == "an"
+    firm = app.portal_conn.execute(
+        "SELECT ciclu_facturare FROM firms WHERE id=?", (firm_id,)).fetchone()
+    assert firm["ciclu_facturare"] == "lunar"  # neaplicat inca
+
+
+def test_schimba_plan_blocheaza_a_doua_cerere_cat_timp_prima_e_in_asteptare(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO309")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "programat"})
+    r = c.post("/panou/plan/schimbare",
+              data={"ciclu": "lunar", "risc_fiscal_nivel": "complet",
+                    "timing": "programat"},
+              follow_redirects=True)
+    assert "deja o schimbare de plan".encode() in r.data
+    n = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()["n"]
+    assert n == 1
+
+
+def test_creeaza_cerere_plata_blocata_de_plata_diferenta_activa(app):
+    """Dupa ce noul contract (generat pentru upgrade-ul imediat) e semnat -
+    _mock_esemneaza raporteaza implicit APPLIED la prima verificare, deci o
+    vizita pe /panou/contract il finalizeaza - gate-ul vechi pe "contract
+    nesemnat" nu mai blocheaza nimic (ciclul nu s-a schimbat); doar gate-ul
+    nou, dedicat platii diferenta_upgrade inca nevalidate, trebuie sa
+    blocheze o noua cerere de plata normala."""
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO310")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "imediat"})
+    c.get("/panou/contract")
+    r = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "schimbare de plan in asteptare".encode() in r.data
+    n = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "abonament")).fetchone()["n"]
+    # doar plata initiala (deja validata) - nicio a doua plata de abonament
+    assert n == 1
+
+
+def test_anuleaza_schimbare_plan_programata(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO313")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "programat"})
+    r = c.post("/panou/plan/schimbare/anuleaza", follow_redirects=True)
+    assert "programata a fost anulata".encode() in r.data
+
+    rand = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE firm_id=?",
+        (firm_id,)).fetchone()
+    assert rand["stare"] == "anulata"
+    assert rand["anulata_de"]
+
+    # Dupa anulare, firma poate cere din nou o schimbare (guard-ul nu mai
+    # gaseste nicio schimbare "in_asteptare").
+    r2 = c.post("/panou/plan/schimbare",
+               data={"ciclu": "lunar", "risc_fiscal_nivel": "complet",
+                     "timing": "programat"},
+               follow_redirects=True)
+    assert "programata".encode() in r2.data
+    n = app.portal_conn.execute(
+        "SELECT COUNT(*) AS n FROM plan_schimbari_programate WHERE firm_id=? "
+        "AND stare='in_asteptare'", (firm_id,)).fetchone()["n"]
+    assert n == 1
+
+
+def test_anuleaza_schimbare_plan_imediata_cu_contract_nesemnat(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO314")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "imediat"})
+    contract_id = app.portal_conn.execute(
+        "SELECT id FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
+        (firm_id,)).fetchone()["id"]
+
+    r = c.post("/panou/plan/schimbare/anuleaza", follow_redirects=True)
+    assert "a fost anulata".encode() in r.data
+
+    contract = app.portal_conn.execute(
+        "SELECT stare FROM contracts WHERE id=?", (contract_id,)).fetchone()
+    assert contract["stare"] == "anulat"
+    plata = app.portal_conn.execute(
+        "SELECT stare FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()
+    assert plata["stare"] == "anulata"
+
+    # _contract_curent revine la vechiul contract semnat - o plata normala
+    # merge din nou fara nicio blocare.
+    r2 = c.post("/panou/plata", data={}, follow_redirects=True)
+    assert "inregistrata".encode() in r2.data
+
+
+def test_anuleaza_schimbare_plan_refuza_daca_deja_semnat(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO315")
+    c.post("/panou/plan/schimbare",
+          data={"ciclu": "lunar", "risc_fiscal_nivel": "simplu",
+                "timing": "imediat"})
+    c.get("/panou/contract")  # semneaza (mock eSemneaza -> APPLIED)
+
+    r = c.post("/panou/plan/schimbare/anuleaza", follow_redirects=True)
+    assert "deja semnat".encode() in r.data
+
+    plata = app.portal_conn.execute(
+        "SELECT stare FROM payments WHERE firm_id=? AND tip=?",
+        (firm_id, "diferenta_upgrade")).fetchone()
+    assert plata["stare"] == "in_asteptare"  # neatinsa
+
+
+def test_anuleaza_schimbare_plan_fara_nimic_de_anulat(app):
+    c, firm_id, _ = _firma_cu_abonament_platit(app, "RO316")
+    r = c.post("/panou/plan/schimbare/anuleaza", follow_redirects=True)
+    assert "nicio schimbare de plan de anulat".encode() in r.data
+
+
+# ---------- scheduler: aplicare schimbari de plan programate ----------
+
+def _insereaza_firma_minimala(app, cui="RO900", name="Firma Minimala SRL"):
+    from etva import dbcompat
+    return dbcompat.insert_id(
+        app.portal_conn, "INSERT INTO firms(name, cui) VALUES (?,?)", (name, cui))
+
+
+def _insereaza_schimbare_programata(app, firm_id, aplica_la, ciclu_nou="lunar"):
+    from datetime import datetime, timezone
+    from etva import dbcompat
+    return dbcompat.insert_id(
+        app.portal_conn,
+        "INSERT INTO plan_schimbari_programate(firm_id, ciclu_facturare_nou, "
+        "tip, aplica_la, solicitat_de, creat_la) VALUES(?,?,?,?,?,?)",
+        (firm_id, ciclu_nou, "upgrade", aplica_la, "admin",
+         datetime.now(timezone.utc).isoformat()))
+
+
+def _insereaza_contract_minimal(app, firm_id, numar):
+    """contract_id-ul intors de aplica_una_fn trebuie sa fie un rand real din
+    contracts - Postgres impune FK-ul plan_schimbari_programate.contract_id,
+    spre deosebire de SQLite (foreign_keys implicit oprit)."""
+    from datetime import datetime, timezone
+    from etva import dbcompat
+    return dbcompat.insert_id(
+        app.portal_conn,
+        "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
+        "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
+        "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
+        (firm_id, numar, "lunar", 100.0, "Firma Test SRL", "RO900", "Adresa",
+         "in_asteptare", datetime.now(timezone.utc).isoformat()))
+
+
+def test_aplica_schimbari_programate_aplica_doar_ce_e_scadent(app):
+    from datetime import datetime, timedelta, timezone
+    from portal import plan_schimbari as plan_schimbari_mod
+    # Doua firme distincte - indexul unic partial permite cel mult o
+    # schimbare 'in_asteptare' per firma, deci nu pot coexista doua randuri
+    # pe aceeasi firma pentru acest test.
+    firm_id_scadent = _insereaza_firma_minimala(app, cui="RO900")
+    firm_id_viitor = _insereaza_firma_minimala(app, cui="RO901")
+    contract_id = _insereaza_contract_minimal(app, firm_id_scadent, numar=90001)
+    trecut = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    viitor = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    id_scadent = _insereaza_schimbare_programata(app, firm_id_scadent, trecut)
+    id_viitor = _insereaza_schimbare_programata(app, firm_id_viitor, viitor)
+
+    apeluri = []
+
+    def _stub(row):
+        apeluri.append(row["id"])
+        return contract_id
+
+    n = plan_schimbari_mod.aplica_schimbari_programate(app.portal_conn, _stub)
+    assert n == 1
+    assert apeluri == [id_scadent]
+
+    rand_scadent = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE id=?",
+        (id_scadent,)).fetchone()
+    assert rand_scadent["stare"] == "aplicata"
+    assert rand_scadent["contract_id"] == contract_id
+    assert rand_scadent["aplicata_la"] is not None
+
+    rand_viitor = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE id=?",
+        (id_viitor,)).fetchone()
+    assert rand_viitor["stare"] == "in_asteptare"
+
+
+def test_aplica_schimbari_programate_idempotenta(app):
+    from datetime import datetime, timedelta, timezone
+    from portal import plan_schimbari as plan_schimbari_mod
+    firm_id = _insereaza_firma_minimala(app)
+    contract_id = _insereaza_contract_minimal(app, firm_id, numar=90002)
+    trecut = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    _insereaza_schimbare_programata(app, firm_id, trecut)
+
+    apeluri = {"n": 0}
+
+    def _stub(row):
+        apeluri["n"] += 1
+        return contract_id
+
+    n1 = plan_schimbari_mod.aplica_schimbari_programate(app.portal_conn, _stub)
+    n2 = plan_schimbari_mod.aplica_schimbari_programate(app.portal_conn, _stub)
+    assert n1 == 1
+    assert n2 == 0  # randul deja 'aplicata' nu mai e reprocesat
+    assert apeluri["n"] == 1
+
+
+def test_aplica_schimbari_programate_esec_ramane_in_asteptare(app):
+    from datetime import datetime, timedelta, timezone
+    from portal import plan_schimbari as plan_schimbari_mod
+    firm_id = _insereaza_firma_minimala(app)
+    trecut = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    schimbare_id = _insereaza_schimbare_programata(app, firm_id, trecut)
+
+    def _stub_esec(row):
+        raise RuntimeError("eSemneaza indisponibil")
+
+    n = plan_schimbari_mod.aplica_schimbari_programate(app.portal_conn, _stub_esec)
+    assert n == 0
+    rand = app.portal_conn.execute(
+        "SELECT * FROM plan_schimbari_programate WHERE id=?",
+        (schimbare_id,)).fetchone()
+    assert rand["stare"] == "in_asteptare"
+    assert rand["aplicata_la"] is None
 
 
 # ---------- contract de prestari servicii ----------
@@ -5313,6 +5829,20 @@ def test_create_app_second_instance_on_same_data_dir_is_not_scheduler_leader(tmp
                       enable_trial_reminder_scheduler=True)
     app2 = create_app(str(tmp_path), enable_backup_scheduler=True,
                       enable_trial_reminder_scheduler=True)
+    try:
+        assert app1._scheduler_lock_fd is not None
+        assert app2._scheduler_lock_fd is None
+    finally:
+        app1._scheduler_lock_fd.close()
+
+
+def test_create_app_second_instance_plan_schimbari_scheduler_not_leader(tmp_path):
+    """Acelasi tipar ca testul de mai sus, pentru schedulerul de schimbari
+    de plan programate - flag-ul lui trebuie sa intre in acelasi calcul al
+    _scheduler_lock_fd (vezi OR-ul din create_app), nu doar cele 3 anterioare."""
+    from portal.app import create_app
+    app1 = create_app(str(tmp_path), enable_plan_schimbari_scheduler=True)
+    app2 = create_app(str(tmp_path), enable_plan_schimbari_scheduler=True)
     try:
         assert app1._scheduler_lock_fd is not None
         assert app2._scheduler_lock_fd is None

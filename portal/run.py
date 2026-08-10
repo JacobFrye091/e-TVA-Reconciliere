@@ -21,4 +21,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("ETVA_PORT", "8990"))
     create_app(data_dir(), enable_backup_scheduler=True,
               enable_trial_reminder_scheduler=True,
-              enable_risk_alerts_scheduler=True).run(host="127.0.0.1", port=port)
+              enable_risk_alerts_scheduler=True,
+              enable_plan_schimbari_scheduler=True).run(host="127.0.0.1", port=port)

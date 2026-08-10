@@ -42,6 +42,7 @@ EXPECTED_SCHEMA = {
         "arhivata_la": "timestamp with time zone",
         "reconcilieri_lunare_estimate": "integer",
         "risc_fiscal_nivel": "text",
+        "abonament_activ_pana": "timestamp with time zone",
     },
     "users": {
         "id": "integer", "username": "text", "pw_hash": "text",
@@ -115,7 +116,9 @@ EXPECTED_SCHEMA = {
         "suma": "numeric", "moneda": "text", "recurent": "boolean",
         "stare": "text", "creat_la": "timestamp with time zone",
         "validat_de": "text", "validat_la": "timestamp with time zone",
-        "invoice_id": "integer",
+        "invoice_id": "integer", "tip": "text",
+        "reconcilieri_lunare_estimate_nou": "integer",
+        "risc_fiscal_nivel_nou": "text", "contract_id": "integer",
     },
     "planuri_facturare": {
         "tip": "text", "ciclu_facturare": "text",
@@ -155,6 +158,17 @@ EXPECTED_SCHEMA = {
         "esemneaza_certificate_pdf": "bytea",
         "prestator_semnat_la": "timestamp with time zone",
         "contract_xml_final": "bytea",
+    },
+    "plan_schimbari_programate": {
+        "id": "integer", "firm_id": "integer",
+        "ciclu_facturare_nou": "text",
+        "reconcilieri_lunare_estimate_nou": "integer",
+        "risc_fiscal_nivel_nou": "text", "tip": "text",
+        "aplica_la": "timestamp with time zone", "stare": "text",
+        "contract_id": "integer", "solicitat_de": "text",
+        "creat_la": "timestamp with time zone",
+        "aplicata_la": "timestamp with time zone",
+        "anulata_la": "timestamp with time zone", "anulata_de": "text",
     },
     "clients": {
         "id": "integer", "firm_id": "integer", "cui": "text",

@@ -32,7 +32,62 @@ a.mic:hover { background:var(--paper); }
     {% endif %}
     {% if eroare %}<p class="eroare">{{ eroare }}</p>{% endif %}
     {% if mesaj %}<p class="sub" style="color:var(--ok)">{{ mesaj }}</p>{% endif %}
+  </div>
 
+  {% if schimbare_programata %}
+  <div class="card">
+    <h2>Schimbare de plan programată</h2>
+    <p class="sub">Noul plan intră în vigoare la finalul perioadei curente,
+      pe <b>{{ schimbare_programata['aplica_la'][:10] }}</b>:
+      ciclu <b>{{ {'lunar': 'lunar', '6luni': 'la 6 luni', 'an': 'anual'}[schimbare_programata['ciclu_facturare_nou']] }}</b>{% if schimbare_programata['risc_fiscal_nivel_nou'] %},
+      Risc Fiscal <b>{{ schimbare_programata['risc_fiscal_nivel_nou'] }}</b>{% elif firm['risc_fiscal_nivel'] %}, fără modulul Risc Fiscal{% endif %}.
+      Contractul aferent se generează automat abia atunci.</p>
+    <form method="post" action="/panou/plan/schimbare/anuleaza">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn-lat" type="submit">Anulează schimbarea programată</button>
+    </form>
+  </div>
+  {% elif plata_diferenta_activa %}
+  <div class="card">
+    <h2>Schimbare de plan în curs</h2>
+    <p class="sub">Ai cerut trecerea imediată la un plan superior. Contractul
+      nou a fost trimis spre semnare — după ce îl semnezi, achită diferența
+      de <b>{{ plata_diferenta_activa['suma'] }} {{ plata_diferenta_activa['moneda'] }}</b>
+      ca schimbarea să intre în vigoare.</p>
+    <p class="nota"><a href="/panou/contract">Vezi și semnează contractul &rarr;</a></p>
+    <form method="post" action="/panou/plan/schimbare/anuleaza">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn-lat" type="submit">Anulează cererea</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if alegere_timing %}
+  <div class="card">
+    <h2>Când intră în vigoare noul plan?</h2>
+    <p class="sub">Ai deja un abonament plătit. Poți trece imediat la noul
+      plan plătind doar diferența, sau poți aștepta finalul perioadei
+      curente, fără nicio plată suplimentară acum.</p>
+    <table style="margin:10px 0">
+      <tr><td>Cost curent (fără TVA)</td><td style="text-align:right">{{ alegere_timing['cost_vechi'] }} RON</td></tr>
+      <tr><td>Cost nou (fără TVA)</td><td style="text-align:right">{{ alegere_timing['cost_nou'] }} RON</td></tr>
+      <tr><td><b>Diferență de plată (cu TVA)</b></td><td style="text-align:right"><b>{{ alegere_timing['diferenta'] }} RON</b></td></tr>
+    </table>
+    <form method="post" action="/panou/plan/schimbare">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="ciclu" value="{{ alegere_timing['ciclu'] }}">
+      <input type="hidden" name="reconcilieri_estimate" value="{{ alegere_timing['reconcilieri_estimate'] }}">
+      <input type="hidden" name="risc_fiscal_nivel" value="{{ alegere_timing['risc_fiscal_nivel'] }}">
+      <label><input type="radio" name="timing" value="imediat" required style="width:auto">
+        Imediat — semnez contractul acum și plătesc diferența</label>
+      <label><input type="radio" name="timing" value="programat" required style="width:auto">
+        La finalul perioadei curente — fără plată acum</label>
+      <button class="btn-lat" type="submit" style="margin-top:12px">Confirmă</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card">
     {% if firm['tip'] == 'direct' %}
     <p class="sub">Abonamentul standard include până la
       <b>{{ pachet['reconcilieri_incluse'] }}</b> reconcilieri pe lună. Peste
@@ -40,7 +95,7 @@ a.mic:hover { background:var(--paper); }
       {{ pachet['marime_pachet'] }} reconcilieri, la
       {{ pachet['pret_pachet_lunar_ron'] }} RON/lună per pachet (fără TVA).</p>
     {% endif %}
-    <form method="post" action="/panou/plan">
+    <form method="post" action="/panou/plan/schimbare">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="plan-optiuni">
         <div class="plan-card">

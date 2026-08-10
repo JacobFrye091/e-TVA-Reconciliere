@@ -31,10 +31,14 @@ a.mic:hover { background:var(--paper); }
 
   <div class="card">
     <table>
-      <tr><th>Firma</th><th>Ciclu</th><th>Sumă (cu TVA)</th><th>Recurentă</th><th>Creat la</th><th>Stare</th><th></th></tr>
+      <tr><th>Firma</th><th>Tip</th><th>Ciclu</th><th>Sumă (cu TVA)</th><th>Recurentă</th><th>Creat la</th><th>Stare</th><th></th></tr>
       {% for p in plati %}
       <tr>
         <td>{{ p['firm_name'] }}<br><span class="nota" style="margin:0">{{ p['firm_cui'] }}</span></td>
+        <td>
+          {% if p['tip'] == 'diferenta_upgrade' %}<span class="chip" style="color:var(--accent);background:var(--surface)">Diferență upgrade</span>
+          {% else %}Abonament{% endif %}
+        </td>
         <td>{{ {'lunar': 'Lunar', '6luni': 'La 6 luni', 'an': 'Anual'}[p['ciclu_facturare']] }}</td>
         <td>{{ '%.2f'|format(p['suma']) }} {{ p['moneda'] }}</td>
         <td>{{ 'Da' if p['recurent'] else 'Nu' }}</td>
@@ -42,6 +46,7 @@ a.mic:hover { background:var(--paper); }
         <td>
           {% if p['stare'] == 'validata' %}<span class="chip ok">Validată</span>
           {% elif p['stare'] == 'in_procesare' %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În procesare</span>
+          {% elif p['stare'] == 'anulata' %}<span class="chip" style="color:var(--muted);background:var(--surface)">Anulată</span>
           {% else %}<span class="chip" style="color:var(--warn);background:var(--warn-bg)">În așteptare</span>{% endif %}
         </td>
         <td style="text-align:right">
@@ -66,7 +71,7 @@ a.mic:hover { background:var(--paper); }
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" style="color:var(--muted)">Nicio cerere de plată încă.</td></tr>
+      <tr><td colspan="8" style="color:var(--muted)">Nicio cerere de plată încă.</td></tr>
       {% endfor %}
     </table>
   </div>

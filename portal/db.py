@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS firms(
   trial_reminder_ultim_prag INTEGER,
   arhivata_la TEXT,
   reconcilieri_lunare_estimate INTEGER,
-  risc_fiscal_nivel TEXT);
+  risc_fiscal_nivel TEXT,
+  abonament_activ_pana TEXT);
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL,
@@ -151,7 +152,11 @@ CREATE TABLE IF NOT EXISTS payments(
   stare TEXT NOT NULL DEFAULT 'in_asteptare',
   creat_la TEXT NOT NULL,
   validat_de TEXT, validat_la TEXT,
-  invoice_id INTEGER REFERENCES invoices(id));
+  invoice_id INTEGER REFERENCES invoices(id),
+  tip TEXT NOT NULL DEFAULT 'abonament',
+  reconcilieri_lunare_estimate_nou INTEGER,
+  risc_fiscal_nivel_nou TEXT,
+  contract_id INTEGER REFERENCES contracts(id));
 CREATE TABLE IF NOT EXISTS planuri_facturare(
   tip TEXT NOT NULL, ciclu_facturare TEXT NOT NULL,
   pret_lunar_ron REAL NOT NULL,
@@ -204,8 +209,23 @@ CREATE TABLE IF NOT EXISTS nomenclator_module(
   rapoarte_incluse INTEGER,
   pret_raport_extra_ron REAL,
   actualizat_de TEXT, actualizat_la TEXT);
+CREATE TABLE IF NOT EXISTS plan_schimbari_programate(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  firm_id INTEGER NOT NULL REFERENCES firms(id),
+  ciclu_facturare_nou TEXT NOT NULL,
+  reconcilieri_lunare_estimate_nou INTEGER,
+  risc_fiscal_nivel_nou TEXT,
+  tip TEXT NOT NULL,
+  aplica_la TEXT NOT NULL,
+  stare TEXT NOT NULL DEFAULT 'in_asteptare',
+  contract_id INTEGER REFERENCES contracts(id),
+  solicitat_de TEXT NOT NULL,
+  creat_la TEXT NOT NULL,
+  aplicata_la TEXT, anulata_la TEXT, anulata_de TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_setari_tva_activa
   ON setari_tva(activa) WHERE activa=1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_schimbari_programate_activa
+  ON plan_schimbari_programate(firm_id) WHERE stare='in_asteptare';
 """
 
 # O cerere de plata e auto-declarata de firma (fara procesator de plati
@@ -219,6 +239,19 @@ PLATA_VALIDATA = "validata"
 # plata simultan si emite factura de doua ori - vezi valideaza_plata in
 # portal/app.py.
 PLATA_IN_PROCESARE = "in_procesare"
+# O schimbare de plan anulata inainte de validare (vezi ruta de anulare a
+# schimbarii de abonament, portal/app.py) - starea e terminala, distincta de
+# PLATA_IN_ASTEPTARE, ca sa nu mai fie preluata de master din greseala.
+PLATA_ANULATA = "anulata"
+
+# Tipul unei cereri de plata - implicit "abonament" (ciclul normal de
+# facturare); "diferenta_upgrade" e plata partiala, doar a diferentei de
+# pret, generata cand o firma cu abonament deja platit alege sa treaca
+# imediat la un plan mai scump (vezi /panou/plan/schimbare). Coloana are
+# DEFAULT 'abonament' in schema, deci toate platile istorice sunt corect
+# clasificate retroactiv fara nicio migrare de date.
+PLATA_TIP_ABONAMENT = "abonament"
+PLATA_TIP_DIFERENTA_UPGRADE = "diferenta_upgrade"
 
 # Starile contractului de prestari servicii dintre VML si firma abonata -
 # vezi portal/contract.py pentru generarea textului si etva/digital_signature.py
@@ -227,6 +260,19 @@ CONTRACT_STARE_IN_ASTEPTARE = "in_asteptare"
 CONTRACT_STARE_SEMNAT = "semnat"
 CONTRACT_STARE_REZILIERE_SOLICITATA = "reziliere_solicitata"
 CONTRACT_STARE_REZILIAT = "reziliat"
+# Contract generat automat pentru un upgrade imediat, dar anulat de firma
+# inainte de a fi semnat - ramane in istoric (numarul a fost deja comunicat
+# extern prin eSemneaza), dar _contract_curent() il exclude explicit.
+CONTRACT_STARE_ANULAT = "anulat"
+
+# Starile unei schimbari de plan programate (downgrade sau upgrade cu
+# intrare in vigoare la finalul perioadei curente) - vezi
+# portal/plan_schimbari.py::aplica_schimbari_programate.
+PLAN_SCHIMBARE_TIP_UPGRADE = "upgrade"
+PLAN_SCHIMBARE_TIP_DOWNGRADE = "downgrade"
+PLAN_SCHIMBARE_STARE_IN_ASTEPTARE = "in_asteptare"
+PLAN_SCHIMBARE_STARE_APLICATA = "aplicata"
+PLAN_SCHIMBARE_STARE_ANULATA = "anulata"
 
 CONTRACT_METODA_MOUSE = "mouse"
 CONTRACT_METODA_CERTIFICAT = "certificat"
@@ -673,6 +719,51 @@ def _migrate_add_firms_risc_fiscal_nivel(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_firms_abonament_activ_pana(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate firms.abonament_activ_pana - add it,
+    defaulting existing rows to NULL. Nu exista nicio sursa fiabila in baza
+    de date din care sa reconstitui aceasta data retroactiv pentru firme
+    deja platitoare (invoices.perioada_inceput/sfarsit ramane NULL pentru
+    toate facturile emise automat prin valideaza_plata) - NULL inseamna
+    "aplica imediat" pentru orice schimbare de plan programata a acelei
+    firme (vezi portal/plan_schimbari.py), fallback conservator, fara
+    ghicire. Nu afecteaza accesul la aplicatie (current_identity() nu
+    foloseste acest camp)."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "firms" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(firms)")}
+    if "abonament_activ_pana" in cols:
+        return
+    conn.execute("ALTER TABLE firms ADD COLUMN abonament_activ_pana TEXT")
+    conn.commit()
+
+
+def _migrate_add_payments_plan_schimbare_columns(conn: sqlite3.Connection) -> None:
+    """Older portal.db files predate schimbarea self-service de abonament -
+    adauga tip (DEFAULT 'abonament', clasifica retroactiv corect toate
+    platile istorice - au fost mereu plati normale de abonament) si cele 3
+    coloane semnificative doar pentru tip='diferenta_upgrade'."""
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "payments" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(payments)")}
+    if "tip" not in cols:
+        conn.execute(
+            "ALTER TABLE payments ADD COLUMN tip TEXT NOT NULL DEFAULT 'abonament'")
+    if "reconcilieri_lunare_estimate_nou" not in cols:
+        conn.execute(
+            "ALTER TABLE payments ADD COLUMN reconcilieri_lunare_estimate_nou INTEGER")
+    if "risc_fiscal_nivel_nou" not in cols:
+        conn.execute("ALTER TABLE payments ADD COLUMN risc_fiscal_nivel_nou TEXT")
+    if "contract_id" not in cols:
+        conn.execute("ALTER TABLE payments ADD COLUMN contract_id INTEGER "
+                     "REFERENCES contracts(id)")
+    conn.commit()
+
+
 def _migrate_add_nomenclator_module_rapoarte(conn: sqlite3.Connection) -> None:
     """Older portal.db files predate rapoarte_incluse/pret_raport_extra_ron
     (introduse 2026-08-10 odata cu trecerea la facturare cu prag inclus +
@@ -987,6 +1078,8 @@ def open_db(path: str) -> sqlite3.Connection:
     _migrate_add_firms_arhivare(conn)
     _migrate_add_firms_reconcilieri_estimate(conn)
     _migrate_add_firms_risc_fiscal_nivel(conn)
+    _migrate_add_firms_abonament_activ_pana(conn)
+    _migrate_add_payments_plan_schimbare_columns(conn)
     _migrate_seed_planuri_facturare(conn)
     _migrate_contracts_fara_pdf(conn)
     _migrate_add_contracts_esemneaza(conn)

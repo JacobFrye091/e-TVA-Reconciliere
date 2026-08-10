@@ -24,6 +24,7 @@ from portal import backup as backup_mod
 from portal import backup_pg
 from portal import trial_reminders as remind_mod
 from portal import risk_alerts as risk_alerts_mod
+from portal import plan_schimbari as plan_schimbari_mod
 from portal import risc_fiscal_report
 from etva import db as fdb
 from etva import dbcompat
@@ -264,7 +265,8 @@ class _ReqScopedConn(dbcompat.ConnCompat):
 
 def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                enable_trial_reminder_scheduler: bool = False,
-               enable_risk_alerts_scheduler: bool = False) -> Flask:
+               enable_risk_alerts_scheduler: bool = False,
+               enable_plan_schimbari_scheduler: bool = False) -> Flask:
     os.makedirs(data_dir, exist_ok=True)
     firms_dir = os.path.join(data_dir, "firms")
     upload_dir = os.path.join(data_dir, "uploads")
@@ -355,7 +357,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
     scheduler_lock_fd = None
     if (enable_backup_scheduler or enable_trial_reminder_scheduler
-            or enable_risk_alerts_scheduler):
+            or enable_risk_alerts_scheduler or enable_plan_schimbari_scheduler):
         scheduler_lock_fd = _is_scheduler_leader(data_dir)
         app._scheduler_lock_fd = scheduler_lock_fd  # tinut deschis cat traieste procesul
         # flush=True: stdout e block-buffered sub gunicorn/systemd (nu e un
@@ -363,7 +365,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # umplerea bufferului sau iesirea procesului.
         print(f"[scheduler] pid {os.getpid()}: "
               + ("lider - pornesc firele de fundal "
-                 "(backup/remindere trial/alerte risc fiscal)"
+                 "(backup/remindere trial/alerte risc fiscal/schimbari plan)"
                  if scheduler_lock_fd else
                  "nu sunt lider - firele de fundal nu pornesc in acest proces"),
               flush=True)
@@ -681,6 +683,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
     def _luni_pentru_ciclu(ciclu: str) -> int:
         return {pdb.CICLU_LUNAR: 1, pdb.CICLU_6_LUNI: 6, pdb.CICLU_AN: 12}[ciclu]
 
+    def _adauga_ciclu(baza_iso: str, ciclu: str) -> str:
+        """Data (ISO8601) pana la care ramane platit un abonament de ciclu
+        `ciclu` inceput la `baza_iso` - aproximare in zile (30/182/365),
+        acelasi nivel de precizie ca pdb.TRIAL_ZILE, nu o luna calendaristica
+        exacta."""
+        zile = {pdb.CICLU_LUNAR: 30, pdb.CICLU_6_LUNI: 182, pdb.CICLU_AN: 365}[ciclu]
+        return (datetime.fromisoformat(baza_iso) + timedelta(days=zile)).isoformat()
+
     def _pachete_extra_lunare(firm) -> tuple[int, float]:
         """(numar pachete extra, costul lor lunar fara TVA) pentru o firma
         directa a carei estimare de reconcilieri lunare depaseste ce
@@ -756,6 +766,23 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return round((pret_lunar * max(n_clienti, 1) + cost_risc_fiscal) * luni, 2)
         _n_pachete, cost_lunar_extra = _pachete_extra_lunare(firm)
         return round((pret_lunar + cost_lunar_extra + cost_risc_fiscal) * luni, 2)
+
+    def _compara_cost_plan(firm, reconcilieri_estimate_nou, risc_fiscal_nivel_nou):
+        """(cost_vechi, cost_nou) - costul lunar/ciclu (fara TVA) al planului
+        ACTUAL al firmei fata de cel propus, calculate amandoua la
+        firm['ciclu_facturare'] curent (o eventuala schimbare de ciclu se
+        trateaza separat, mereu ca schimbare "programata" - vezi
+        /panou/plan/schimbare - nu intra in aceasta comparatie de cost).
+        _calculeaza_suma_plata accepta orice obiect indexabil dupa cheie, deci
+        planul propus e doar un dict suprapus peste firma reala (firm['id']
+        ramane cel real, necesar lui firm_conn din _cost_modul_risc_fiscal)."""
+        ciclu = firm["ciclu_facturare"]
+        cost_vechi = _calculeaza_suma_plata(firm, ciclu)
+        firm_propus = dict(firm)
+        firm_propus["reconcilieri_lunare_estimate"] = reconcilieri_estimate_nou
+        firm_propus["risc_fiscal_nivel"] = risc_fiscal_nivel_nou
+        cost_nou = _calculeaza_suma_plata(firm_propus, ciclu)
+        return cost_vechi, cost_nou
 
     def _suma_cu_tva(suma_neta: float) -> float:
         """Suma efectiv ceruta/incasata de la client - pretul de baza
@@ -1209,6 +1236,38 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         rapoarte_risc_fiscal_folosite = (
             _rapoarte_risc_fiscal_luna_curenta(firm_conn(firm["id"]))
             if firm["risc_fiscal_nivel"] else 0)
+        schimbare_programata = conn.execute(
+            "SELECT * FROM plan_schimbari_programate WHERE firm_id=? AND "
+            "stare=?", (active_firm_id, pdb.PLAN_SCHIMBARE_STARE_IN_ASTEPTARE)
+        ).fetchone()
+        plata_diferenta_activa = conn.execute(
+            "SELECT * FROM payments WHERE firm_id=? AND tip=? AND "
+            "stare IN (?,?) ORDER BY id DESC LIMIT 1",
+            (active_firm_id, pdb.PLATA_TIP_DIFERENTA_UPGRADE,
+             pdb.PLATA_IN_ASTEPTARE, pdb.PLATA_IN_PROCESARE)).fetchone()
+        # Cand schimba_plan redirecteaza aici pentru ca upgrade-ul cerut e
+        # eligibil pentru plata imediata a diferentei, arata mini-formularul
+        # de alegere a momentului (imediat/programat) cu valorile propuse
+        # deja completate - fara nicio stare de sesiune server-side, la fel
+        # ca restul mesajelor de eroare/succes transmise prin querystring.
+        alegere_timing = None
+        if request.args.get("alegere_timing") == "1":
+            ciclu_propus = request.args.get("ciclu", "")
+            reconcilieri_propuse = request.args.get("reconcilieri_estimate", "")
+            risc_fiscal_propus = request.args.get("risc_fiscal_nivel", "") or None
+            if ciclu_propus == firm["ciclu_facturare"]:
+                cost_vechi, cost_nou = _compara_cost_plan(
+                    firm,
+                    int(reconcilieri_propuse) if reconcilieri_propuse.isdigit()
+                    else firm["reconcilieri_lunare_estimate"],
+                    risc_fiscal_propus)
+                alegere_timing = {
+                    "ciclu": ciclu_propus,
+                    "reconcilieri_estimate": reconcilieri_propuse,
+                    "risc_fiscal_nivel": risc_fiscal_propus or "",
+                    "cost_vechi": cost_vechi, "cost_nou": cost_nou,
+                    "diferenta": _suma_cu_tva(round(cost_nou - cost_vechi, 2)),
+                }
         return render_template(
             "alege_plan.html", user=user, firm=firm,
             preturi=pdb.get_preturi(conn)[firm["tip"]],
@@ -1217,6 +1276,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             cost_lunar_extra=cost_lunar_extra,
             preturi_risc_fiscal=pdb.get_preturi_module(conn),
             rapoarte_risc_fiscal_folosite=rapoarte_risc_fiscal_folosite,
+            schimbare_programata=schimbare_programata,
+            plata_diferenta_activa=plata_diferenta_activa,
+            alegere_timing=alegere_timing,
             zile_trial=zile_trial, suma_neta_curenta=suma_neta_curenta,
             suma_curenta=suma_curenta, suma_tva_curenta=suma_tva_curenta,
             cota_tva=pdb.get_cota_tva(conn), plati=plati, facturi=facturi,
@@ -1283,9 +1345,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "alege_plan", eroare="Alege intai un ciclu de facturare."))
         if CONTRACTE_ACTIVE:
-            contract_curent = conn.execute(
-                "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
-                (active_firm_id,)).fetchone()
+            contract_curent = _contract_curent(active_firm_id)
             if (contract_curent is None
                     or contract_curent["stare"] != pdb.CONTRACT_STARE_SEMNAT
                     or contract_curent["ciclu_facturare"] != firm["ciclu_facturare"]):
@@ -1293,6 +1353,16 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                     "vezi_contract",
                     eroare="Trebuie sa semnezi contractul de prestari servicii "
                           "inainte de a trimite o cerere de plata."))
+        plata_diferenta_activa = conn.execute(
+            "SELECT 1 FROM payments WHERE firm_id=? AND tip=? AND stare IN (?,?) "
+            "LIMIT 1",
+            (active_firm_id, pdb.PLATA_TIP_DIFERENTA_UPGRADE,
+             pdb.PLATA_IN_ASTEPTARE, pdb.PLATA_IN_PROCESARE)).fetchone()
+        if plata_diferenta_activa:
+            return redirect(url_for(
+                "alege_plan",
+                eroare="Ai o schimbare de plan in asteptare de plata - "
+                      "finalizeaz-o intai."))
         suma = _suma_cu_tva(_calculeaza_suma_plata(firm, firm["ciclu_facturare"]))
         recurent = bool(request.form.get("recurent"))
         # TODO integrare FGO: aici ar trebui creata factura+link de plata
@@ -1313,11 +1383,332 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             mesaj="Cererea de plata a fost inregistrata - va fi procesata "
                  "in curand."))
 
+    def _poate_cere_schimbare_plan(firm_id: int) -> "str | None":
+        """None daca firma poate cere acum o schimbare de plan, altfel
+        mesajul de eroare de afisat. O firma nu poate suprapune doua fluxuri
+        de schimbare/plata - la fel ca blocajul deja existent pe contractul
+        nesemnat in creeaza_cerere_plata."""
+        contract = _contract_curent(firm_id)
+        if contract is None or contract["stare"] != pdb.CONTRACT_STARE_SEMNAT:
+            return ("Trebuie sa semnezi contractul de prestari servicii "
+                    "inainte de a schimba planul.")
+        schimbare_activa = conn.execute(
+            "SELECT 1 FROM plan_schimbari_programate WHERE firm_id=? AND "
+            "stare=? LIMIT 1",
+            (firm_id, pdb.PLAN_SCHIMBARE_STARE_IN_ASTEPTARE)).fetchone()
+        if schimbare_activa:
+            return ("Ai deja o schimbare de plan programata - anuleaz-o "
+                    "intai daca vrei alta.")
+        plata_activa = conn.execute(
+            "SELECT 1 FROM payments WHERE firm_id=? AND tip=? AND "
+            "stare IN (?,?) LIMIT 1",
+            (firm_id, pdb.PLATA_TIP_DIFERENTA_UPGRADE,
+             pdb.PLATA_IN_ASTEPTARE, pdb.PLATA_IN_PROCESARE)).fetchone()
+        if plata_activa:
+            return ("Ai deja o schimbare de plan in asteptare de plata - "
+                    "finalizeaz-o intai.")
+        return None
+
+    @app.post("/panou/plan/schimbare")
+    def schimba_plan():
+        """Schimbarea self-service a abonamentului (dupa alegerea initiala
+        din salveaza_plan) - genereaza automat un contract nou si, pentru
+        upgrade, lasa firma sa aleaga intre a plati imediat doar diferenta
+        de pret sau a programa schimbarea la finalul perioadei curente.
+        Downgrade-urile si schimbarile de ciclu intra mereu programat, la
+        finalul perioadei deja platite - niciodata imediat, ca sa nu existe
+        vreodata un ramburs de calculat."""
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (active_firm_id,)).fetchone()
+        # Fara contracte active pe acest server, sau firma inca nu a ales
+        # niciun ciclu (prima alegere) - se comporta identic cu fluxul vechi,
+        # fara nicio logica de contract/timing.
+        if not CONTRACTE_ACTIVE or not firm["ciclu_facturare"]:
+            return salveaza_plan()
+        eroare_blocaj = _poate_cere_schimbare_plan(active_firm_id)
+        if eroare_blocaj:
+            return redirect(url_for("alege_plan", eroare=eroare_blocaj))
+        ciclu = request.form.get("ciclu", "")
+        if ciclu not in pdb.CICLURI_FACTURARE:
+            return redirect(url_for(
+                "alege_plan", eroare="Alege un ciclu de facturare valid."))
+        reconcilieri_estimate_nou = firm["reconcilieri_lunare_estimate"]
+        if (firm["tip"] == pdb.FIRM_TIP_DIRECT
+                and "reconcilieri_estimate" in request.form):
+            reconcilieri_estimate_nou, eroare_estimare = _parse_reconcilieri_estimate(
+                request.form, firm["tip"])
+            if eroare_estimare:
+                return redirect(url_for("alege_plan", eroare=eroare_estimare))
+        risc_fiscal_nivel_nou = request.form.get("risc_fiscal_nivel", "").strip() or None
+        if (risc_fiscal_nivel_nou is not None
+                and risc_fiscal_nivel_nou not in pdb.RISC_FISCAL_NIVELURI):
+            return redirect(url_for(
+                "alege_plan", eroare="Nivel invalid pentru modulul Risc Fiscal."))
+
+        ciclu_schimbat = ciclu != firm["ciclu_facturare"]
+        if (not ciclu_schimbat
+                and reconcilieri_estimate_nou == firm["reconcilieri_lunare_estimate"]
+                and risc_fiscal_nivel_nou == firm["risc_fiscal_nivel"]):
+            return redirect(url_for(
+                "alege_plan", mesaj="Nu ai schimbat nimic fata de planul curent."))
+
+        are_plata_validata = conn.execute(
+            "SELECT 1 FROM payments WHERE firm_id=? AND tip=? AND stare=? "
+            "LIMIT 1",
+            (active_firm_id, pdb.PLATA_TIP_ABONAMENT, pdb.PLATA_VALIDATA)
+        ).fetchone() is not None
+        if not are_plata_validata:
+            # Firma nu a platit inca niciodata - update direct, ca la prima
+            # alegere de plan (contractul se creeaza abia la prima plata
+            # reala, prin fluxul deja existent).
+            conn.execute(
+                "UPDATE firms SET ciclu_facturare=?, "
+                "reconcilieri_lunare_estimate=?, risc_fiscal_nivel=? WHERE id=?",
+                (ciclu, reconcilieri_estimate_nou, risc_fiscal_nivel_nou,
+                 active_firm_id))
+            conn.commit()
+            audit.log(firm_conn(active_firm_id), user["username"],
+                      "plan.schimbare_directa")
+            return redirect(url_for("alege_plan", mesaj="Planul a fost actualizat."))
+
+        cost_vechi, cost_nou = _compara_cost_plan(
+            firm, reconcilieri_estimate_nou, risc_fiscal_nivel_nou)
+        este_upgrade = not ciclu_schimbat and cost_nou > cost_vechi
+
+        if este_upgrade:
+            timing = request.form.get("timing", "")
+            if timing not in ("imediat", "programat"):
+                return redirect(url_for(
+                    "alege_plan", alegere_timing="1", ciclu=ciclu,
+                    reconcilieri_estimate=reconcilieri_estimate_nou or "",
+                    risc_fiscal_nivel=risc_fiscal_nivel_nou or ""))
+            if timing == "imediat":
+                try:
+                    contract_id = _genereaza_si_trimite_contract_automat(
+                        firm, ciclu, cost_nou)
+                except contract_mod.ContractError as e:
+                    return redirect(url_for("alege_plan", eroare=str(e)))
+                except esemneaza.EsemneazaError as e:
+                    return redirect(url_for(
+                        "alege_plan",
+                        eroare=f"Nu am putut trimite contractul spre semnare: {e}"))
+                diferenta = _suma_cu_tva(round(cost_nou - cost_vechi, 2))
+                dbcompat.insert_id(
+                    conn,
+                    "INSERT INTO payments(firm_id, ciclu_facturare, suma, "
+                    "stare, creat_la, tip, reconcilieri_lunare_estimate_nou, "
+                    "risc_fiscal_nivel_nou, contract_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (active_firm_id, ciclu, diferenta, pdb.PLATA_IN_ASTEPTARE,
+                     datetime.now(timezone.utc).isoformat(),
+                     pdb.PLATA_TIP_DIFERENTA_UPGRADE, reconcilieri_estimate_nou,
+                     risc_fiscal_nivel_nou, contract_id))
+                conn.commit()
+                audit.log(firm_conn(active_firm_id), user["username"],
+                          "plan.schimbare_imediata_cerere")
+                return redirect(url_for(
+                    "alege_plan",
+                    mesaj="Contractul a fost trimis spre semnare - dupa "
+                         "semnare, plateste diferenta afisata mai jos."))
+            # timing == "programat": firma a ales explicit sa astepte
+            # finalul perioadei curente, desi era eligibila pentru imediat -
+            # cade in ramura comuna de mai jos.
+
+        # Downgrade, schimbare de ciclu, sau upgrade cu timing=programat -
+        # mereu programat la finalul perioadei deja platite (sau imediat
+        # daca firma nu are inca o data de referinta - vezi migrarea
+        # firms.abonament_activ_pana).
+        tip_schimbare = (pdb.PLAN_SCHIMBARE_TIP_UPGRADE if cost_nou >= cost_vechi
+                         else pdb.PLAN_SCHIMBARE_TIP_DOWNGRADE)
+        aplica_la = firm["abonament_activ_pana"] or datetime.now(timezone.utc).isoformat()
+        dbcompat.insert_id(
+            conn,
+            "INSERT INTO plan_schimbari_programate(firm_id, "
+            "ciclu_facturare_nou, reconcilieri_lunare_estimate_nou, "
+            "risc_fiscal_nivel_nou, tip, aplica_la, solicitat_de, creat_la) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (active_firm_id, ciclu, reconcilieri_estimate_nou,
+             risc_fiscal_nivel_nou, tip_schimbare, aplica_la, user["username"],
+             datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        audit.log(firm_conn(active_firm_id), user["username"],
+                  "plan.schimbare_programata")
+        return redirect(url_for(
+            "alege_plan", mesaj="Schimbarea de plan a fost programata."))
+
+    @app.post("/panou/plan/schimbare/anuleaza")
+    def anuleaza_schimbare_plan():
+        user = current_user()
+        active_firm_id = session.get("active_firm_id")
+        if (user is None or user["is_master"]
+                or _role_in_firm(user["id"], active_firm_id) != "admin"):
+            return redirect(url_for("login"))
+
+        schimbare = conn.execute(
+            "SELECT * FROM plan_schimbari_programate WHERE firm_id=? AND "
+            "stare=?", (active_firm_id, pdb.PLAN_SCHIMBARE_STARE_IN_ASTEPTARE)
+        ).fetchone()
+        if schimbare is not None:
+            # Nimic altceva de anulat - contractul se genereaza abia la
+            # aplicare (vezi portal/plan_schimbari.py), deci nu exista inca
+            # niciun rand contracts/payments legat de aceasta schimbare.
+            conn.execute(
+                "UPDATE plan_schimbari_programate SET stare=?, anulata_la=?, "
+                "anulata_de=? WHERE id=?",
+                (pdb.PLAN_SCHIMBARE_STARE_ANULATA,
+                 datetime.now(timezone.utc).isoformat(), user["username"],
+                 schimbare["id"]))
+            conn.commit()
+            audit.log(firm_conn(active_firm_id), user["username"],
+                      "plan.schimbare_programata_anulata")
+            return redirect(url_for(
+                "alege_plan", mesaj="Schimbarea programata a fost anulata."))
+
+        plata = conn.execute(
+            "SELECT * FROM payments WHERE firm_id=? AND tip=? AND stare=? "
+            "ORDER BY id DESC LIMIT 1",
+            (active_firm_id, pdb.PLATA_TIP_DIFERENTA_UPGRADE,
+             pdb.PLATA_IN_ASTEPTARE)).fetchone()
+        if plata is None:
+            return redirect(url_for(
+                "alege_plan", eroare="Nu ai nicio schimbare de plan de anulat."))
+        contract = conn.execute(
+            "SELECT * FROM contracts WHERE id=?", (plata["contract_id"],)
+        ).fetchone()
+        if contract is not None and contract["stare"] == pdb.CONTRACT_STARE_SEMNAT:
+            # Race: contractul a fost semnat intre timp - nu mai anulam
+            # nimic self-service, ca sa nu lasam plata/contractul intr-o
+            # stare inconsistenta cu ce a semnat deja firma.
+            return redirect(url_for(
+                "alege_plan",
+                eroare="Contractul a fost deja semnat - contacteaza suportul "
+                      "daca vrei sa renunti la aceasta schimbare."))
+        if contract is not None and contract["esemneaza_request_id"]:
+            try:
+                esemneaza.cancel_sign_request(
+                    ESEMNEAZA_API_KEY, contract["esemneaza_request_id"])
+            except esemneaza.EsemneazaError:
+                pass  # best-effort - nu blocam anularea locala
+            conn.execute("UPDATE contracts SET stare=? WHERE id=?",
+                        (pdb.CONTRACT_STARE_ANULAT, contract["id"]))
+        conn.execute("UPDATE payments SET stare=? WHERE id=?",
+                    (pdb.PLATA_ANULATA, plata["id"]))
+        conn.commit()
+        audit.log(firm_conn(active_firm_id), user["username"],
+                  "plan.schimbare_imediata_anulata")
+        return redirect(url_for(
+            "alege_plan", mesaj="Cererea de schimbare a fost anulata."))
+
     # ---------- contract de prestari servicii ----------
     def _contract_curent(firm_id: int):
+        """Ultimul contract al firmei, excluzand cele anulate (generate
+        automat pentru un upgrade imediat, dar anulate inainte de semnare -
+        vezi CONTRACT_STARE_ANULAT). Fara asta, un contract anulat ar
+        ramane gresit "curentul" firmei si ar bloca orice plata noua."""
         return conn.execute(
-            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
-            (firm_id,)).fetchone()
+            "SELECT * FROM contracts WHERE firm_id=? AND stare != ? "
+            "ORDER BY id DESC LIMIT 1",
+            (firm_id, pdb.CONTRACT_STARE_ANULAT)).fetchone()
+
+    def _creeaza_si_trimite_contract(firm, denumire: str, adresa: str,
+                                     ciclu: str, suma: float) -> int:
+        """Creeaza un rand `contracts` (stare=in_asteptare) si il trimite la
+        eSemneaza spre semnare (furnizorul + adminul firmei, in aceasta
+        ordine - sign_in_order=True). Daca eSemneaza esueaza, sterge randul
+        (numarul de contract n-a fost inca comunicat extern) si propaga
+        eroarea - apelantul decide mesajul de eroare. Extras din fluxul
+        manual de master (trimite_contract_master), reutilizat acum si
+        pentru generarea automata la schimbarea self-service de plan
+        (_genereaza_si_trimite_contract_automat)."""
+        admin = conn.execute(
+            "SELECT u.email FROM user_firms uf JOIN users u ON u.id = uf.user_id "
+            "WHERE uf.firm_id=? AND uf.role='admin' AND u.email IS NOT NULL "
+            "LIMIT 1", (firm["id"],)).fetchone()
+        if admin is None or not admin["email"]:
+            raise contract_mod.ContractError(
+                "Adminul firmei nu are o adresa de email inregistrata.")
+        numar = contract_mod.next_contract_number(conn)
+        acum = datetime.now(timezone.utc).isoformat()
+        contract_id = dbcompat.insert_id(
+            conn,
+            "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
+            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
+            "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
+            (firm["id"], numar, ciclu, suma, denumire, firm["cui"], adresa,
+             pdb.CONTRACT_STARE_IN_ASTEPTARE, acum))
+        conn.commit()
+        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
+                                (contract_id,)).fetchone()
+        continut = contract_mod.genereaza_text_din_rand(contract)
+        pdf_bytes = contract_mod.genereaza_pdf(continut, tag_semnatura_esemneaza=True)
+        try:
+            file_name = esemneaza.upload_document(
+                ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{numar}.pdf")
+            rezultat = esemneaza.create_sign_request(
+                ESEMNEAZA_API_KEY, file_name,
+                recipients=[
+                    {"email": invoicing.FURNIZOR["email"], "name": invoicing.FURNIZOR["nume"],
+                     "options": ["one_click_sign"]},
+                    {"email": admin["email"], "name": firm["name"],
+                     "options": ["one_click_sign"]},
+                ],
+                sender_name="e-TVA Reconciliere", extract_tags=True,
+                sign_in_order=True,
+                subject=f"Contract nr. {numar} - {denumire}",
+                message="Aveți de semnat un contract pentru serviciile de "
+                       "acces la platforma e-TVA Reconciliere, oferite de "
+                       "platforma mea administrată de către VML.")
+        except esemneaza.EsemneazaError:
+            conn.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
+            conn.commit()
+            raise
+        conn.execute(
+            "UPDATE contracts SET metoda_semnatura=?, esemneaza_request_id=? "
+            "WHERE id=?",
+            (pdb.CONTRACT_METODA_ESEMNEAZA, rezultat.get("id"), contract_id))
+        conn.commit()
+        return contract_id
+
+    def _genereaza_si_trimite_contract_automat(firm, ciclu: str, suma: float) -> int:
+        """Ca _creeaza_si_trimite_contract, dar pentru generarea AUTOMATA a
+        contractului la o schimbare self-service de plan (fara interventia
+        masterului) - denumirea/adresa beneficiarului se preiau live de la
+        ANAF, exact ca la fluxul manual de master. Propaga
+        contract_mod.ContractError (ANAF indisponibil/CUI invalid) si
+        esemneaza.EsemneazaError - apelantul decide mesajul."""
+        beneficiar = contract_mod.date_beneficiar(firm["cui"])
+        return _creeaza_si_trimite_contract(
+            firm, beneficiar["denumire"], beneficiar["adresa"], ciclu, suma)
+
+    def _aplica_schimbare_plan_programata(row) -> int:
+        """Injectata in portal/plan_schimbari.py::start_scheduler - aplica
+        efectiv o schimbare de plan programata (downgrade sau upgrade
+        programat) a carei aplica_la a trecut deja: genereaza si trimite
+        automat contractul nou ACUM (nu la momentul cererii - vezi
+        docstring-ul modulului), calculat la suma corecta pentru planul nou
+        la ciclul nou, apoi actualizeaza firms. Orice exceptie (ANAF/
+        eSemneaza indisponibile) se propaga - randul ramane 'in_asteptare',
+        reincercat la urmatorul tick al schedulerului, fara sa atinga firms."""
+        firm = conn.execute("SELECT * FROM firms WHERE id=?",
+                            (row["firm_id"],)).fetchone()
+        firm_propus = dict(firm)
+        firm_propus["reconcilieri_lunare_estimate"] = row["reconcilieri_lunare_estimate_nou"]
+        firm_propus["risc_fiscal_nivel"] = row["risc_fiscal_nivel_nou"]
+        suma_noua = _calculeaza_suma_plata(firm_propus, row["ciclu_facturare_nou"])
+        contract_id = _genereaza_si_trimite_contract_automat(
+            firm, row["ciclu_facturare_nou"], suma_noua)
+        conn.execute(
+            "UPDATE firms SET ciclu_facturare=?, reconcilieri_lunare_estimate=?, "
+            "risc_fiscal_nivel=? WHERE id=?",
+            (row["ciclu_facturare_nou"], row["reconcilieri_lunare_estimate_nou"],
+             row["risc_fiscal_nivel_nou"], firm["id"]))
+        conn.commit()
+        return contract_id
 
     def _finalizeaza_contract_esemneaza(contract, request_id: str):
         """Marcheaza contractul complet semnat (ambii semnatari), pastreaza
@@ -2797,6 +3188,64 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for("master_plati", eroare="Firma nu a fost gasita."))
         eticheta_ciclu = {"lunar": "lunar", "6luni": "la 6 luni",
                          "an": "anual"}[plata["ciclu_facturare"]]
+
+        if plata["tip"] == pdb.PLATA_TIP_DIFERENTA_UPGRADE:
+            # Plata partiala (doar diferenta de pret) pentru un upgrade
+            # imediat - contractul asociat trebuie sa fie deja semnat (firma
+            # a putut cere validarea manual sau prin alt canal inainte sa
+            # semneze efectiv - improbabil, dar suma implicata justifica
+            # verificarea explicita). O singura linie pe factura (nu se mai
+            # desparte risc fiscal separat, ca la abonamentul normal) - e
+            # doar o diferenta, nu un abonament complet.
+            contract = conn.execute(
+                "SELECT * FROM contracts WHERE id=?",
+                (plata["contract_id"],)).fetchone()
+            if contract is None or contract["stare"] != pdb.CONTRACT_STARE_SEMNAT:
+                _elibereaza_claim()
+                return redirect(url_for(
+                    "master_plati",
+                    eroare="Contractul asociat acestei plati nu este inca semnat."))
+            cota_tva = pdb.get_cota_tva(conn)
+            valoare_totala = plata["suma"]
+            valoare_neta = round(valoare_totala / (1 + cota_tva / 100), 2)
+            try:
+                invoice_id = _emite_factura_fgo(
+                    user, firma,
+                    f"Diferenta upgrade plan e-TVA Reconciliere - {eticheta_ciclu}",
+                    valoare_neta, cota_tva, judet)
+            except fgo.FgoError as e:
+                _elibereaza_claim()
+                return redirect(url_for("master_plati", eroare=f"FGO: {e}"))
+            except Exception:
+                _elibereaza_claim()
+                raise
+            acum = datetime.now(timezone.utc)
+            conn.execute(
+                "UPDATE payments SET stare=?, validat_de=?, validat_la=?, "
+                "invoice_id=? WHERE id=?",
+                (pdb.PLATA_VALIDATA, user["username"], acum.isoformat(),
+                 invoice_id, plata_id))
+            # Aplica imediat noul plan - asta e chiar motivul pentru care
+            # firma a ales sa plateasca diferenta acum, in loc sa astepte
+            # finalul perioadei curente. Nu se atinge abonament_activ_pana -
+            # perioada deja platita ramane neschimbata, firma nu a platit un
+            # ciclu nou intreg, doar diferenta de pret pe ce mai ramane din
+            # cel curent.
+            conn.execute(
+                "UPDATE firms SET arhivata_la=NULL, "
+                "reconcilieri_lunare_estimate=?, risc_fiscal_nivel=? "
+                "WHERE id=?",
+                (plata["reconcilieri_lunare_estimate_nou"],
+                 plata["risc_fiscal_nivel_nou"], firma["id"]))
+            conn.commit()
+            _log_master_action(
+                user, "plata.validare_diferenta_upgrade",
+                f"{firma['name']} - {_suma_scurta(valoare_totala)} RON -> "
+                f"factura #{invoice_id}")
+            return redirect(url_for(
+                "master_plati",
+                mesaj="Incasarea a fost validata si factura a fost emisa."))
+
         # payments.suma e deja suma cu TVA inclus (vezi _suma_cu_tva) - cea
         # chiar ceruta/incasata de la client - asa ca aici desprindem
         # baza/TVA din ea, nu mai adaugam TVA peste, ca sa nu-l numaram de
@@ -2860,6 +3309,19 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # UPDATE-ul e un no-op sigur daca firma nu era arhivata.
         conn.execute(
             "UPDATE firms SET arhivata_la=NULL WHERE id=?", (firma["id"],))
+        if plata["tip"] == pdb.PLATA_TIP_ABONAMENT:
+            # Extinde perioada platita - de la oricare e mai tarziu intre
+            # "acum" si perioada deja platita (un renew facut inainte de
+            # expirare adauga la finalul celei vechi, nu de la azi). Nu se
+            # atinge la plata unei diferente de upgrade (tip=diferenta_upgrade,
+            # vezi ramura dedicata mai jos) - acolo firma plateste doar
+            # diferenta de pret, nu un ciclu nou intreg.
+            baza = firma["abonament_activ_pana"] or acum.isoformat()
+            if baza < acum.isoformat():
+                baza = acum.isoformat()
+            conn.execute(
+                "UPDATE firms SET abonament_activ_pana=? WHERE id=?",
+                (_adauga_ciclu(baza, plata["ciclu_facturare"]), firma["id"]))
         conn.commit()
         _log_master_action(
             user, "plata.validare",
@@ -2893,9 +3355,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         firm = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if firm is None:
             return redirect(url_for("master_contracte", eroare="Firma nu a fost gasita."))
-        ultimul = conn.execute(
-            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
-            (firm_id,)).fetchone()
+        ultimul = _contract_curent(firm_id)
         if (ultimul is not None and ultimul["stare"] == pdb.CONTRACT_STARE_IN_ASTEPTARE
                 and ultimul["esemneaza_request_id"]):
             return redirect(url_for(
@@ -2932,9 +3392,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         firm = conn.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if firm is None:
             return redirect(url_for("master_contracte", eroare="Firma nu a fost gasita."))
-        ultimul = conn.execute(
-            "SELECT * FROM contracts WHERE firm_id=? ORDER BY id DESC LIMIT 1",
-            (firm_id,)).fetchone()
+        ultimul = _contract_curent(firm_id)
         if (ultimul is not None and ultimul["stare"] == pdb.CONTRACT_STARE_IN_ASTEPTARE
                 and ultimul["esemneaza_request_id"]):
             return redirect(url_for(
@@ -2952,56 +3410,18 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return redirect(url_for(
                 "creeaza_contract_master", firm_id=firm_id,
                 eroare="Completeaza toate campurile cu valori valide."))
-        admin = conn.execute(
-            "SELECT u.email FROM user_firms uf JOIN users u ON u.id = uf.user_id "
-            "WHERE uf.firm_id=? AND uf.role='admin' AND u.email IS NOT NULL "
-            "LIMIT 1", (firm_id,)).fetchone()
-        if admin is None or not admin["email"]:
-            return redirect(url_for(
-                "creeaza_contract_master", firm_id=firm_id,
-                eroare="Adminul firmei nu are o adresa de email inregistrata."))
-        numar = contract_mod.next_contract_number(conn)
-        acum = datetime.now(timezone.utc).isoformat()
-        contract_id = dbcompat.insert_id(
-            conn,
-            "INSERT INTO contracts(firm_id, numar, ciclu_facturare, suma, "
-            "beneficiar_denumire, beneficiar_cui, beneficiar_adresa, stare, "
-            "creat_la) VALUES(?,?,?,?,?,?,?,?,?)",
-            (firm_id, numar, ciclu, suma, denumire, firm["cui"], adresa,
-             pdb.CONTRACT_STARE_IN_ASTEPTARE, acum))
-        conn.commit()
-        contract = conn.execute("SELECT * FROM contracts WHERE id=?",
-                                (contract_id,)).fetchone()
-        continut = contract_mod.genereaza_text_din_rand(contract)
-        pdf_bytes = contract_mod.genereaza_pdf(continut, tag_semnatura_esemneaza=True)
         try:
-            file_name = esemneaza.upload_document(
-                ESEMNEAZA_API_KEY, pdf_bytes, f"contract-{numar}.pdf")
-            rezultat = esemneaza.create_sign_request(
-                ESEMNEAZA_API_KEY, file_name,
-                recipients=[
-                    {"email": invoicing.FURNIZOR["email"], "name": invoicing.FURNIZOR["nume"],
-                     "options": ["one_click_sign"]},
-                    {"email": admin["email"], "name": firm["name"],
-                     "options": ["one_click_sign"]},
-                ],
-                sender_name="e-TVA Reconciliere", extract_tags=True,
-                sign_in_order=True,
-                subject=f"Contract nr. {numar} - {denumire}",
-                message="Aveți de semnat un contract pentru serviciile de "
-                       "acces la platforma e-TVA Reconciliere, oferite de "
-                       "platforma mea administrată de către VML.")
+            contract_id = _creeaza_si_trimite_contract(
+                firm, denumire, adresa, ciclu, suma)
+        except contract_mod.ContractError as e:
+            return redirect(url_for(
+                "creeaza_contract_master", firm_id=firm_id, eroare=str(e)))
         except esemneaza.EsemneazaError as e:
-            conn.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
-            conn.commit()
             return redirect(url_for(
                 "creeaza_contract_master", firm_id=firm_id,
                 eroare=f"Nu am putut trimite contractul spre semnare: {e}"))
-        conn.execute(
-            "UPDATE contracts SET metoda_semnatura=?, esemneaza_request_id=? "
-            "WHERE id=?",
-            (pdb.CONTRACT_METODA_ESEMNEAZA, rezultat.get("id"), contract_id))
-        conn.commit()
+        numar = conn.execute("SELECT numar FROM contracts WHERE id=?",
+                             (contract_id,)).fetchone()["numar"]
         _log_master_action(
             user, "contract.trimis_spre_semnare",
             f"{firm['name']} - contract nr. {numar}")
@@ -4090,6 +4510,10 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         # doar din portal.db (spre deosebire de remind_mod, care lucreaza
         # exclusiv pe firms).
         risk_alerts_mod.start_scheduler(conn, firm_conn, db_lock, _trimite_email)
+
+    if enable_plan_schimbari_scheduler and scheduler_lock_fd:
+        plan_schimbari_mod.start_scheduler(
+            conn, _aplica_schimbare_plan_programata, db_lock)
 
     app.portal_conn = conn  # exposed for tests/seeding
     app.firm_conn = firm_conn  # exposed for tests/seeding

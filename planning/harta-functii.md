@@ -32,6 +32,32 @@ introduc manual pana exista un export D406 real de validare. In aceeasi
 lucrare, fixat si un bug pre-existent de izolare intre firme 'directe' pe
 Postgres in `etva/cod_mappings.py` (index unic global fara `firm_id`).
 
+Actualizat manual 2026-08-10: adaugata **schimbarea self-service a
+abonamentului** (upgrade/downgrade pentru pachetul de reconcilieri si
+nivelul Risc Fiscal, cu contract nou generat automat). Rute noi in
+`portal/app.py`: `POST /panou/plan/schimbare` (`schimba_plan` - inlocuieste
+`salveaza_plan` ca tinta a formularului din `alege_plan.html`, dar cade
+pe `salveaza_plan` cand `CONTRACTE_ACTIVE` e oprit sau firma n-are inca
+`ciclu_facturare`) si `POST /panou/plan/schimbare/anuleaza`
+(`anuleaza_schimbare_plan`). Un upgrade cu abonament deja platit lasa firma
+sa aleaga: `timing=imediat` (plateste doar diferenta de pret, contract nou
+generat si trimis la eSemneaza pe loc) sau `timing=programat` (fara plata
+acum, intra in vigoare la finalul perioadei curente). Downgrade-urile si
+schimbarile de ciclu sunt intotdeauna `programat`. Tabela noua
+`plan_schimbari_programate` (o schimbare `in_asteptare` per firma, impus
+prin index unic partial) e procesata de al patrulea scheduler de fundal,
+`portal/plan_schimbari.py` (§7) - genereaza contractul abia la aplicare, nu
+la cerere, ca sa nu blocheze gresit platile pe planul vechi inca valabil
+(vezi docstring-ul modulului pentru motivul complet). Schema noua:
+`firms.abonament_activ_pana` (perioada platita curent, NULL pentru firmele
+existente - fara migrare retroactiva), `payments.tip`
+(`abonament`/`diferenta_upgrade` + 3 coloane insotitoare) si
+`contracts.stare='anulat'` (contract auto-generat dar anulat inainte de
+semnare). `valideaza_plata` (`/master/plati/<id>/valideaza`) ramifica acum
+pe `payments.tip`. Vezi planul complet in istoricul de conversatie pentru
+deciziile de design (in special momentul generarii contractului pentru
+schimbarile programate).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
