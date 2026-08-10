@@ -4409,6 +4409,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         client_id, eroare = _client_id_din_request(ident)
         if eroare:
             return jsonify({"errors": [eroare]}), 400
+        fc = firm_conn(ident["firm_id"])
         perioada = request.form.get("perioada", "").strip()
         if not perioada:
             return jsonify({"errors": ["Completeaza perioada (ex: 2026-T2)."]}), 400
@@ -4454,6 +4455,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         obligatii_restante = None
         obligatii_crescute = None
         flaguri_sectiune_b = {}
+        info_anaf_live = None
         if nivel == pdb.RISC_FISCAL_COMPLET:
             brut_decl = (request.form.get("declaratii_nedepuse") or "").strip()
             if brut_decl:
@@ -4466,13 +4468,31 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             for cheie in risc_fiscal.FLAGURI_SECTIUNE_B:
                 flaguri_sectiune_b[cheie] = request.form.get(f"flag_{cheie}") == "on"
 
+            # "Declarat inactiv fiscal" e un fapt pe care ANAF il confirma
+            # direct, live, la fiecare evaluare - nu are sens sa ne bazam pe
+            # o bifa uitata/gresita cand putem intreba chiar sursa oficiala.
+            # Daca serviciul ANAF nu raspunde acum, ramanem pe bifa manuala
+            # (nu blocam evaluarea pentru o problema de retea trecatoare).
+            if client_id is not None:
+                rand_client = fc.execute(
+                    "SELECT cui FROM clients WHERE id=?", (client_id,)).fetchone()
+                cui_verificare = rand_client["cui"] if rand_client else None
+            else:
+                cui_verificare = ident["firm_cui"]
+            if cui_verificare:
+                try:
+                    info_anaf_live = anaf_cui.verify_cui(cui_verificare)
+                except (ValueError, anaf_cui.AnafCuiError):
+                    info_anaf_live = None
+            if info_anaf_live and "inactiv_fiscal" in info_anaf_live:
+                flaguri_sectiune_b["declarat_inactiv"] = info_anaf_live["inactiv_fiscal"]
+
         scor = risc_fiscal.calculeaza_scor(
             nivel, date_financiare, declaratii_nedepuse=declaratii_nedepuse,
             obligatii_restante=obligatii_restante,
             obligatii_crescute=obligatii_crescute,
             flaguri_sectiune_b=flaguri_sectiune_b)
 
-        fc = firm_conn(ident["firm_id"])
         rid = risc_fiscal_store.salveaza_perioada(
             fc, client_id, perioada, sursa_date, date_financiare, scor,
             declaratii_nedepuse=declaratii_nedepuse,
@@ -4482,6 +4502,14 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             saft_xml_original=saft_xml_original, username=ident["username"])
         audit.log(fc, ident["username"], "risc_fiscal.evaluare",
                   "risc_fiscal_perioade", str(rid))
+        verificari_automate = None
+        if nivel == pdb.RISC_FISCAL_COMPLET:
+            verificari_automate = {
+                "declarat_inactiv_verificat_live": bool(
+                    info_anaf_live and "inactiv_fiscal" in info_anaf_live),
+                "data_inregistrare_anaf": (info_anaf_live or {}).get("data_inregistrare") or None,
+                "sold_imobilizari_saft": date_financiare.get("sold_imobilizari"),
+            }
         return jsonify({
             "id": rid, "scor_afisat": scor.scor_afisat,
             "clasificare": scor.clasificare,
@@ -4489,7 +4517,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "scor_max_posibil": scor.scor_max_posibil,
             "override_sectiune_b": scor.override_sectiune_b,
             "flaguri_risc_mare_active": scor.flaguri_risc_mare_active,
-            "detaliu": scor.detaliu})
+            "detaliu": scor.detaliu,
+            "verificari_automate": verificari_automate})
 
     @app.get("/api/risc-fiscal/istoric")
     @require()

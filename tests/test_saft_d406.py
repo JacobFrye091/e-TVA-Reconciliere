@@ -56,6 +56,18 @@ def test_extrage_date_financiare_mapare_pe_clase_de_conturi():
     assert date["rezultat_net"] == 3000.0          # contul 121
 
 
+def test_extrage_date_financiare_sold_imobilizari_din_clasa_2():
+    """sold_imobilizari (clasa 2 - imobilizari) e un reper suplimentar,
+    separat de indicatorii de scor, folosit de portal/app.py sa avertizeze
+    contabilul daca bifa manuala 'Lipsa bunurilor imobile sau mobile'
+    (Sectiunea B) contrazice balanta reala."""
+    xml = _fisier(
+        _cont("2131", "Activ", closing_debit=15000) +
+        _cont("2813", "Activ", closing_credit=4000))  # amortizare cumulata
+    date = saft_d406.extrage_date_financiare(xml)
+    assert date["sold_imobilizari"] == 11000.0  # 15000 - 4000
+
+
 def test_extrage_date_financiare_cont_519_credit_bancar_intra_in_datorii():
     """Contul 519 (credite bancare pe termen scurt) trebuie inclus in
     datorii chiar daca e clasa 5 (exclusa altfel in intregime, ca sa nu

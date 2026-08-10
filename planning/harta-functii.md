@@ -140,6 +140,31 @@ SQLite). Verificate si doua surse noi trimise de Andrei (pagina oficiala ANAF
 `Anexanr2laproceduraFisaindicriscfiscal.htm` si un articol cabinetexpert.ro) -
 ambele confirma metodologia deja implementata, fara nicio schimbare de cod.
 
+Actualizat manual 2026-08-10 (a patra interventie): la cererea explicita a
+lui Andrei ("nu ne incredem total in bifa utilizatorului"), 3 din cele 9
+bife ale Sectiunii B nu mai depind exclusiv de contabil:
+- **declarat_inactiv**: verificat LIVE la ANAF la fiecare evaluare
+  (`anaf_cui.verify_cui(cui).inactiv_fiscal`, camp deja adaugat in Pasul 2
+  dar niciodata cablat pana acum in ruta de risc fiscal) - rezultatul live
+  suprascrie bifa manuala, indiferent in ce sens greseste ea. Daca ANAF nu
+  raspunde (retea/timeout), se pastreaza bifa manuala (fallback, nu
+  blocheaza evaluarea). `anaf_cui.verify_cui` a primit un camp nou,
+  `data_inregistrare` (din `date_generale.data_inregistrare`, confirmat
+  live din documentatia oficiala `doc_WS_V9.txt`).
+- **entitate_noua**: nu se suprascrie (nu exista un prag numeric oficial de
+  "nou infiintat" in Anexa 2 pe care sa-l aplicam automat), dar data reala
+  de inregistrare de la ANAF e trimisa in raspuns (`verificari_automate.
+  data_inregistrare_anaf`) si afisata contabilului ca reper dupa calcul.
+- **fara_bunuri**: la fel, asistiv nu automat - `etva/importer/saft_d406.py`
+  extrage acum si `sold_imobilizari` (suma soldurilor clasa 2, separat de
+  cei 4 indicatori de scor), trimis ca `verificari_automate.
+  sold_imobilizari_saft`; daca balanta arata imobilizari si totusi bifa e
+  bifata, UI-ul afiseaza un avertisment explicit dupa salvare.
+Celelalte 3 (cazier_fiscal, insolventa/BPI, fara_salariati/REVISAL) NU au
+un API public oficial identificat - automatizarea lor ar insemna scraping
+pe portaluri fara API documentat (fragil, zona gri ToS) - lasate deliberat
+manuale, decizie in asteptare de la Andrei daca merita totusi investitia.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.

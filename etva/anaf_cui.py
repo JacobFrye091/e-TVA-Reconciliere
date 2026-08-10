@@ -50,16 +50,23 @@ def _fetch(numeric_cui: int, day: str) -> dict:
 def verify_cui(cui: str, on_date: datetime.date | None = None) -> dict | None:
     """Look up a CUI/CIF at ANAF.
 
-    Returns a dict with cui/denumire/adresa/stare_inregistrare/scpTVA if
-    ANAF has a record of it, or None if it does not exist there. Raises
-    AnafCuiError if the service itself couldn't be reached — that's a
-    connectivity problem, not proof the CUI is invalid.
+    Returns a dict with cui/denumire/adresa/stare_inregistrare/scpTVA/
+    data_inregistrare if ANAF has a record of it, or None if it does not
+    exist there. Raises AnafCuiError if the service itself couldn't be
+    reached — that's a connectivity problem, not proof the CUI is invalid.
 
-    Three extra keys are added ONLY when ANAF's response actually includes
-    that section (v9 response structure confirmed against the official
-    doc_WS_V9.txt, not guessed) - a CUI with no inactivation/TVA-la-incasare
-    history simply won't carry those objects at all, and callers that
-    ignore them see the exact same dict as before this was added:
+    data_inregistrare (din date_generale.data_inregistrare, confirmat in
+    doc_WS_V9.txt) e data la care firma a fost inregistrata la ANAF -
+    foloseste-o ca reper (nu ca sursa unica) pentru semnalul Sectiunea B
+    "entitate nou infiintata": e data alocarii CIF, nu neaparat data
+    infiintarii la ONRC, desi pentru majoritatea firmelor cele doua sunt la
+    cateva zile distanta.
+
+    Trei chei extra sunt adaugate DOAR cand raspunsul ANAF chiar contine acea
+    sectiune (structura raspunsului v9 confirmata din doc_WS_V9.txt oficial,
+    nu ghicita) - un CUI fara istoric de inactivare/TVA-la-incasare pur si
+    simplu nu are acele obiecte deloc, iar apelantii care le ignora vad
+    exact acelasi dict ca inainte sa fie adaugate:
     - inactiv_fiscal/data_inactivare/data_reactivare, from "stare_inactiv"
       (feeds the Risc Fiscal module's Sectiunea B "declarat inactiv" flag -
       see etva/risc_fiscal.py).
@@ -82,6 +89,7 @@ def verify_cui(cui: str, on_date: datetime.date | None = None) -> dict | None:
         "adresa": general.get("adresa", ""),
         "stare_inregistrare": general.get("stare_inregistrare", ""),
         "scpTVA": scop_tva.get("scpTVA", False),
+        "data_inregistrare": general.get("data_inregistrare", ""),
     }
     stare_inactiv = found[0].get("stare_inactiv")
     if stare_inactiv:

@@ -72,10 +72,18 @@ def _numar(cont: ET.Element, ns: dict, tag: str) -> float:
 
 def extrage_date_financiare(xml_bytes: bytes) -> dict:
     """Extrage {"capitaluri_proprii", "datorii_totale", "cifra_afaceri",
-    "rezultat_net"} direct din MasterFiles/GeneralLedgerAccounts a unui
-    export SAF-T D406. Ridica SaftD406Error daca fisierul nu e XML valid
-    sau nu are sectiunea asteptata - apelantul decide mesajul de eroare
-    afisat contabilului."""
+    "rezultat_net", "sold_imobilizari"} direct din
+    MasterFiles/GeneralLedgerAccounts a unui export SAF-T D406. Ridica
+    SaftD406Error daca fisierul nu e XML valid sau nu are sectiunea
+    asteptata - apelantul decide mesajul de eroare afisat contabilului.
+
+    sold_imobilizari (suma soldurilor debitoare nete ale conturilor din
+    clasa 2 - imobilizari corporale/necorporale/in curs) NU alimenteaza
+    niciun indicator de scor - e doar un reper folosit de portal/app.py ca
+    sa nu se bazeze orbeste pe bifa manuala "Lipsa bunurilor imobile sau
+    mobile" (Sectiunea B): daca balanta arata clar imobilizari inregistrate,
+    contabilul e avertizat sa reverifice bifa, in loc sa fie doar crezut pe
+    cuvant."""
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError as e:
@@ -91,6 +99,7 @@ def extrage_date_financiare(xml_bytes: bytes) -> dict:
     datorii_totale = 0.0
     cifra_afaceri = 0.0
     rezultat_net = 0.0
+    sold_imobilizari = 0.0
 
     for cont in conturi:
         id_el = cont.find("n:AccountID", ns)
@@ -112,10 +121,13 @@ def extrage_date_financiare(xml_bytes: bytes) -> dict:
             datorii_totale += sold_creditor_net
         if cont_id.startswith("70"):
             cifra_afaceri += credit
+        if clasa == "2":
+            sold_imobilizari += -sold_creditor_net
 
     return {
         "capitaluri_proprii": round(capitaluri_proprii, 2),
         "datorii_totale": round(datorii_totale, 2),
         "cifra_afaceri": round(cifra_afaceri, 2),
         "rezultat_net": round(rezultat_net, 2),
+        "sold_imobilizari": round(sold_imobilizari, 2),
     }

@@ -28,7 +28,7 @@ def test_verify_cui_found(monkeypatch):
     assert info == {"cui": 12345678, "denumire": "EXEMPLU TEST SRL",
                     "adresa": "STR. EXEMPLU NR. 1",
                     "stare_inregistrare": "INREGISTRAT din data 01.01.2020",
-                    "scpTVA": True}
+                    "scpTVA": True, "data_inregistrare": ""}
 
 
 def test_verify_cui_not_found(monkeypatch):
@@ -96,6 +96,23 @@ def test_verify_cui_parses_status_ro_efactura(monkeypatch):
     })
     info = anaf_cui.verify_cui("12345678")
     assert info["inregistrat_ro_efactura"] is True
+
+
+def test_verify_cui_parses_data_inregistrare(monkeypatch):
+    """data_inregistrare (din date_generale, confirmat live in doc_WS_V9.txt
+    oficial) - folosita ca reper pentru semnalul Sectiunea B "entitate nou
+    infiintata" din modulul Risc Fiscal, vezi portal/app.py."""
+    monkeypatch.setattr(anaf_cui, "_fetch", lambda cui, day: {
+        "found": [{
+            "date_generale": {"cui": cui, "denumire": "FIRMA NOUA SRL",
+                              "adresa": "STR. NOUA", "stare_inregistrare": "INREGISTRAT",
+                              "data_inregistrare": "2026-01-15"},
+            "inregistrare_scop_Tva": {"scpTVA": True},
+        }],
+        "notFound": [],
+    })
+    info = anaf_cui.verify_cui("12345678")
+    assert info["data_inregistrare"] == "2026-01-15"
 
 
 def test_verify_cui_omits_optional_keys_when_absent_from_response(monkeypatch):

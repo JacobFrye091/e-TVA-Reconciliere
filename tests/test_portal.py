@@ -6127,6 +6127,104 @@ def test_salveaza_risc_fiscal_nivel_complet_cu_flag_sectiune_b(app):
     assert body["scor_afisat"] == 100
 
 
+def test_salveaza_risc_fiscal_declarat_inactiv_verificat_live_indiferent_de_bifa(app, monkeypatch):
+    """"Declarat inactiv fiscal" nu se bazeaza doar pe bifa contabilului -
+    se verifica live la ANAF la fiecare evaluare. Aici bifa e lasata
+    NEBIFATA, dar ANAF (mockuit) spune ca firma E inactiva - rezultatul
+    trebuie sa reflecte adevarul de la ANAF, nu bifa uitata."""
+    from etva import anaf_cui
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: {
+        "cui": anaf_cui.normalize_cui(cui), "denumire": "Firma Test",
+        "adresa": "", "stare_inregistrare": "INREGISTRAT", "scpTVA": True,
+        "inactiv_fiscal": True, "data_inactivare": "2026-01-10",
+        "data_reactivare": None, "data_inregistrare": "2020-03-01"})
+    c = _client_risc_fiscal_platit(app, "RO9041", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is True
+    assert "Declarat inactiv fiscal" in body["flaguri_risc_mare_active"]
+    assert body["verificari_automate"]["declarat_inactiv_verificat_live"] is True
+    assert body["verificari_automate"]["data_inregistrare_anaf"] == "2020-03-01"
+
+
+def test_salveaza_risc_fiscal_declarat_inactiv_corecteaza_bifa_gresita(app, monkeypatch):
+    """Invers: contabilul bifeaza gresit "declarat inactiv", dar ANAF
+    (mockuit) spune ca firma NU e inactiva - verificarea live trebuie sa
+    corecteze bifa, nu s-o creada orbeste."""
+    from etva import anaf_cui
+    monkeypatch.setattr(anaf_cui, "verify_cui", lambda cui, **kw: {
+        "cui": anaf_cui.normalize_cui(cui), "denumire": "Firma Test",
+        "adresa": "", "stare_inregistrare": "INREGISTRAT", "scpTVA": True,
+        "inactiv_fiscal": False})
+    c = _client_risc_fiscal_platit(app, "RO9042", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0", "flag_declarat_inactiv": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is False
+    assert body["flaguri_risc_mare_active"] == []
+    assert body["verificari_automate"]["declarat_inactiv_verificat_live"] is True
+
+
+def test_salveaza_risc_fiscal_pastreaza_bifa_daca_anaf_nu_raspunde(app, monkeypatch):
+    """Daca serviciul ANAF nu poate fi contactat chiar acum, evaluarea nu se
+    blocheaza - ramane pe bifa manuala a contabilului (fallback), nu
+    presupune nimic despre starea reala a firmei."""
+    from etva import anaf_cui
+
+    # Inregistrarea/contractul folosesc si ele anaf_cui.verify_cui (mockuit
+    # implicit sa reuseasca, vezi _mock_anaf_cui) - mock-ul care esueaza se
+    # aplica DOAR dupa ce firma exista deja, ca sa nu strice inregistrarea
+    # insasi, ci doar apelul live facut de evaluarea de risc fiscal.
+    c = _client_risc_fiscal_platit(app, "RO9043", tip="direct", risc_fiscal_nivel="complet")
+
+    def _boom(cui, **kw):
+        raise anaf_cui.AnafCuiError("boom")
+    monkeypatch.setattr(anaf_cui, "verify_cui", _boom)
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10",
+        "declaratii_nedepuse": "0", "flag_declarat_inactiv": "on"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["override_sectiune_b"] is True
+    assert "Declarat inactiv fiscal" in body["flaguri_risc_mare_active"]
+    assert body["verificari_automate"]["declarat_inactiv_verificat_live"] is False
+
+
+def test_salveaza_risc_fiscal_verificari_automate_include_sold_imobilizari_saft(app):
+    """sold_imobilizari_saft (clasa 2 din balanta SAF-T) e trimis in
+    raspuns ca reper - portal-ul nu forteaza bifa "Lipsa bunurilor", doar
+    ii da contabilului o cifra reala cu care sa se confrunte."""
+    import io
+    ns = "mfp:anaf:dgti:d406:declaratie:v1"
+    continut_saft = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<nsSAFT:AuditFile xmlns:nsSAFT="{ns}">'
+        f'<nsSAFT:Header/>'
+        f'<nsSAFT:MasterFiles><nsSAFT:GeneralLedgerAccounts>'
+        f'<nsSAFT:Account><nsSAFT:AccountID>2131</nsSAFT:AccountID>'
+        f'<nsSAFT:AccountType>Activ</nsSAFT:AccountType>'
+        f'<nsSAFT:ClosingDebitBalance>15000</nsSAFT:ClosingDebitBalance></nsSAFT:Account>'
+        f'</nsSAFT:GeneralLedgerAccounts></nsSAFT:MasterFiles>'
+        f'</nsSAFT:AuditFile>'
+    ).encode("utf-8")
+    c = _client_risc_fiscal_platit(app, "RO9044", tip="direct", risc_fiscal_nivel="complet")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "sursa_date": "saft_d406",
+        "declaratii_nedepuse": "0",
+        "saft_file": (io.BytesIO(continut_saft), "export-d406.xml")})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["verificari_automate"]["sold_imobilizari_saft"] == 15000.0
+
+
 def test_salveaza_risc_fiscal_firma_contabilitate_cere_client_id(app):
     c = _client_risc_fiscal_platit(app, "RO905", tip="contabilitate", risc_fiscal_nivel="simplu")
     r = c.post("/api/risc-fiscal/perioada",
