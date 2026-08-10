@@ -1500,6 +1500,47 @@ def test_facturi_endpoint_marks_matching_invoice_as_candidat(app):
     assert by_doc["F2"]["candidat"] is True
 
 
+def test_facturi_endpoint_marks_three_invoices_as_candidat(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+
+    # Patru facturi pe linia 9 (cota 21%) - ANAF are precompletata doar
+    # prima (100/21, care NU face parte din delta - a fost aleasa deliberat
+    # diferita ca suma de trio, ca sa nu se potriveasca ea insasi din
+    # intamplare); celelalte trei (20/4.2, 25/5.25, 45/9.45) insumeaza
+    # exact deltul (90/18.9) - toate trei trebuie marcate candidat, prima nu.
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         100.0, 21.0, _eticheta_model("vanzari", "9")),
+        ("2026-06-02", "F2", "Client B", "RO222",
+         20.0, 4.2, _eticheta_model("vanzari", "9")),
+        ("2026-06-03", "F3", "Client C", "RO333",
+         25.0, 5.25, _eticheta_model("vanzari", "9")),
+        ("2026-06-04", "F4", "Client D", "RO444",
+         45.0, 9.45, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 100.0, "RD9_TVA": 21.0}).encode()
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    rid = r.get_json()["id"]
+
+    facturi = c.get(f"/api/reconciliations/{rid}/facturi?linie=9").get_json()
+    by_doc = {f["invoice_no"]: f for f in facturi}
+    assert by_doc["F1"]["candidat"] is False
+    assert by_doc["F2"]["candidat"] is True
+    assert by_doc["F3"]["candidat"] is True
+    assert by_doc["F4"]["candidat"] is True
+
+
 def test_facturi_endpoint_resolves_derived_line(app):
     import json as _json
     c = app.test_client()

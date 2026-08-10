@@ -111,3 +111,72 @@ def test_find_candidate_requires_both_base_and_vat_close():
     # Baza se potriveste exact, dar TVA nu - nu trebuie marcata.
     rows = [fact(60.5, 99.0)]
     assert find_candidate_invoices(rows, 60.5, 0.0) == set()
+
+
+def test_find_candidate_triple_match():
+    # Nicio factura singura si nicio pereche nu explica diferenta, dar
+    # un triplet da - trebuie gasit si evidentiat.
+    rows = [fact(1000.0, 210.0), fact(20.0, 4.2), fact(30.0, 6.3), fact(50.0, 10.5)]
+    assert find_candidate_invoices(rows, 100.0, 21.0) == {1, 2, 3}
+
+
+def test_find_candidate_quadruple_match():
+    rows = [fact(10.0, 2.1), fact(20.0, 4.2), fact(30.0, 6.3), fact(40.0, 8.4),
+            fact(9999.0, 2099.79)]
+    assert find_candidate_invoices(rows, 100.0, 21.0) == {0, 1, 2, 3}
+
+
+def test_find_candidate_stops_at_max_size_four():
+    # 5 facturi mici care insumeaza exact diferenta - dincolo de
+    # _CANDIDATE_MAX_SIZE (4) cautarea se opreste intentionat, userul
+    # ramane cu mesajul de fallback in loc de o evidentiere pe 5 randuri.
+    rows = [fact(10.0, 2.1), fact(20.0, 4.2), fact(30.0, 6.3), fact(40.0, 8.4),
+            fact(50.0, 10.5)]
+    assert find_candidate_invoices(rows, 150.0, 31.5) == set()
+
+
+def test_find_candidate_prefers_smallest_subset():
+    # O factura singura explica exact diferenta - desi o alta pereche
+    # din randuri insumeaza acelasi total, castiga subsetul mai mic.
+    rows = [fact(100.0, 21.0), fact(40.0, 8.4), fact(60.0, 12.6)]
+    assert find_candidate_invoices(rows, 100.0, 21.0) == {0}
+
+
+def test_find_candidate_ambiguous_subsets_return_nothing():
+    # Doua perechi diferite (sume diferite de facturi) insumeaza amandoua
+    # diferenta - nu exista temei sa alegem una, deci nu se marcheaza nimic.
+    rows = [fact(40.0, 8.4), fact(60.0, 12.6), fact(30.0, 6.3), fact(70.0, 14.7)]
+    assert find_candidate_invoices(rows, 100.0, 21.0) == set()
+
+
+def test_find_candidate_identical_invoices_pick_deterministically():
+    # Trei facturi identice - oricare doua explica diferenta, dar nu e o
+    # ambiguitate reala (aceeasi suma), deci se alege prima pereche.
+    rows = [fact(50.0, 10.5), fact(50.0, 10.5), fact(50.0, 10.5)]
+    assert find_candidate_invoices(rows, 100.0, 21.0) == {0, 1}
+
+
+def test_find_candidate_ignores_zero_amount_rows():
+    # Un rand 0.00/0.00 nu trebuie sa apara in rezultat si nu trebuie sa
+    # impiedice gasirea perechii reale.
+    rows = [fact(0.0, 0.0), fact(30.0, 6.0), fact(30.5, 6.1)]
+    assert find_candidate_invoices(rows, 60.5, 12.1) == {1, 2}
+
+
+def test_find_candidate_single_found_beyond_pair_cap():
+    # Chiar cu ~400 de facturi (peste plafonul de combinatii pentru
+    # perechi), o singura factura care se potriveste exact tot trebuie
+    # gasita - cautarea pe k=1 nu depinde de plafon in acest interval.
+    filler = [fact(1000.0 + i, 210.0 + i * 0.21) for i in range(400)]
+    rows = filler + [fact(77.5, 16.28)]
+    assert find_candidate_invoices(rows, 77.5, 16.28) == {400}
+
+
+def test_find_candidate_triple_not_searched_beyond_combo_budget():
+    # Aceleasi ~400 facturi de umplutura, plus 3 facturi mici care
+    # insumeaza exact diferenta - dar la n~400 chiar si nivelul perechilor
+    # depaseste plafonul de combinatii, deci cautarea se opreste inainte
+    # sa ajunga la triplete. Cade pe fallback, nu ramane blocata.
+    filler = [fact(1000.0 + i, 210.0 + i * 0.21) for i in range(400)]
+    rows = filler + [fact(10.0, 2.1), fact(20.0, 4.2), fact(30.0, 6.3)]
+    assert find_candidate_invoices(rows, 60.0, 12.6) == set()

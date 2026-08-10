@@ -3,6 +3,8 @@ D300-line-level matching against ANAF's real precompleted e-TVA totals
 (which carry no invoice detail at all — see etva/importer/anaf_p300.py)."""
 from dataclasses import dataclass, field
 from collections import defaultdict
+from itertools import combinations
+from math import comb
 
 from etva.d300 import D300_LINES
 
@@ -101,22 +103,70 @@ def reconcile_d300(company_lines: dict, anaf_lines: dict,
     return result
 
 
+# Marimea maxima a subsetului cautat. Dincolo de atat, la numarul tipic de
+# facturi pe o linie (10-30), potrivirile intamplatoare devin suficient de
+# frecvente incat o evidentiere "cu incredere" ar induce in eroare mai des
+# decat ar ajuta - fallback-ul onest existent ("poate fi vorba de mai multe
+# facturi mici adunate") ramane raspunsul corect peste acest prag.
+_CANDIDATE_MAX_SIZE = 4
+
+# Numarul maxim de combinatii C(n, k) incercate la un nivel k, ales sa
+# reproduca exact plafonul vechi n<=300 pentru perechi: C(300, 2) = 44_850,
+# C(301, 2) = 45_150.
+_CANDIDATE_COMBO_BUDGET = 45_000
+
+
 def find_candidate_invoices(rows: list, delta_base: float, delta_vat: float,
                             tolerance: float = 0.05) -> set:
     """Indices into `rows` (each with "base"/"vat") whose sum most likely
-    explains a line-level difference - a single invoice first, then a
-    pair, matched tightly on BOTH base and vat (not base alone) to avoid
-    flagging an innocent invoice by coincidence: on real data, a company's
-    largest invoice on a line can land within a leu or two of the delta
-    purely by chance while having nothing to do with the actual cause
-    (e.g. ANAF's e-Factura source simply not covering several unrelated
-    invoices) - requiring both values to agree filters that out.
+    explains a line-level difference - the smallest subset (a single
+    invoice, then a pair, then a triple... up to _CANDIDATE_MAX_SIZE)
+    matched tightly on BOTH base and vat (not base alone) to avoid
+    flagging innocent invoices by coincidence: on real data, a company's
+    invoices can land within a leu or two of the delta purely by chance
+    while having nothing to do with the actual cause (e.g. ANAF's
+    e-Factura source simply not covering several unrelated invoices) -
+    requiring both values to agree filters that out.
 
     Only searches when delta_base > 0 (the company's total exceeds
-    ANAF's, i.e. an extra/duplicate/misclassified invoice could plausibly
+    ANAF's, i.e. extra/duplicate/misclassified invoices could plausibly
     be among these) - for delta_base <= 0 (ANAF has more than the
     company) the cause isn't among the company's own listed invoices at
     all, so nothing is searched.
+
+    Searches increasing subset sizes and stops at the first size with a
+    match: a single invoice is a more plausible, more actionable
+    explanation than a triple that happens to sum the same, so a smaller
+    match always wins over a larger one regardless of what larger sizes
+    might also contain. Sizes beyond _CANDIDATE_MAX_SIZE are never
+    tried - past that size, coincidental matches at typical per-line
+    invoice counts become common enough to be untrustworthy (see the
+    module's test suite / design notes for the measured rates), so the
+    wider fallback message a caller shows on an empty result is more
+    honest than a confident-looking highlight of many rows.
+
+    Within the winning size, more than one DISTINCT set of amounts
+    matching the delta is genuine ambiguity - there's no basis to prefer
+    one over another, so nothing is flagged (same philosophy as a
+    near-but-not-quite match never being flagged). The exception is
+    interchangeable invoices, e.g. three identical 500-lei invoices where
+    any two explain a 1000-lei delta: those aren't different
+    explanations, so the first one found (in the same order `rows`
+    arrived in) is returned instead of discarding a genuine match over a
+    coincidence of identical amounts.
+
+    Rows whose base and vat are both ~0 are excluded before searching -
+    otherwise such a row could tag onto a match to fabricate a second,
+    differently-valued "match" purely by coincidence and trip the
+    ambiguity rule above for no real reason.
+
+    Search cost is bounded by a combination budget rather than a raw row
+    count: size k is only tried while C(n, k) <= _CANDIDATE_COMBO_BUDGET,
+    where n excludes the zero rows above. Once a size is too expensive,
+    larger sizes are skipped too (C(n, k) only grows from there for
+    k <= n/2) and whatever was already found - possibly nothing - is
+    returned silently, the same way a very long line silently fell back
+    to single-only matching before this function searched beyond pairs.
 
     An empty result means "no confident match found", not "no invoices
     exist" - callers should say so explicitly rather than falling back to
@@ -124,15 +174,25 @@ def find_candidate_invoices(rows: list, delta_base: float, delta_vat: float,
     """
     if delta_base <= 0:
         return set()
-    n = len(rows)
-    for i in range(n):
-        if (abs(rows[i]["base"] - delta_base) <= tolerance
-                and abs(rows[i]["vat"] - delta_vat) <= tolerance):
-            return {i}
-    if n <= 300:  # O(n^2) below - safety cap for lines with very many invoices
-        for i in range(n):
-            for j in range(i + 1, n):
-                if (abs(rows[i]["base"] + rows[j]["base"] - delta_base) <= tolerance
-                        and abs(rows[i]["vat"] + rows[j]["vat"] - delta_vat) <= tolerance):
-                    return {i, j}
+    idx = [i for i, r in enumerate(rows)
+           if abs(r["base"]) > tolerance or abs(r["vat"]) > tolerance]
+    n = len(idx)
+    for k in range(1, _CANDIDATE_MAX_SIZE + 1):
+        if k > n or comb(n, k) > _CANDIDATE_COMBO_BUDGET:
+            break
+        best, best_sig = None, None
+        for combo in combinations(idx, k):
+            base_sum = sum(rows[i]["base"] for i in combo)
+            if abs(base_sum - delta_base) > tolerance:
+                continue
+            vat_sum = sum(rows[i]["vat"] for i in combo)
+            if abs(vat_sum - delta_vat) > tolerance:
+                continue
+            sig = tuple(sorted((rows[i]["base"], rows[i]["vat"]) for i in combo))
+            if best is None:
+                best, best_sig = combo, sig
+            elif sig != best_sig:
+                return set()
+        if best is not None:
+            return set(best)
     return set()

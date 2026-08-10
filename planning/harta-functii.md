@@ -195,6 +195,26 @@ oficiale ANAF/ONRC/BPI:
   al portal.onrc.ro pentru sectiunea BPI gratuita "persoane publicate in
   BPI" - nu e un API documentat, deci integrarea va fi pe baza de sesiune).
 
+Actualizat manual 2026-08-10 (a sasea interventie): la cererea lui Andrei
+("daca sunt mai multe facturi diferenta... ar trebui subliniate liniile cu
+facturile problema"), `find_candidate_invoices` (`etva/engine.py`, §5b)
+cauta acum subseturi de pana la 4 facturi (nu doar 1 sau o pereche) a caror
+suma explica o diferenta pe linie D300, marcand `candidat=true` pe toate
+facturile din subsetul gasit - endpoint-ul (`get_reconciliation_facturi`,
+§3q) si frontend-ul (`toggleFacturiLinie`, §2d/tabelul de diferente) erau
+deja generice pentru orice numar de facturi candidat, deci n-au avut nevoie
+de nicio schimbare. Cautarea se opreste la primul subset de marime minima
+gasit (o factura bate o pereche, o pereche bate un triplet etc.) si refuza
+sa marcheze ceva daca la aceeasi marime exista doua subseturi cu sume
+diferite care se potrivesc amandoua (ambiguitate reala) - cu exceptia
+facturilor cu sume identice intre ele, unde nu e ambiguitate, ci aceeasi
+explicatie. Plafonat la marimea 4 (dincolo de atat, potrivirile
+intamplatoare devin prea frecvente la un numar tipic de facturi pe linie)
+si la un buget de combinatii `C(n,k) <= 45_000` per marime (reproduce exact
+vechiul plafon `n<=300` de la perechi) - peste plafon, cautarea se opreste
+silentios la marimea anterioara, la fel ca inainte cand o linie avea peste
+300 de facturi.
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
@@ -954,6 +974,11 @@ reconcile(company_rows, anaf_rows) -> _totals(company_rows), _totals(anaf_rows)
 reconcile_d300(company_lines, anaf_lines) -> diff(...) intern (foloseste
   D300_LINES din d300.py) - NU foloseste _totals/_group (specifice
   invoice-level)
+
+find_candidate_invoices(rows, delta_base, delta_vat) -> nu apeleaza
+  altceva - cauta cel mai mic subset de facturi (marime 1-4) a caror suma
+  explica deltul unei linii, apelata din get_reconciliation_facturi (§3q)
+  ca sa marcheze randurile "candidat" in raspunsul "Vezi facturile"
 ```
 
 ### 5c. etva/advisor.py (sugestii)
