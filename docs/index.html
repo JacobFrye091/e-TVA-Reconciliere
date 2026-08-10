@@ -138,6 +138,11 @@
         <h3>Raport Excel gata de predat</h3>
         <p>Sumar pe categorii cu valorile sugerate plus lista completă a diferențelor,
           cu evidențiere color — de atașat direct la dosarul lunii.</p></div>
+      <div class="f-card reveal"><div class="f-ic">⚠</div>
+        <h3>Evaluare de risc fiscal <span class="pret-bine">MODUL PREMIUM</span></h3>
+        <p>Scor de risc 0–100 per client, calculat pe indicatorii publici din
+          metodologia oficială ANAF (Anexa 2), cu raport PDF, istoric pe perioade
+          și alertă automată pe email la risc ridicat.</p></div>
     </div>
   </div>
 </section>
@@ -190,7 +195,9 @@
 </section>
 
 <!-- Preturile de mai jos sunt fixe (nu template Jinja - index.html e servit static),
-    trebuie tinute manual in sincron cu portal/db.py::PRETURI_LUNARE_RON. -->
+    trebuie tinute manual in sincron cu nomenclatoarele din /master/nomenclator
+    (planuri_facturare, pachete_reconcilieri si nomenclator_module - modulul
+    Risc Fiscal). -->
 <section id="preturi" class="desc">
   <div class="inv reveal">
     <h2>Prețuri simple, fără costuri ascunse</h2>
@@ -218,6 +225,16 @@
           <div class="pret-rand"><span class="et">Lunar</span><span class="val">25 RON<small>/client/lună</small></span></div>
           <div class="pret-rand"><span class="et">La 6 luni</span><span class="val">20 RON<small>/client/lună</small></span></div>
           <div class="pret-rand"><span class="et">Anual <span class="pret-bine">CEL MAI BUN PREȚ</span></span><span class="val">15 RON<small>/client/lună</small></span></div>
+        </div>
+      </div>
+      <div class="pret-card reveal" style="grid-column: 1 / -1">
+        <h3>Modul Risc Fiscal <span class="pret-bine">OPȚIONAL</span></h3>
+        <p>Se adaugă peste abonamentul de bază, per firmă — evaluezi riscul fiscal
+          al clienților tăi pe indicatorii publici din metodologia oficială ANAF
+          (Anexa 2), cu raport PDF și alertă automată pe email.</p>
+        <div class="pret-cicluri">
+          <div class="pret-rand"><span class="et">Simplu <small style="font-weight:400">— indicatori automați</small></span><span class="val">100 RON<small>/lună</small></span></div>
+          <div class="pret-rand"><span class="et">Complet <small style="font-weight:400">— plus vector fiscal manual</small></span><span class="val">200 RON<small>/lună</small></span></div>
         </div>
       </div>
     </div>
@@ -262,6 +279,18 @@
         <p>Dacă ești firmă de contabilitate, prețul se calculează per client
           gestionat, nu per firmă — vezi secțiunea Prețuri de mai sus. Poți
           comuta rapid între toți clienții tăi dintr-un singur cont.</p>
+      </details>
+      <details class="faq-item reveal">
+        <summary>Ce este modulul de Risc Fiscal și cum se calculează scorul?</summary>
+        <p>E un add-on opțional care evaluează riscul fiscal al unui client pe
+          indicatorii publici din Anexa 2 ANAF ("Fișa indicatorilor de risc
+          fiscal", folosită de ANAF la soluționarea cererilor de rambursare
+          TVA). Scorul afișat (0–100) e propriu, normalizat pe indicatorii pe
+          care îi poți calcula efectiv din datele disponibile — nu e
+          echivalent cu o clasificare oficială ANAF, iar raportul PDF explică
+          exact ce indicatori intră în calcul. Nivelul „Simplu" folosește doar
+          indicatori automați; „Complet" adaugă și un vector fiscal completat
+          manual de contabil, pentru un scor mai precis.</p>
       </details>
       <details class="faq-item reveal">
         <summary>Pot să șterg contul și datele oricând?</summary>

@@ -60,6 +60,7 @@
       <li><a href="#export">Raportul Excel de predat</a></li>
       <li><a href="#audit">Jurnalul de audit</a></li>
       <li><a href="#securitate">Securitatea datelor</a></li>
+      <li><a href="#risc-fiscal">Modul premium: evaluare de risc fiscal</a></li>
       <li><a href="#incepe">Cum începi</a></li>
       <li><a href="#limitari">Ce nu face încă</a></li>
     </ol>
@@ -315,6 +316,51 @@
   </div>
 </section>
 
+<section class="alt" id="risc-fiscal">
+  <div class="inv">
+    <div class="sec-cap reveal">
+      <div class="tag">12</div>
+      <h2>Modul premium: evaluare de risc fiscal</h2>
+      <p>Un add-on opțional, activat per firmă, pentru firmele de contabilitate
+        care vor să știe din timp care dintre clienții lor prezintă risc fiscal
+        ridicat.</p>
+    </div>
+    <div class="corp reveal">
+      <p><b>Metodologia nu e inventată intern</b> — scorul se calculează pe
+        indicatorii publici din Anexa 2 ANAF ("Fișa indicatorilor de risc
+        fiscal"), parte din procedura oficială de stabilire a gradului de risc
+        fiscal la rambursările de TVA. Sunt indicatori financiari verificabili:
+        capitaluri proprii, grad de îndatorare, profitabilitate — plus, la
+        nivelul „Complet", declarații fiscale nedepuse și obligații restante.</p>
+      <p>Scorul afișat (0–100) e <b>propriu</b>, calculat doar pe indicatorii pe
+        care platforma îi poate determina efectiv din datele disponibile — nu
+        e o clasificare oficială ANAF, iar raportul PDF explică transparent
+        exact ce s-a inclus în calcul, ca să nu existe nicio ambiguitate în
+        fața unui client sau a unui control.</p>
+      <ul>
+        <li><b>Nivel Simplu</b> — indicatori calculați automat din datele
+          financiare introduse și din verificarea CUI la ANAF (inclusiv
+          inactivitate fiscală, TVA la încasare).</li>
+        <li><b>Nivel Complet</b> — adaugă un vector fiscal completat manual de
+          contabil (declarații nedepuse, obligații restante) și semnalele de
+          risc major definite de ANAF (ex. firmă declarată inactivă, în
+          insolvență) — orice astfel de semnal duce automat scorul la risc
+          ridicat, indiferent de punctajul calculat.</li>
+        <li><b>Istoric pe perioade</b> — reevaluezi periodic același client și
+          urmărești cum evoluează scorul lui în timp.</li>
+        <li><b>Raport PDF</b> — descărcabil per evaluare, cu detalierea
+          indicatorilor și a punctajului, gata de atașat la dosarul clientului.</li>
+        <li><b>Alertă automată pe email</b> — dacă un client ajunge la risc
+          ridicat, adminul firmei e notificat automat, fără să trebuiască să
+          verifice manual fiecare client.</li>
+      </ul>
+      <p>Prețul modulului e per firmă (nu per client), în două niveluri — vezi
+        secțiunea <a href="index.html#preturi">Prețuri</a> de pe pagina
+        principală.</p>
+    </div>
+  </div>
+</section>
+
 <section class="desc" id="incepe">
   <div class="inv reveal">
     <h2>Cum începi</h2>
@@ -348,6 +394,9 @@
         <li>Nu are încă un procesator de plăți integrat (card bancar, plată automată online) —
           după cele 30 de zile gratuite alegi un ciclu de facturare, dar încasarea e confirmată
           manual de echipă, nu printr-o plată instantă în cont.</li>
+        <li>La modulul de risc fiscal, datele financiare (capitaluri proprii, datorii, cifră de
+          afaceri) se introduc încă manual — importul automat dintr-un fișier SAF-T (declarația
+          D406) e planificat, dar nu e disponibil momentan.</li>
       </ul>
     </div>
   </div>
