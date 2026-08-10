@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS risc_fiscal_perioade(
   obligatii_restante_manual INTEGER, obligatii_crescute_manual INTEGER,
   flaguri_sectiune_b TEXT, scor_total_indicatori INTEGER,
   scor_max_posibil INTEGER, scor_afisat INTEGER, clasificare TEXT,
-  scor_detaliu TEXT, creat_de TEXT NOT NULL, creat_la TEXT NOT NULL);
+  scor_detaliu TEXT, creat_de TEXT NOT NULL, creat_la TEXT NOT NULL,
+  saft_xml_original BLOB);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_risc_fiscal_perioade_client
   ON risc_fiscal_perioade(client_id, perioada) WHERE client_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_risc_fiscal_perioade_direct
@@ -153,8 +154,21 @@ def _migrate_add_clients_gdpr(conn) -> None:
     conn.commit()
 
 
+def _migrate_add_risc_fiscal_saft_xml(conn) -> None:
+    """Firm databases created before the SAF-T raw-upload option - adauga
+    coloana care pastreaza fisierul XML D406 incarcat de contabil, nefolosit
+    inca pentru extragere automata (vezi etva/risc_fiscal.py si planul
+    modulului) - doar salvat pentru cand parserul va exista."""
+    cols = {c["name"] for c in conn.execute("PRAGMA table_info(risc_fiscal_perioade)")}
+    if "saft_xml_original" in cols:
+        return
+    conn.execute("ALTER TABLE risc_fiscal_perioade ADD COLUMN saft_xml_original BLOB;")
+    conn.commit()
+
+
 def init_schema(conn) -> None:
     conn.executescript(_SCHEMA)
     _migrate_reconciliations_nullable_client(conn)
     _migrate_add_clients_gdpr(conn)
+    _migrate_add_risc_fiscal_saft_xml(conn)
     conn.commit()

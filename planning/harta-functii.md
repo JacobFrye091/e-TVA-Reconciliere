@@ -58,6 +58,24 @@ pe `payments.tip`. Vezi planul complet in istoricul de conversatie pentru
 deciziile de design (in special momentul generarii contractului pentru
 schimbarile programate).
 
+Actualizat manual 2026-08-10 (a doua interventie din aceeasi zi): modulul
+Risc Fiscal primeste optiunea "sursa date financiare" (SAF-T vs. manual) in
+formularul din `web/index.html` - alegerea SAF-T incarca fisierul D406 (XML)
+si il salveaza brut in `risc_fiscal_perioade.saft_xml_original` (coloana
+noua), FARA extragere automata inca (parserul ramane amanat - vezi nota din
+2026-08-09); indicatorii financiari 1-3 raman `None`/nescorati pana atunci.
+Validare minimala pe upload: elementul radacina trebuie sa fie `<AuditFile>`
+(confirmat din documentatia oficiala ANAF SAF-T). Cele 9 bife din Sectiunea
+B au acum tooltip-uri (`title=`) cu explicatii in limbaj natural. Fix
+important de acces: `current_identity()` (`portal/app.py`) nu mai considera
+`firms.risc_fiscal_nivel` suficient pentru acces la `/api/risc-fiscal/*` -
+cere si o plata `payments.tip='abonament'` deja `validata` de master (altfel
+o firma putea alege nivelul in trial si folosi modulul premium nelimitat,
+gratuit, fara sa fi platit vreodata). Zeci de teste din `tests/test_portal.py`
+au fost adaptate sa treaca printr-un ciclu complet de plata inainte de a
+apela rutele risc-fiscal (vezi helper-ul `_firma_cu_abonament_platit`/
+`_client_risc_fiscal_platit`).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.

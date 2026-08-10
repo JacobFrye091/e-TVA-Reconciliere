@@ -424,7 +424,12 @@ CREATE TABLE IF NOT EXISTS risc_fiscal_perioade(
   clasificare text,
   scor_detaliu text,
   creat_de text NOT NULL,
-  creat_la timestamptz NOT NULL);
+  creat_la timestamptz NOT NULL,
+  saft_xml_original bytea);
+-- Bazele create inainte de optiunea de incarcare bruta SAF-T se aduc la zi
+-- aici (no-op pe bazele deja corecte) - fisierul nu e inca folosit pentru
+-- extragere automata, doar salvat pentru cand parserul va exista.
+ALTER TABLE risc_fiscal_perioade ADD COLUMN IF NOT EXISTS saft_xml_original bytea;
 -- client_id e deja unic global (secventa comuna pe `clients`), deci ramura
 -- "client_id IS NOT NULL" e corecta si fara firm_id. Ramura "client_id IS
 -- NULL" (firma 'direct') INSA e scopata pe firm_id, exact ca la

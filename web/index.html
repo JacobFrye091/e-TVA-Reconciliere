@@ -179,6 +179,7 @@ tr.sever:hover td { background: #f7e8e6; }
 td.delta-neg { color: var(--danger); font-weight: 600; }
 td.delta-poz { color: var(--warn); font-weight: 600; }
 .gol { color: var(--muted); text-align: center; padding: 28px 22px !important; }
+.rf-hint { color: var(--muted); font-size: 12px; cursor: help; border-bottom: 1px dotted var(--muted); }
 
 /* ---------- Chips & ledger strip ---------- */
 .chip {
@@ -447,12 +448,35 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <div class="field" id="campRfClient" style="display:none">
         <label for="rfClient">Client</label><select id="rfClient" onchange="incarcaIstoricRiscFiscal()"></select>
       </div>
+      <div class="field">
+        <label>Sursa datelor financiare</label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:2px">
+          <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
+            <input type="radio" name="rfSursaDate" id="rfSursaManual" value="manual" checked
+                   onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Completare manuală</label>
+          <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
+            <input type="radio" name="rfSursaDate" id="rfSursaSaft" value="saft_d406"
+                   onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Import din fișier SAF-T (D406)</label>
+        </div>
+        <p class="sub" style="margin-top:4px">Recomandăm SAF-T pe termen lung — pregătim extragerea automată a
+          cifrelor direct din contabilitate, ca rezultatul să fie mai concret și mai aproape de realitate decât
+          din date tastate manual. Deocamdată însă, alegând SAF-T doar salvezi fișierul pentru mai târziu —
+          indicatorii financiari (1-3) se calculează în continuare numai din datele completate manual.</p>
+      </div>
       <div class="actiuni">
         <input id="rfPerioada" placeholder="Perioadă (ex: 2026-T2)" style="max-width:160px">
+      </div>
+      <div class="actiuni" id="rfManualFields">
         <input id="rfCapitaluriProprii" placeholder="Capitaluri proprii (RON)" type="number" step="0.01">
         <input id="rfDatoriiTotale" placeholder="Datorii totale (RON)" type="number" step="0.01">
         <input id="rfCifraAfaceri" placeholder="Cifra de afaceri (RON)" type="number" step="0.01">
         <input id="rfRezultatNet" placeholder="Rezultat net (RON)" type="number" step="0.01">
+      </div>
+      <div id="rfSaftUpload" style="display:none">
+        <input type="file" id="rfSaftFile" accept=".xml">
+        <p class="sub" style="margin-top:4px">Încarcă exportul SAF-T D406 (XML) generat din Saga, WinMentor sau alt
+          program de contabilitate. Deocamdată fișierul se salvează pentru evaluare ulterioară — extragerea
+          automată a cifrelor din el urmează, imediat ce validăm parserul pe fișiere reale.</p>
       </div>
       <div id="rfCompletFields" style="display:none">
         <p class="sub" style="margin-top:14px">Vector fiscal (nivel Complet)</p>
@@ -466,15 +490,24 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         <p class="sub" style="margin-top:10px">Semnale de risc fiscal mare (Secțiunea B, metodologie ANAF) —
           bifează doar dacă știi cu certitudine, altfel lasă nebifat:</p>
         <div id="rfFlaguriSectiuneB" style="display:flex;flex-direction:column;gap:4px">
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="entitate_noua" style="width:auto"> Entitate nou înființată</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_salariati" style="width:auto"> Absența salariaților</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_bunuri" style="width:auto"> Lipsa bunurilor imobile sau mobile</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="insolventa" style="width:auto"> Procedură de insolvență deschisă</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="evidenta_speciala" style="width:auto"> Înregistrare în evidență specială</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="declarat_inactiv" style="width:auto"> Declarat inactiv fiscal</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="raport_inspectie_risc_mare" style="width:auto"> Raport de risc fiscal mare de la inspecția fiscală</label>
-          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="comunicare_garda_financiara" style="width:auto"> Comunicare de risc fiscal mare de la Garda Financiară</label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal
+            <span class="rf-hint" title="Firma sau administratorii ei au sancțiuni fiscale definitive înscrise în cazierul fiscal. Se verifică gratuit pe portalul ANAF, la secțiunea cazier fiscal.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="entitate_noua" style="width:auto"> Entitate nou înființată
+            <span class="rf-hint" title="Firma e la început de drum, cu puțină vechime în spate. Te uiți pur și simplu la data înregistrării din certificatul ONRC.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_salariati" style="width:auto"> Absența salariaților
+            <span class="rf-hint" title="Firma nu are niciun angajat cu carte de muncă. Se vede din REVISAL sau din declarația 112, dar de obicei o știi direct.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_bunuri" style="width:auto"> Lipsa bunurilor imobile sau mobile
+            <span class="rf-hint" title="Firma nu deține clădiri, terenuri, utilaje sau alte active semnificative. Se vede în bilanț, la imobilizări.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="insolventa" style="width:auto"> Procedură de insolvență deschisă
+            <span class="rf-hint" title="Firma e în insolvență, reorganizare sau faliment. Se verifică public în Buletinul Procedurilor de Insolvență (BPI).">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="evidenta_speciala" style="width:auto"> Înregistrare în evidență specială
+            <span class="rf-hint" title="Firma e înscrisă într-un registru special de monitorizare al ANAF. E o informație internă — de obicei afli doar dacă ai primit o notificare oficială.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="declarat_inactiv" style="width:auto"> Declarat inactiv fiscal
+            <span class="rf-hint" title="ANAF a declarat firma inactivă, de obicei pentru că n-a depus declarații 6 luni la rând. Se verifică pe portalul ANAF, la Registrul contribuabililor inactivi.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="raport_inspectie_risc_mare" style="width:auto"> Raport de risc fiscal mare de la inspecția fiscală
+            <span class="rf-hint" title="O inspecție fiscală anterioară a clasificat direct firma drept risc fiscal mare, în raportul ei. Bifează doar dacă ai văzut chiar tu acel raport.">(?)</span></label>
+          <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="comunicare_garda_financiara" style="width:auto"> Comunicare de risc fiscal mare de la Garda Financiară
+            <span class="rf-hint" title="Direcția Antifraudă (fosta Gardă Financiară) a trimis o comunicare oficială de risc mare pe numele firmei. La fel, bifează doar dacă ai avut chiar tu această comunicare.">(?)</span></label>
         </div>
       </div>
       <button class="btn-lat" style="margin-top:14px" onclick="salveazaRiscFiscal()">Calculează și salvează</button>
@@ -507,6 +540,12 @@ function formatJurnal() {
 function comutaFormatJurnal() {
   document.getElementById('panouModel').style.display =
     formatJurnal() === 'model' ? '' : 'none';
+}
+
+function comutaSursaDateRiscFiscal() {
+  const saft = document.getElementById('rfSursaSaft').checked;
+  document.getElementById('rfManualFields').style.display = saft ? 'none' : '';
+  document.getElementById('rfSaftUpload').style.display = saft ? '' : 'none';
 }
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
@@ -878,13 +917,23 @@ async function salveazaRiscFiscal() {
     rfEroare.textContent = 'Adaugă întâi un client.';
     return;
   }
-  const body = new URLSearchParams();
+  const sursaSaft = rfSursaSaft.checked;
+  const body = new FormData();
   if (campRfClient.style.display !== 'none') body.set('client_id', rfClient.value);
   body.set('perioada', rfPerioada.value.trim());
-  body.set('capitaluri_proprii', rfCapitaluriProprii.value);
-  body.set('datorii_totale', rfDatoriiTotale.value);
-  body.set('cifra_afaceri', rfCifraAfaceri.value);
-  body.set('rezultat_net', rfRezultatNet.value);
+  body.set('sursa_date', sursaSaft ? 'saft_d406' : 'manual');
+  if (sursaSaft) {
+    if (!rfSaftFile.files[0]) {
+      rfEroare.textContent = 'Încarcă fișierul SAF-T (D406) sau treci pe completare manuală.';
+      return;
+    }
+    body.set('saft_file', rfSaftFile.files[0]);
+  } else {
+    body.set('capitaluri_proprii', rfCapitaluriProprii.value);
+    body.set('datorii_totale', rfDatoriiTotale.value);
+    body.set('cifra_afaceri', rfCifraAfaceri.value);
+    body.set('rezultat_net', rfRezultatNet.value);
+  }
   if (rfCompletFields.style.display !== 'none') {
     body.set('declaratii_nedepuse', rfDeclaratiiNedepuse.value);
     if (rfObligatiiRestante.checked) body.set('obligatii_restante', 'on');

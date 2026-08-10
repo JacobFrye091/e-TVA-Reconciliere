@@ -465,11 +465,27 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             (user["id"], active_firm_id)).fetchone()
         if row is None:
             return None
+        risc_fiscal_nivel = row["risc_fiscal_nivel"]
+        if risc_fiscal_nivel:
+            # Firma poate ALEGE nivelul din /panou/plan oricand (inclusiv in
+            # trial, inainte de prima plata) - dar accesul efectiv la
+            # instrumentul platit se acorda doar dupa o plata de abonament
+            # chiar validata de master, nu doar dupa alegere. Fara aceasta
+            # verificare, un cont neplatit ar putea folosi modulul premium
+            # nelimitat cat timp nu e arhivat (arhivarea loveste doar firmele
+            # fara niciun ciclu_facturare ales - vezi trial_reminders.py).
+            are_plata_validata = conn.execute(
+                "SELECT 1 FROM payments WHERE firm_id=? AND tip=? AND stare=? "
+                "LIMIT 1",
+                (row["id"], pdb.PLATA_TIP_ABONAMENT, pdb.PLATA_VALIDATA)
+            ).fetchone()
+            if are_plata_validata is None:
+                risc_fiscal_nivel = None
         return {"username": user["username"], "role": row["role"],
                 "firm_id": row["id"], "firm_name": row["name"],
                 "firm_tip": row["tip"], "firm_cui": row["cui"],
                 "onboarding_completat": bool(user["onboarding_completat"]),
-                "risc_fiscal_nivel": row["risc_fiscal_nivel"],
+                "risc_fiscal_nivel": risc_fiscal_nivel,
                 "permissions": pdb.ROLE_PERMISSIONS[row["role"]]}
 
     @app.context_processor
@@ -4396,21 +4412,50 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         if not perioada:
             return jsonify({"errors": ["Completeaza perioada (ex: 2026-T2)."]}), 400
 
-        def _numar(camp):
-            bruta = (request.form.get(camp) or "").strip().replace(",", ".")
-            if not bruta:
-                return None
-            try:
-                return float(bruta)
-            except ValueError:
-                return None
+        sursa_date = request.form.get("sursa_date", "manual").strip() or "manual"
+        if sursa_date not in ("manual", "saft_d406"):
+            return jsonify({"errors": [
+                "Sursa datelor financiare trebuie sa fie SAF-T sau manuala."]}), 400
 
-        date_financiare = {
-            "capitaluri_proprii": _numar("capitaluri_proprii"),
-            "datorii_totale": _numar("datorii_totale"),
-            "cifra_afaceri": _numar("cifra_afaceri"),
-            "rezultat_net": _numar("rezultat_net"),
-        }
+        saft_xml_original = None
+        if sursa_date == "saft_d406":
+            fisier = request.files.get("saft_file")
+            if fisier is None or not fisier.filename:
+                return jsonify({"errors": [
+                    "Incarca fisierul SAF-T (D406) sau alege completarea "
+                    "manuala a datelor financiare."]}), 400
+            saft_xml_original = fisier.read()
+            # Verificare minimala, nu parsare: doar confirma ca fisierul
+            # pare intr-adevar un export SAF-T (element radacina <AuditFile>,
+            # conform documentatiei ANAF), ca sa nu salvam orice fisier
+            # incarcat din greseala drept "SAF-T". Extragerea automata a
+            # cifrelor din el ramane pentru cand parserul va exista (vezi
+            # planul modulului) - deocamdata fisierul se salveaza doar brut.
+            inceput = saft_xml_original[:4096].decode("utf-8", "ignore")
+            if not saft_xml_original or "<AuditFile" not in inceput:
+                return jsonify({"errors": [
+                    "Fisierul nu pare un export SAF-T (D406) valid - "
+                    "elementul radacina asteptat e <AuditFile>."]}), 400
+            date_financiare = {
+                "capitaluri_proprii": None, "datorii_totale": None,
+                "cifra_afaceri": None, "rezultat_net": None,
+            }
+        else:
+            def _numar(camp):
+                bruta = (request.form.get(camp) or "").strip().replace(",", ".")
+                if not bruta:
+                    return None
+                try:
+                    return float(bruta)
+                except ValueError:
+                    return None
+
+            date_financiare = {
+                "capitaluri_proprii": _numar("capitaluri_proprii"),
+                "datorii_totale": _numar("datorii_totale"),
+                "cifra_afaceri": _numar("cifra_afaceri"),
+                "rezultat_net": _numar("rezultat_net"),
+            }
         declaratii_nedepuse = None
         obligatii_restante = None
         obligatii_crescute = None
@@ -4435,11 +4480,12 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
 
         fc = firm_conn(ident["firm_id"])
         rid = risc_fiscal_store.salveaza_perioada(
-            fc, client_id, perioada, "manual", date_financiare, scor,
+            fc, client_id, perioada, sursa_date, date_financiare, scor,
             declaratii_nedepuse=declaratii_nedepuse,
             obligatii_restante=obligatii_restante,
             obligatii_crescute=obligatii_crescute,
-            flaguri_sectiune_b=flaguri_sectiune_b, username=ident["username"])
+            flaguri_sectiune_b=flaguri_sectiune_b,
+            saft_xml_original=saft_xml_original, username=ident["username"])
         audit.log(fc, ident["username"], "risc_fiscal.evaluare",
                   "risc_fiscal_perioade", str(rid))
         return jsonify({

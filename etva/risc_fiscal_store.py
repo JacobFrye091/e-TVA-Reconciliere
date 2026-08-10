@@ -16,6 +16,7 @@ _COLOANE_UPSERT = (
     "obligatii_restante_manual", "obligatii_crescute_manual",
     "flaguri_sectiune_b", "scor_total_indicatori", "scor_max_posibil",
     "scor_afisat", "clasificare", "scor_detaliu", "creat_de", "creat_la",
+    "saft_xml_original",
 )
 
 
@@ -25,9 +26,13 @@ def salveaza_perioada(conn, client_id: "int | None", perioada: str,
                       obligatii_restante: "bool | None" = None,
                       obligatii_crescute: "bool | None" = None,
                       flaguri_sectiune_b: "dict | None" = None,
+                      saft_xml_original: "bytes | None" = None,
                       username: str) -> int:
     """Insereaza sau actualizeaza perioada evaluata. `scor` e un
-    etva.risc_fiscal.ScorRiscFiscal deja calculat de apelant."""
+    etva.risc_fiscal.ScorRiscFiscal deja calculat de apelant.
+    `saft_xml_original` e fisierul D406 brut incarcat de contabil cand
+    sursa_date='saft_d406' - salvat ca atare, nefolosit inca la calculul
+    scorului (vezi planul modulului: parserul urmeaza)."""
     now = datetime.now(timezone.utc).isoformat()
     valori = (
         scor.nivel, sursa_date, date_financiare.get("capitaluri_proprii"),
@@ -36,7 +41,7 @@ def salveaza_perioada(conn, client_id: "int | None", perioada: str,
         obligatii_restante, obligatii_crescute,
         json.dumps(flaguri_sectiune_b or {}), scor.scor_total_indicatori,
         scor.scor_max_posibil, scor.scor_afisat, scor.clasificare,
-        json.dumps(scor.detaliu), username, now)
+        json.dumps(scor.detaliu), username, now, saft_xml_original)
     set_clause = ", ".join(f"{c}=excluded.{c}" for c in _COLOANE_UPSERT)
     coloane_sql = ", ".join(_COLOANE_UPSERT)
     if client_id is None:
@@ -79,6 +84,10 @@ def _decodeaza(row) -> dict:
     d = dict(row)
     d["flaguri_sectiune_b"] = json.loads(d["flaguri_sectiune_b"] or "{}")
     d["scor_detaliu"] = json.loads(d["scor_detaliu"] or "[]")
+    # Fisierul brut nu iese niciodata din acest modul ca atare - jsonify()
+    # pe /api/risc-fiscal/istoric ar crapa incercand sa serializeze bytes.
+    # In loc, doar semnaleaza daca exista (util pentru UI), fara continutul.
+    d["are_fisier_saft"] = d.pop("saft_xml_original", None) is not None
     return d
 
 
