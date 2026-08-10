@@ -92,6 +92,16 @@ programe de contabilitate: presupunerea ca soldurile claselor 6/7 sunt
 tinute cumulat pe an (nu resetate lunar), si contul 519 (nevalidat inca,
 absent din fisierul de test).
 
+Fix descoperit direct dintr-un raport PDF real generat in timpul testarii
+(scor mic afisat langa eticheta rosie "Risc ridicat", contradictoriu la
+prima vedere): `etva/risc_fiscal.py::calculeaza_scor` forta deja
+`clasificare='ridicat'` cand un semnal de Sectiunea B era activ (override),
+dar `scor_afisat` ramanea punctajul brut pe indicatorii 1-5 (posibil foarte
+mic, daca toti indicatorii financiari erau in favoarea firmei). Acum
+`scor_afisat` e fortat la 100 ori de cate ori override-ul e activ, consistent
+cu eticheta - `scor_total_indicatori`/`scor_max_posibil` raman neschimbate
+(punctajul brut ramane vizibil separat in raport).
+
 Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.

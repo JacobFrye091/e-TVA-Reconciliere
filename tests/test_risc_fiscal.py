@@ -150,6 +150,15 @@ def test_flag_sectiune_b_forteaza_clasificare_ridicat():
     assert scor.clasificare == "ridicat"
     assert scor.override_sectiune_b is True
     assert "Declarat inactiv fiscal" in scor.flaguri_risc_mare_active
+    # scor_afisat trebuie sa reflecte riscul maxim cand clasificarea e
+    # fortata - altfel raportul ar arata un numar mic (aici 0, toti
+    # indicatorii 1-5 in favoarea firmei) langa eticheta rosie "ridicat",
+    # contradictoriu la prima vedere (descoperit direct dintr-un raport
+    # real generat in timpul testarii).
+    assert scor.scor_afisat == 100
+    # scor_total_indicatori ramane punctajul brut real (0 aici) - doar
+    # "scorul rezumat" afisat e fortat, nu si detaliul.
+    assert scor.scor_total_indicatori == 0
 
 
 def test_fara_flaguri_sectiune_b_nu_forteaza_nimic():

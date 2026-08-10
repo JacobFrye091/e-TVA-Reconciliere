@@ -206,8 +206,19 @@ def calculeaza_scor(nivel: str, date_financiare: dict, *,
                 flaguri_active.append(FLAGURI_SECTIUNE_B[cheie])
 
     scor_max = _MAX_PUNCTAJ[nivel]
-    scor_afisat = round(scor_total / scor_max * 100) if scor_max else 0
     override = bool(flaguri_active)
+    # Cand un semnal de Sectiunea B e activ, metodologia oficiala ANAF
+    # clasifica direct "risc fiscal mare" INDIFERENT de punctaj (vezi
+    # docstring-ul modulului) - scorul brut pe indicatorii 1-5 poate fi
+    # oricat de mic (ex. o firma cu capitaluri/indatorare/profit ideale, dar
+    # declarata inactiv). Afisarea unui numar mic langa eticheta "ridicat"
+    # (rosu) ar fi contradictorie si ar parea o eroare - scor_afisat trebuie
+    # sa reflecte riscul maxim ori de cate ori clasificarea e fortata,
+    # consistent cu eticheta. scor_total_indicatori/scor_max_posibil raman
+    # neschimbate mai jos - punctajul brut ramane vizibil in raport ca
+    # informatie separata, doar "scorul rezumat" afisat e cel fortat.
+    scor_afisat = 100 if override else (
+        round(scor_total / scor_max * 100) if scor_max else 0)
     clasificare = "ridicat" if override else _clasifica(scor_afisat)
 
     return ScorRiscFiscal(

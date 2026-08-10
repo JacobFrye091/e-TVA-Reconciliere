@@ -6121,6 +6121,10 @@ def test_salveaza_risc_fiscal_nivel_complet_cu_flag_sectiune_b(app):
     assert body["clasificare"] == "ridicat"
     assert body["override_sectiune_b"] is True
     assert "Declarat inactiv fiscal" in body["flaguri_risc_mare_active"]
+    # scor_afisat trebuie sa reflecte riscul maxim cand clasificarea e
+    # fortata de Sectiunea B, altfel raportul arata un scor mic langa o
+    # eticheta rosie "ridicat" - contradictoriu (gasit intr-un raport real).
+    assert body["scor_afisat"] == 100
 
 
 def test_salveaza_risc_fiscal_firma_contabilitate_cere_client_id(app):
