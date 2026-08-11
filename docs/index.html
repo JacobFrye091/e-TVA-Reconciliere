@@ -310,12 +310,35 @@
           Indicatorii 6–8 (istoricul cererilor de rambursare TVA soluționate)
           sunt date strict interne ANAF, imposibil de reprodus din exterior —
           nu intră niciodată în scor, doar marcate explicit ca atare în raport.
-          La nivelul „Simplu", indicatorii 1–3 se calculează automat direct
-          din exportul SAF-T (D406) al firmei, generat din programul de
-          contabilitate (Saga, WinMentor etc.) — sau, dacă preferi, din date
-          introduse manual. Nivelul „Complet" adaugă și vectorul fiscal
-          (indicatorii 4–5, completați manual de contabil), pentru un scor
-          mai precis.</p>
+          La nivelul „Simplu", indicatorii 1–3 se calculează automat, din una
+          din trei surse, la alegerea ta:</p>
+        <ul style="margin:10px 0 10px 20px; line-height:1.7">
+          <li><b>Export SAF-T (D406)</b> — recomandat: cifrele vin din balanța
+            contabilă a perioadei pe care o evaluezi, deci sunt cele mai
+            actuale. Se generează din programul tău de contabilitate (Saga,
+            WinMentor etc.).</li>
+          <li><b>Bilanțul depus la ANAF</b> — fără niciun fișier și fără
+            tastare: preluăm cifrele automat, doar pe baza CUI-ului, din
+            serviciul public de situații financiare anuale. Atenție: bilanțul
+            e anual, deci descrie 31 decembrie al ultimului exercițiu depus,
+            nu perioada curentă.</li>
+          <li><b>Completare manuală</b> — dacă preferi să treci tu cifrele.</li>
+        </ul>
+        <p>Când cifrele le dai tu (SAF-T sau manual) și firma are bilanț depus,
+          le confruntăm automat cu cel de la ANAF și te avertizăm dacă apare o
+          diferență care nu se explică prin evoluția normală a firmei — util ca
+          să prinzi din timp fișierul greșit sau cifra tastată aiurea. Raportul
+          include și evoluția ultimelor exerciții financiare depuse.</p>
+        <p>Nivelul „Complet" adaugă vectorul fiscal (indicatorii 4–5, pe care
+          îi completezi tu din SPV) și cele 9 semnale de risc fiscal mare din
+          Secțiunea B a metodologiei — oricare dintre ele, dacă e adevărat,
+          duce la încadrarea automată în risc mare, indiferent de punctaj.
+          Două dintre ele le verificăm noi, în timp real, direct la ANAF
+          („declarat inactiv fiscal" și „entitate nou înființată"), iar altele
+          două le precompletăm din bilanț (salariați și bunuri în patrimoniu),
+          rămânând la confirmarea ta. Raportul PDF spune, pentru fiecare
+          condiție în parte, dacă răspunsul a fost verificat automat sau
+          declarat de contabil.</p>
       </details>
       <details class="faq-item reveal">
         <summary>Pot să șterg contul și datele oricând?</summary>
