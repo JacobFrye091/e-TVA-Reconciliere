@@ -425,11 +425,16 @@ CREATE TABLE IF NOT EXISTS risc_fiscal_perioade(
   scor_detaliu text,
   creat_de text NOT NULL,
   creat_la timestamptz NOT NULL,
-  saft_xml_original bytea);
+  saft_xml_original bytea,
+  bilant_istoric text);
 -- Bazele create inainte de optiunea de incarcare bruta SAF-T se aduc la zi
 -- aici (no-op pe bazele deja corecte) - fisierul nu e inca folosit pentru
 -- extragere automata, doar salvat pentru cand parserul va exista.
 ALTER TABLE risc_fiscal_perioade ADD COLUMN IF NOT EXISTS saft_xml_original bytea;
+-- Istoricul (JSON) ultimelor exercitii financiare depuse la ANAF, salvat asa
+-- cum arata LA MOMENTUL EVALUARII, ca un raport redescarcat mai tarziu sa
+-- ramana reproductibil - vezi etva/anaf_bilant.py.
+ALTER TABLE risc_fiscal_perioade ADD COLUMN IF NOT EXISTS bilant_istoric text;
 -- client_id e deja unic global (secventa comuna pe `clients`), deci ramura
 -- "client_id IS NOT NULL" e corecta si fara firm_id. Ramura "client_id IS
 -- NULL" (firma 'direct') INSA e scopata pe firm_id, exact ca la

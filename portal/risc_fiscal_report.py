@@ -122,6 +122,16 @@ def _eticheta_sursa(sursa_date: "str | None") -> str:
     return _ETICHETA_SURSA.get(sursa_date or "manual", sursa_date or "necunoscută")
 
 
+def _ron(valoare) -> str:
+    """Suma in format romanesc (punct la mii), pentru tabelul de evolutie."""
+    if valoare is None:
+        return "-"
+    try:
+        return f"{float(valoare):,.0f}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "-"
+
+
 def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
                  perioada: dict) -> bytes:
     """perioada: un rand din etva.risc_fiscal_store (dict cu scor_afisat/
@@ -207,6 +217,39 @@ def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
         ]))
         elems.append(sectiune_b_tbl)
         elems.append(Spacer(1, 6 * mm))
+
+    istoric = perioada.get("bilant_istoric") or []
+    if istoric:
+        elems.append(Paragraph(
+            "<b>Evoluția situațiilor financiare depuse la ANAF</b> — context "
+            "pentru indicatorii de mai jos, preluat din situațiile financiare "
+            "anuale publice, așa cum erau la data acestei evaluări:", body))
+        elems.append(Spacer(1, 2 * mm))
+        istoric_rows = [[Paragraph("EXERCIȚIU", label),
+                         Paragraph("CAPITALURI PROPRII", label),
+                         Paragraph("DATORII", label),
+                         Paragraph("CIFRĂ DE AFACERI", label),
+                         Paragraph("REZULTAT NET", label),
+                         Paragraph("SALARIAȚI", label)]]
+        for an in istoric:
+            istoric_rows.append([
+                Paragraph(str(an.get("an", "-")), body),
+                Paragraph(_ron(an.get("capitaluri_proprii")), body),
+                Paragraph(_ron(an.get("datorii_totale")), body),
+                Paragraph(_ron(an.get("cifra_afaceri")), body),
+                Paragraph(_ron(an.get("rezultat_net")), body),
+                Paragraph(str(an.get("numar_salariati", "-")), body)])
+        istoric_tbl = Table(istoric_rows,
+                            colWidths=[22 * mm, 34 * mm, 30 * mm, 34 * mm, 30 * mm, 24 * mm])
+        istoric_tbl.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 0.75, _INK),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.4, _BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ]))
+        elems.append(istoric_tbl)
+        elems.append(Spacer(1, 8 * mm))
 
     detaliu_rows = [[Paragraph("INDICATOR", label), Paragraph("VALOARE", label),
                      Paragraph("PUNCTAJ", label)]]

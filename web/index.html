@@ -1069,6 +1069,15 @@ async function salveazaRiscFiscal() {
     }
     rfInfo.textContent = notite.join(' ');
   }
+  // Verificarea incrucisata cu bilantul depus la ANAF - prinde fisierul
+  // gresit sau cifra tastata aiurea. Se afiseaza distinct (ca avertisment),
+  // nu amestecat cu notele informative de mai sus.
+  if ((data.avertismente_bilant || []).length) {
+    rfEroare.style.color = 'var(--warn)';
+    rfEroare.textContent = data.avertismente_bilant.join(' ');
+  } else {
+    rfEroare.style.color = '';
+  }
   // Reseteaza formularul dupa fiecare salvare reusita - altfel un semnal de
   // Sectiunea B bifat pentru o evaluare (sau cifre trecute manual) ramane
   // bifat/completat si la urmatoarea, fortand tacit "risc ridicat" pe orice

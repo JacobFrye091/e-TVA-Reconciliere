@@ -4475,13 +4475,25 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "Sursa datelor financiare trebuie sa fie SAF-T, bilantul "
                 "ANAF sau completarea manuala."]}), 400
 
+        # Istoricul ultimelor exercitii depuse la ANAF se ia O SINGURA DATA
+        # aici si serveste trei scopuri: sursa de date (cand sursa_date e
+        # 'bilant_anaf', primul element E bilantul folosit), verificarea
+        # incrucisata a cifrelor de la contabil, si tabelul de evolutie din
+        # raportul PDF. Best-effort: o defectiune la ANAF nu opreste nimic.
+        cui_evaluat = _cui_evaluat(fc, ident, client_id)
+        bilant_istoric = []
+        if cui_evaluat:
+            try:
+                bilant_istoric = anaf_bilant.extrage_istoric(cui_evaluat)
+            except (ValueError, anaf_bilant.AnafBilantError):
+                bilant_istoric = []
+        bilant = bilant_istoric[0] if bilant_istoric else None
+
         saft_xml_original = None
-        bilant = None
         if sursa_date == "bilant_anaf":
             # Datele vin DIRECT de la ANAF, pe baza CUI-ului - nu se preiau
             # din formular nici macar partial, ca sa nu poata fi falsificate
             # de client si prezentate apoi in raport drept "cifre oficiale".
-            bilant = _bilant_anaf(fc, ident, client_id)
             if bilant is None:
                 return jsonify({"errors": [
                     "Nu am gasit un bilant depus la ANAF pentru acest CUI "
@@ -4546,10 +4558,9 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             # o bifa uitata/gresita cand putem intreba chiar sursa oficiala.
             # Daca serviciul ANAF nu raspunde acum, ramanem pe bifa manuala
             # (nu blocam evaluarea pentru o problema de retea trecatoare).
-            cui_verificare = _cui_evaluat(fc, ident, client_id)
-            if cui_verificare:
+            if cui_evaluat:
                 try:
-                    info_anaf_live = anaf_cui.verify_cui(cui_verificare)
+                    info_anaf_live = anaf_cui.verify_cui(cui_evaluat)
                 except (ValueError, anaf_cui.AnafCuiError):
                     info_anaf_live = None
             if info_anaf_live and "inactiv_fiscal" in info_anaf_live:
@@ -4578,13 +4589,23 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             obligatii_crescute=obligatii_crescute,
             flaguri_sectiune_b=flaguri_sectiune_b)
 
+        # Verificare incrucisata: cand cifrele vin de la contabil (SAF-T sau
+        # manual), le confruntam cu ultimul bilant depus, ca sa prindem
+        # fisierul gresit / firma gresita / virgula pusa aiurea. La sursa
+        # 'bilant_anaf' n-are sens - cifrele SUNT bilantul.
+        avertismente_bilant = []
+        if sursa_date != "bilant_anaf" and bilant is not None:
+            avertismente_bilant = anaf_bilant.compara_cu_bilant(
+                date_financiare, bilant)
+
         rid = risc_fiscal_store.salveaza_perioada(
             fc, client_id, perioada, sursa_date, date_financiare, scor,
             declaratii_nedepuse=declaratii_nedepuse,
             obligatii_restante=obligatii_restante,
             obligatii_crescute=obligatii_crescute,
             flaguri_sectiune_b=flaguri_sectiune_b,
-            saft_xml_original=saft_xml_original, username=ident["username"])
+            saft_xml_original=saft_xml_original,
+            bilant_istoric=bilant_istoric, username=ident["username"])
         audit.log(fc, ident["username"], "risc_fiscal.evaluare",
                   "risc_fiscal_perioade", str(rid))
         verificari_automate = None
@@ -4605,7 +4626,8 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             "override_sectiune_b": scor.override_sectiune_b,
             "flaguri_risc_mare_active": scor.flaguri_risc_mare_active,
             "detaliu": scor.detaliu,
-            "verificari_automate": verificari_automate})
+            "verificari_automate": verificari_automate,
+            "avertismente_bilant": avertismente_bilant})
 
     @app.get("/api/risc-fiscal/istoric")
     @require()

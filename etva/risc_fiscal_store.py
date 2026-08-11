@@ -16,7 +16,7 @@ _COLOANE_UPSERT = (
     "obligatii_restante_manual", "obligatii_crescute_manual",
     "flaguri_sectiune_b", "scor_total_indicatori", "scor_max_posibil",
     "scor_afisat", "clasificare", "scor_detaliu", "creat_de", "creat_la",
-    "saft_xml_original",
+    "saft_xml_original", "bilant_istoric",
 )
 
 
@@ -27,6 +27,7 @@ def salveaza_perioada(conn, client_id: "int | None", perioada: str,
                       obligatii_crescute: "bool | None" = None,
                       flaguri_sectiune_b: "dict | None" = None,
                       saft_xml_original: "bytes | None" = None,
+                      bilant_istoric: "list | None" = None,
                       username: str) -> int:
     """Insereaza sau actualizeaza perioada evaluata. `scor` e un
     etva.risc_fiscal.ScorRiscFiscal deja calculat de apelant.
@@ -41,7 +42,8 @@ def salveaza_perioada(conn, client_id: "int | None", perioada: str,
         obligatii_restante, obligatii_crescute,
         json.dumps(flaguri_sectiune_b or {}), scor.scor_total_indicatori,
         scor.scor_max_posibil, scor.scor_afisat, scor.clasificare,
-        json.dumps(scor.detaliu), username, now, saft_xml_original)
+        json.dumps(scor.detaliu), username, now, saft_xml_original,
+        json.dumps(bilant_istoric) if bilant_istoric else None)
     set_clause = ", ".join(f"{c}=excluded.{c}" for c in _COLOANE_UPSERT)
     coloane_sql = ", ".join(_COLOANE_UPSERT)
     if client_id is None:
@@ -88,6 +90,7 @@ def _decodeaza(row) -> dict:
     # pe /api/risc-fiscal/istoric ar crapa incercand sa serializeze bytes.
     # In loc, doar semnaleaza daca exista (util pentru UI), fara continutul.
     d["are_fisier_saft"] = d.pop("saft_xml_original", None) is not None
+    d["bilant_istoric"] = json.loads(d.get("bilant_istoric") or "[]")
     # SQLite intoarce creat_la ca text ISO (asa a fost scris), Postgres
     # (timestamptz) il intoarce ca datetime - Flask.jsonify serializeaza cele
     # doua diferit (ISO vs. RFC 1123), ceea ce ar rupe formatarea din UI in

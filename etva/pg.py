@@ -224,7 +224,7 @@ EXPECTED_SCHEMA = {
         "scor_afisat": "integer", "clasificare": "text",
         "scor_detaliu": "text", "creat_de": "text",
         "creat_la": "timestamp with time zone",
-        "saft_xml_original": "bytea",
+        "saft_xml_original": "bytea", "bilant_istoric": "text",
     },
     "risc_fiscal_alerte": {
         "id": "integer", "firm_id": "integer", "perioada_id": "integer",

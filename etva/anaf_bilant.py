@@ -136,3 +136,96 @@ def extrage_bilant(cui: str, an: "int | None" = None,
             "numar_salariati": int(valori.get(_I_NUMAR_SALARIATI, 0.0)),
         }
     return None
+
+
+def extrage_istoric(cui: str, ani: int = 3, an_start: "int | None" = None) -> list:
+    """Ultimele `ani` exercitii financiare depuse, cel mai recent primul.
+
+    Sare peste anii fara bilant depus in loc sa se opreasca la primul gol,
+    fiindca o firma poate avea o intrerupere in depuneri. Intoarce o lista
+    (posibil goala) - nu ridica exceptii daca un an anume nu poate fi luat,
+    fiindca istoricul e un bonus analitic pentru raport, nu o conditie de
+    functionare a evaluarii.
+    """
+    inceput = an_start if an_start is not None else datetime.date.today().year - 1
+    istoric = []
+    # Cauta cu cativa ani mai mult decat cere, ca o intrerupere de depunere
+    # sa nu scurteze rezultatul sub `ani` exercitii disponibile.
+    for candidat in range(inceput, inceput - ani - 3, -1):
+        if len(istoric) >= ani:
+            break
+        try:
+            an = extrage_bilant(cui, an=candidat, ani_inapoi=0)
+        except (ValueError, AnafBilantError):
+            break
+        if an:
+            istoric.append(an)
+    return istoric
+
+
+# Sub acest prag, diferentele fata de bilant nu se semnaleaza deloc: sume
+# mici oscileaza natural si ar produce doar zgomot.
+_PRAG_ABSOLUT_DISCREPANTA = 1000.0
+# Raportul de la care o diferenta nu mai poate fi pusa pe seama evolutiei
+# normale a firmei si arata mai degraba a fisier gresit sau greseala de
+# tastare (ex. o suma trecuta de 1000 de ori mai mare).
+_PRAG_RAPORT_DISCREPANTA = 10.0
+
+_ETICHETE_COMPARATIE = {
+    "capitaluri_proprii": "capitalurile proprii",
+    "datorii_totale": "datoriile totale",
+}
+
+
+def _ron(valoare: float) -> str:
+    """Suma in format romanesc (punct la mii): 531748.0 -> "531.748".
+    Formatam numarul separat, NU cu .replace() pe fraza intreaga - altfel
+    s-ar strica si virgulele gramaticale din textul mesajului."""
+    return f"{valoare:,.0f}".replace(",", ".")
+
+
+def compara_cu_bilant(date_financiare: dict, bilant: dict) -> list:
+    """Compara cifrele introduse (SAF-T sau manual) cu ultimul bilant depus
+    si intoarce o lista de avertismente in limbaj natural.
+
+    Scopul e sa prinda fisierul gresit / firma gresita / virgula pusa aiurea,
+    NU sa valideze contabilitatea: bilantul e anual si mai vechi decat
+    perioada evaluata, deci diferentele mici sunt normale si asteptate.
+    De aceea se compara doar pozitiile de bilant care evolueaza lent
+    (capitaluri proprii, datorii) - NU cifra de afaceri sau rezultatul net,
+    care sunt cumulate de la inceputul anului si deci in mod normal
+    fractiuni din valoarea anuala la orice moment din cursul anului.
+
+    Se semnaleaza doar doua situatii fara explicatie fireasca:
+      - schimbarea de semn a capitalurilor proprii (pozitiv <-> negativ),
+        care singura muta indicatorul 1 cu 100 de puncte;
+      - o diferenta de cel putin 10x intr-un sens sau altul.
+    """
+    avertismente = []
+    an = bilant.get("an")
+
+    for camp, eticheta in _ETICHETE_COMPARATIE.items():
+        introdus = date_financiare.get(camp)
+        oficial = bilant.get(camp)
+        if introdus is None or oficial is None:
+            continue
+        if max(abs(introdus), abs(oficial)) < _PRAG_ABSOLUT_DISCREPANTA:
+            continue
+
+        if camp == "capitaluri_proprii" and (introdus < 0) != (oficial < 0):
+            avertismente.append(
+                f"Ai introdus {eticheta} {_ron(introdus)} RON, dar bilanțul pe "
+                f"{an} depus la ANAF arată {_ron(oficial)} RON — semn opus. "
+                f"Verifică: singură, această diferență schimbă punctajul "
+                f"indicatorului 1 cu 100 de puncte.")
+            continue
+
+        if abs(oficial) < _PRAG_ABSOLUT_DISCREPANTA:
+            continue
+        raport = abs(introdus) / abs(oficial)
+        if raport >= _PRAG_RAPORT_DISCREPANTA or raport <= 1 / _PRAG_RAPORT_DISCREPANTA:
+            avertismente.append(
+                f"Ai introdus {eticheta} {_ron(introdus)} RON, dar bilanțul pe "
+                f"{an} depus la ANAF arată {_ron(oficial)} RON. Verifică dacă "
+                f"fișierul sau cifra corespund firmei și perioadei evaluate.")
+    return avertismente

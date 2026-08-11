@@ -127,3 +127,99 @@ def test_extrage_bilant_propaga_eroarea_de_serviciu(monkeypatch):
     monkeypatch.setattr(anaf_bilant, "_fetch", _boom)
     with pytest.raises(anaf_bilant.AnafBilantError):
         anaf_bilant.extrage_bilant("12345678", an=2025)
+
+
+# ---------- istoric multi-anual ----------
+
+def test_extrage_istoric_intoarce_anii_cel_mai_recent_primul(monkeypatch):
+    monkeypatch.setattr(anaf_bilant, "_fetch",
+                        lambda cui, an: _raspuns(an=an, I10=an))
+    istoric = anaf_bilant.extrage_istoric("12345678", ani=3, an_start=2025)
+    assert [x["an"] for x in istoric] == [2025, 2024, 2023]
+
+
+def test_extrage_istoric_sare_peste_anii_fara_depunere(monkeypatch):
+    """O intrerupere in depuneri nu trebuie sa scurteze istoricul - se sare
+    peste anul lipsa si se merge mai in urma."""
+    def _fals(cui, an):
+        return _gol(an) if an == 2024 else _raspuns(an=an, I10=an)
+    monkeypatch.setattr(anaf_bilant, "_fetch", _fals)
+    istoric = anaf_bilant.extrage_istoric("12345678", ani=3, an_start=2025)
+    assert [x["an"] for x in istoric] == [2025, 2023, 2022]
+
+
+def test_extrage_istoric_lista_goala_cand_nu_exista_nimic(monkeypatch):
+    monkeypatch.setattr(anaf_bilant, "_fetch", lambda cui, an: _gol(an))
+    assert anaf_bilant.extrage_istoric("12345678", ani=3, an_start=2025) == []
+
+
+def test_extrage_istoric_nu_propaga_eroarea_de_serviciu(monkeypatch):
+    """Istoricul e un bonus pentru raport, nu o conditie de functionare -
+    daca ANAF pica, intoarce ce a apucat, nu arunca."""
+    def _boom(cui, an):
+        raise anaf_bilant.AnafBilantError("boom")
+    monkeypatch.setattr(anaf_bilant, "_fetch", _boom)
+    assert anaf_bilant.extrage_istoric("12345678", ani=3, an_start=2025) == []
+
+
+# ---------- verificare incrucisata ----------
+
+_BILANT = {"an": 2025, "capitaluri_proprii": 531748.0, "datorii_totale": 32749.0}
+
+
+def test_compara_cu_bilant_tace_cand_cifrele_se_potrivesc():
+    assert anaf_bilant.compara_cu_bilant(
+        {"capitaluri_proprii": 531748.0, "datorii_totale": 32749.0}, _BILANT) == []
+
+
+def test_compara_cu_bilant_tace_la_variatie_normala_de_business():
+    """Bilantul e de anul trecut, perioada evaluata e alta - o crestere de
+    20% e fireasca si NU trebuie semnalata, altfel avertismentul devine
+    zgomot pe care contabilul il ignora."""
+    assert anaf_bilant.compara_cu_bilant(
+        {"capitaluri_proprii": 640000.0, "datorii_totale": 39000.0}, _BILANT) == []
+
+
+def test_compara_cu_bilant_semnaleaza_schimbarea_de_semn_a_capitalurilor():
+    """Singurul caz care muta indicatorul 1 cu 100 de puncte."""
+    mesaje = anaf_bilant.compara_cu_bilant({"capitaluri_proprii": -5000.0}, _BILANT)
+    assert len(mesaje) == 1
+    assert "semn opus" in mesaje[0]
+    assert "100 de puncte" in mesaje[0]
+
+
+def test_compara_cu_bilant_semnaleaza_ordinul_de_marime():
+    """Tipar clasic de greseala: suma trecuta de 1000 de ori mai mare."""
+    mesaje = anaf_bilant.compara_cu_bilant({"datorii_totale": 32749000.0}, _BILANT)
+    assert len(mesaje) == 1
+    assert "32.749.000" in mesaje[0] and "32.749" in mesaje[0]
+
+
+def test_compara_cu_bilant_ignora_sumele_mici():
+    """Sub prag, oscilatiile sunt normale si nu merita semnalate."""
+    assert anaf_bilant.compara_cu_bilant(
+        {"capitaluri_proprii": 50.0}, {"an": 2025, "capitaluri_proprii": 10.0}) == []
+
+
+def test_compara_cu_bilant_nu_compara_cifra_de_afaceri_si_rezultatul():
+    """Sunt cumulate de la inceputul anului, deci in mod normal fractiuni
+    din valoarea anuala - o comparatie directa ar da alarme false la
+    fiecare evaluare facuta in cursul anului."""
+    mesaje = anaf_bilant.compara_cu_bilant(
+        {"cifra_afaceri": 1000.0, "rezultat_net": -50000.0},
+        {"an": 2025, "cifra_afaceri": 461057.0, "rezultat_net": 293631.0})
+    assert mesaje == []
+
+
+def test_compara_cu_bilant_ignora_campurile_lipsa():
+    assert anaf_bilant.compara_cu_bilant({"capitaluri_proprii": None}, _BILANT) == []
+    assert anaf_bilant.compara_cu_bilant({}, _BILANT) == []
+
+
+def test_compara_cu_bilant_pastreaza_virgulele_gramaticale():
+    """Formatarea sumelor in stil romanesc (punct la mii) nu trebuie sa
+    strice punctuatia frazei - numarul se formateaza separat, nu prin
+    replace pe tot mesajul."""
+    mesaj = anaf_bilant.compara_cu_bilant({"capitaluri_proprii": -5000.0}, _BILANT)[0]
+    assert "RON, dar bilanțul" in mesaj
+    assert "Verifică: singură, această diferență" in mesaj

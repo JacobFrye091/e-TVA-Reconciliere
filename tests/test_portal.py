@@ -92,6 +92,7 @@ def _mock_anaf_bilant(monkeypatch):
     unde vin cifrele."""
     from etva import anaf_bilant
     monkeypatch.setattr(anaf_bilant, "extrage_bilant", lambda cui, **kw: None)
+    monkeypatch.setattr(anaf_bilant, "extrage_istoric", lambda cui, **kw: [])
 
 
 @pytest.fixture(autouse=True)
@@ -6396,10 +6397,90 @@ _BILANT_EXEMPLU = {
 }
 
 
-def _mock_bilant(monkeypatch, bilant=None):
+def _mock_bilant(monkeypatch, bilant=None, istoric=None):
     from etva import anaf_bilant
-    monkeypatch.setattr(anaf_bilant, "extrage_bilant",
-                        lambda cui, **kw: bilant or _BILANT_EXEMPLU)
+    ultim = bilant or _BILANT_EXEMPLU
+    monkeypatch.setattr(anaf_bilant, "extrage_bilant", lambda cui, **kw: ultim)
+    monkeypatch.setattr(anaf_bilant, "extrage_istoric",
+                        lambda cui, **kw: istoric if istoric is not None else [ultim])
+
+
+def test_salveaza_risc_fiscal_avertizeaza_la_discrepanta_fata_de_bilant(app, monkeypatch):
+    """Cifrele tastate manual se confrunta cu ultimul bilant depus, ca sa
+    prindem fisierul gresit sau virgula pusa aiurea."""
+    c = _client_risc_fiscal_platit(app, "RO9060", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch)
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "-5000",
+        "datorii_totale": "32749", "cifra_afaceri": "461057",
+        "rezultat_net": "293631"})
+    assert r.status_code == 200
+    avertismente = r.get_json()["avertismente_bilant"]
+    assert len(avertismente) == 1
+    assert "semn opus" in avertismente[0]
+
+
+def test_salveaza_risc_fiscal_fara_avertismente_cand_cifrele_se_potrivesc(app, monkeypatch):
+    c = _client_risc_fiscal_platit(app, "RO9061", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch)
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "531748",
+        "datorii_totale": "32749", "cifra_afaceri": "461057",
+        "rezultat_net": "293631"})
+    assert r.status_code == 200
+    assert r.get_json()["avertismente_bilant"] == []
+
+
+def test_salveaza_risc_fiscal_nu_se_compara_cu_sine_la_sursa_bilant(app, monkeypatch):
+    """Cand sursa E bilantul, verificarea incrucisata n-are sens - cifrele
+    sunt chiar cele de la ANAF."""
+    c = _client_risc_fiscal_platit(app, "RO9062", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch)
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "sursa_date": "bilant_anaf"})
+    assert r.status_code == 200
+    assert r.get_json()["avertismente_bilant"] == []
+
+
+def test_salveaza_risc_fiscal_stocheaza_istoricul_bilanturilor(app, monkeypatch):
+    """Istoricul se salveaza ODATA CU evaluarea, nu se ia live la generarea
+    PDF-ului - un raport redescarcat peste un an trebuie sa arate ce se
+    stia atunci."""
+    c = _client_risc_fiscal_platit(app, "RO9063", tip="direct", risc_fiscal_nivel="simplu")
+    istoric = [
+        {**_BILANT_EXEMPLU, "an": 2025},
+        {**_BILANT_EXEMPLU, "an": 2024, "cifra_afaceri": 377396.0},
+        {**_BILANT_EXEMPLU, "an": 2023, "cifra_afaceri": 211534.0},
+    ]
+    _mock_bilant(monkeypatch, istoric=istoric)
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "sursa_date": "bilant_anaf"})
+    salvat = c.get("/api/risc-fiscal/istoric").get_json()[0]["bilant_istoric"]
+    assert [x["an"] for x in salvat] == [2025, 2024, 2023]
+    assert salvat[1]["cifra_afaceri"] == 377396.0
+
+
+def test_risc_fiscal_pdf_cu_istoric_de_bilanturi(app, monkeypatch):
+    c = _client_risc_fiscal_platit(app, "RO9064", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch, istoric=[
+        {**_BILANT_EXEMPLU, "an": 2025}, {**_BILANT_EXEMPLU, "an": 2024}])
+    c.post("/api/risc-fiscal/perioada",
+          data={"perioada": "2026-T2", "sursa_date": "bilant_anaf"})
+    r = c.get("/api/risc-fiscal/perioada/2026-T2/pdf")
+    assert r.status_code == 200
+    assert r.data[:4] == b"%PDF"
+
+
+def test_salveaza_risc_fiscal_merge_si_cand_bilantul_nu_e_disponibil(app):
+    """Mock-ul implicit intoarce None/[] - o evaluare manuala trebuie sa
+    functioneze normal, fara avertismente si fara istoric."""
+    c = _client_risc_fiscal_platit(app, "RO9065", tip="direct", risc_fiscal_nivel="simplu")
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "capitaluri_proprii": "100",
+        "datorii_totale": "10", "cifra_afaceri": "1000", "rezultat_net": "10"})
+    assert r.status_code == 200
+    assert r.get_json()["avertismente_bilant"] == []
+    assert c.get("/api/risc-fiscal/istoric").get_json()[0]["bilant_istoric"] == []
 
 
 def test_salveaza_risc_fiscal_sursa_bilant_anaf_preia_datele_de_la_anaf(app, monkeypatch):

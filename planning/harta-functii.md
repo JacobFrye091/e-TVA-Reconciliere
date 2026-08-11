@@ -244,6 +244,40 @@ ViewState, prea fragila de automatizat) si lista trimestriala de restantieri
 (publica doar sumele mari, 100.000-500.000 RON dupa categorie, deci ar rata
 sistematic clientii tipici ai aplicatiei).
 
+Actualizat manual 2026-08-11 (a doua interventie): **verificare incrucisata
++ istoric multi-anual**, ambele pe acelasi serviciu de bilant.
+
+`anaf_bilant.compara_cu_bilant(date_financiare, bilant)` confrunta cifrele
+venite de la contabil (SAF-T sau manual) cu ultimul bilant depus. Nu
+valideaza contabilitatea - prinde doar fisierul gresit / firma gresita /
+virgula pusa aiurea. Doua decizii importante de calibrare, ca avertismentul
+sa nu devina zgomot ignorat:
+- se compara DOAR pozitiile de bilant care evolueaza lent (capitaluri
+  proprii, datorii). Cifra de afaceri si rezultatul net sunt EXCLUSE
+  deliberat: sunt cumulate de la inceputul anului, deci in mod normal
+  fractiuni din valoarea anuala la orice moment din cursul anului - o
+  comparatie directa ar da alarme false la fiecare evaluare.
+- se semnaleaza doar schimbarea de semn a capitalurilor proprii (singura
+  care muta indicatorul 1 cu 100 de puncte) si diferentele de cel putin
+  10x; sub 1000 RON nu se semnaleaza nimic.
+
+`anaf_bilant.extrage_istoric(cui, ani=3)` aduce ultimele 3 exercitii depuse
+(sare peste anii fara depunere in loc sa se opreasca la primul gol) si
+alimenteaza un tabel de evolutie in raportul PDF - context comercial real
+(capitaluri/datorii/cifra/rezultat/salariati, an de an).
+
+Schema noua: `risc_fiscal_perioade.bilant_istoric` (TEXT/JSON, cele 3 locuri
+obisnuite + migrare SQLite `_migrate_add_risc_fiscal_bilant_istoric`).
+Istoricul se STOCHEAZA la evaluare, NU se ia live la generarea PDF-ului:
+un raport de risc fiscal redescarcat peste un an trebuie sa arate ce se stia
+la momentul evaluarii, nu date noi (reproductibilitate de document de
+audit). Ca efect secundar, generarea PDF-ului ramane complet offline.
+
+Optimizare: istoricul se ia O SINGURA DATA pe evaluare si serveste toate
+cele trei scopuri (sursa de date cand `sursa_date='bilant_anaf'` - primul
+element E bilantul folosit; verificarea incrucisata; tabelul din PDF).
+Masurat live: ~0.4s pentru 3 ani.
+
 Actualizat manual 2026-08-10 (a sasea interventie): la cererea lui Andrei
 ("daca sunt mai multe facturi diferenta... ar trebui subliniate liniile cu
 facturile problema"), `find_candidate_invoices` (`etva/engine.py`, §5b)
