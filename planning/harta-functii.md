@@ -195,6 +195,55 @@ oficiale ANAF/ONRC/BPI:
   al portal.onrc.ro pentru sectiunea BPI gratuita "persoane publicate in
   BPI" - nu e un API documentat, deci integrarea va fi pe baza de sesiune).
 
+Actualizat manual 2026-08-11: **a treia sursa de date financiare - bilantul
+depus la ANAF** (`etva/anaf_bilant.py`, modul nou). Serviciu web OFICIAL
+ANAF, public, fara autentificare si fara cheie de API:
+`https://webservicesp.anaf.ro/bilant?an=YYYY&cui=NNN` (listat pe anaf.ro ca
+"informatii din situatiile financiare anuale"). Descoperit cautand raspuns
+la intrebarea lui Andrei "de unde mai pot lua informatii public de la ANAF".
+
+Ce aduce, confirmat live pe doua firme de marimi extreme (o
+microintreprindere cu 1 salariat si o corporatie cu ~2900 salariati -
+numerotarea I1..I20 a fost IDENTICA, deci maparea nu depinde de tipul de
+formular depus):
+- **Indicatorii 1-3 fara niciun efort**: I10 capitaluri, I7 datorii, I13
+  cifra de afaceri, I18/I19 profit/pierdere (unificate intr-un rezultat cu
+  semn). `sursa_date='bilant_anaf'` - a treia optiune, alaturi de SAF-T si
+  manual. Coloana `sursa_date` e `TEXT` fara `CHECK` in toate cele 3 locuri
+  de schema, deci valoarea noua NU a cerut nicio migrare.
+- **Precompletarea a doua bife de Sectiunea B**: I20 (numar mediu salariati)
+  -> `fara_salariati`, I1 (active imobilizate) -> `fara_bunuri`, printr-o
+  ruta noua `GET /api/risc-fiscal/bilant`.
+
+DECIZIE DE DESIGN, luata explicit impreuna cu Andrei: aceste doua bife se
+**precompleteaza**, NU se suprascriu server-side ca `declarat_inactiv` /
+`entitate_noua`. Motivul: acelea se verifica in timp real, pe cand bilantul
+e ANUAL si decalat (descrie 31 decembrie al ultimului exercitiu depus), deci
+o firma care a angajat luna trecuta ar aparea gresit "fara salariati". UI-ul
+precompleteaza, arata anul de referinta si cere confirmarea contabilului.
+Din acelasi motiv, raportul PDF afiseaza acum explicit sursa datelor
+(`_eticheta_sursa`), cu mentiunea "31 decembrie" pentru bilant.
+
+Securitate: la `sursa_date='bilant_anaf'` cifrele se iau EXCLUSIV
+server-side dupa CUI; orice valoare din formular e ignorata, ca un client sa
+nu poata trimite cifre inventate si sa le vada apoi in raport prezentate
+drept date oficiale ANAF (vezi testul
+`test_salveaza_risc_fiscal_sursa_bilant_ignora_cifrele_din_formular`).
+
+Bilantul e tratat ca o comoditate, nu ca o dependenta: `_bilant_anaf()` din
+`portal/app.py` inghite `AnafBilantError` si intoarce None, deci o
+defectiune la ANAF nu blocheaza o evaluare care se poate face si din SAF-T
+sau manual. CUI inexistent / an nedepus intorc HTTP 200 cu `"i": []`, deci
+"fara date" nu e o eroare - `extrage_bilant()` cauta implicit anul trecut si
+cade automat pe anul dinainte (necesar intre 1 ianuarie si termenul de
+depunere din mai).
+
+Verificat si respins ca surse de automatizare, in aceeasi cautare:
+"Lista contribuabililor fara obligatii restante" (aplicatie JSF cu
+ViewState, prea fragila de automatizat) si lista trimestriala de restantieri
+(publica doar sumele mari, 100.000-500.000 RON dupa categorie, deci ar rata
+sistematic clientii tipici ai aplicatiei).
+
 Actualizat manual 2026-08-10 (a sasea interventie): la cererea lui Andrei
 ("daca sunt mai multe facturi diferenta... ar trebui subliniate liniile cu
 facturile problema"), `find_candidate_invoices` (`etva/engine.py`, §5b)

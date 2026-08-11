@@ -85,6 +85,16 @@ def _mock_anaf_cui(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _mock_anaf_bilant(monkeypatch):
+    """Serviciul public de bilant al ANAF nu e atins niciodata din teste.
+    Implicit: "firma n-are bilant depus" (None) - testele care au nevoie de
+    date reale suprascriu explicit, ca sa fie evident in fiecare test de
+    unde vin cifrele."""
+    from etva import anaf_bilant
+    monkeypatch.setattr(anaf_bilant, "extrage_bilant", lambda cui, **kw: None)
+
+
+@pytest.fixture(autouse=True)
 def _mock_esemneaza(monkeypatch):
     """Contractele se semneaza prin eSemneaza.ro (nu mai exista semnatura
     desenata cu mouse-ul) - testele nu ating serviciul real. Implicit,
@@ -6376,6 +6386,118 @@ def test_salveaza_risc_fiscal_entitate_noua_pastreaza_bifa_daca_data_lipseste(ap
     assert body["override_sectiune_b"] is True
     assert "Entitate nou infiintata" in body["flaguri_risc_mare_active"]
     assert body["verificari_automate"]["entitate_noua_verificat_live"] is False
+
+
+_BILANT_EXEMPLU = {
+    "an": 2025, "denumire": "FIRMA TEST SRL", "caen": 6920,
+    "capitaluri_proprii": 531748.0, "datorii_totale": 32749.0,
+    "cifra_afaceri": 461057.0, "rezultat_net": 293631.0,
+    "active_imobilizate": 126754.0, "numar_salariati": 1,
+}
+
+
+def _mock_bilant(monkeypatch, bilant=None):
+    from etva import anaf_bilant
+    monkeypatch.setattr(anaf_bilant, "extrage_bilant",
+                        lambda cui, **kw: bilant or _BILANT_EXEMPLU)
+
+
+def test_salveaza_risc_fiscal_sursa_bilant_anaf_preia_datele_de_la_anaf(app, monkeypatch):
+    """A treia sursa de date financiare: nici fisier, nici tastare - doar
+    CUI-ul. Indicatorii 1-3 se calculeaza pe cifrele din ultimul bilant
+    depus la ANAF."""
+    c = _client_risc_fiscal_platit(app, "RO9050", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch)
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "sursa_date": "bilant_anaf"})
+    assert r.status_code == 200
+    body = r.get_json()
+    # Capitaluri 531748>0 -> 0p; datorii/capitaluri 0.06<=1 -> 0p;
+    # rezultat net 293631>0 -> 0p. Firma sanatoasa => scor 0.
+    assert body["scor_afisat"] == 0
+    assert body["clasificare"] == "scazut"
+
+    istoric = c.get("/api/risc-fiscal/istoric").get_json()
+    assert istoric[0]["sursa_date"] == "bilant_anaf"
+    assert istoric[0]["capitaluri_proprii"] == 531748.0
+    assert istoric[0]["datorii_totale"] == 32749.0
+    assert istoric[0]["cifra_afaceri"] == 461057.0
+    assert istoric[0]["rezultat_net"] == 293631.0
+
+
+def test_salveaza_risc_fiscal_sursa_bilant_ignora_cifrele_din_formular(app, monkeypatch):
+    """Cifrele "oficiale" nu se preiau nici partial din formular - altfel
+    un client ar putea trimite valori inventate si le-ar vedea apoi in
+    raport prezentate drept date de la ANAF."""
+    c = _client_risc_fiscal_platit(app, "RO9051", tip="direct", risc_fiscal_nivel="simplu")
+    _mock_bilant(monkeypatch)
+    r = c.post("/api/risc-fiscal/perioada", data={
+        "perioada": "2026-T2", "sursa_date": "bilant_anaf",
+        "capitaluri_proprii": "-999", "datorii_totale": "999999",
+        "cifra_afaceri": "1", "rezultat_net": "-999"})
+    assert r.status_code == 200
+    istoric = c.get("/api/risc-fiscal/istoric").get_json()
+    assert istoric[0]["capitaluri_proprii"] == 531748.0
+    assert istoric[0]["rezultat_net"] == 293631.0
+
+
+def test_salveaza_risc_fiscal_sursa_bilant_fara_date_da_eroare_utila(app):
+    """Mock-ul implicit intoarce None (fara bilant depus) - utilizatorul
+    trebuie indrumat catre celelalte doua surse, nu lasat cu o eroare seaca."""
+    c = _client_risc_fiscal_platit(app, "RO9052", tip="direct", risc_fiscal_nivel="simplu")
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "sursa_date": "bilant_anaf"})
+    assert r.status_code == 400
+    mesaj = r.get_json()["errors"][0]
+    assert "bilant" in mesaj.lower()
+    assert "SAF-T" in mesaj
+
+
+def test_salveaza_risc_fiscal_respinge_sursa_necunoscuta(app):
+    c = _client_risc_fiscal_platit(app, "RO9053", tip="direct", risc_fiscal_nivel="simplu")
+    r = c.post("/api/risc-fiscal/perioada",
+              data={"perioada": "2026-T2", "sursa_date": "inventata"})
+    assert r.status_code == 400
+
+
+def test_api_bilant_risc_fiscal_intoarce_datele_pentru_precompletare(app, monkeypatch):
+    c = _client_risc_fiscal_platit(app, "RO9054", tip="direct", risc_fiscal_nivel="complet")
+    _mock_bilant(monkeypatch)
+    r = c.get("/api/risc-fiscal/bilant")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["disponibil"] is True
+    assert body["an"] == 2025
+    assert body["numar_salariati"] == 1
+    assert body["active_imobilizate"] == 126754.0
+
+
+def test_api_bilant_risc_fiscal_semnaleaza_lipsa_datelor(app):
+    c = _client_risc_fiscal_platit(app, "RO9055", tip="direct", risc_fiscal_nivel="complet")
+    r = c.get("/api/risc-fiscal/bilant")
+    assert r.status_code == 200
+    assert r.get_json() == {"disponibil": False}
+
+
+def test_api_bilant_risc_fiscal_refuza_fara_modul_activat(app):
+    c = app.test_client()
+    inregistreaza(c, cui="RO9056", tip="direct")
+    r = c.get("/api/risc-fiscal/bilant")
+    assert r.status_code == 403
+
+
+def test_api_bilant_nu_crapa_daca_serviciul_anaf_pica(app, monkeypatch):
+    """O defectiune la ANAF nu trebuie sa dea 500 - bilantul e o
+    comoditate, nu o dependenta."""
+    from etva import anaf_bilant
+
+    def _boom(cui, **kw):
+        raise anaf_bilant.AnafBilantError("boom")
+    monkeypatch.setattr(anaf_bilant, "extrage_bilant", _boom)
+    c = _client_risc_fiscal_platit(app, "RO9057", tip="direct", risc_fiscal_nivel="complet")
+    r = c.get("/api/risc-fiscal/bilant")
+    assert r.status_code == 200
+    assert r.get_json() == {"disponibil": False}
 
 
 def test_salveaza_risc_fiscal_verificari_automate_include_sold_imobilizari_saft(app):

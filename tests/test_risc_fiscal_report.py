@@ -10,9 +10,35 @@ def _perioada(**suprascrie):
         "perioada": "2026-T2", "tip_raport": "complet", "scor_afisat": 42,
         "clasificare": "moderat", "scor_total_indicatori": 90,
         "scor_max_posibil": 220, "scor_detaliu": [], "flaguri_sectiune_b": {},
+        "sursa_date": "saft_d406",
     }
     de_baza.update(suprascrie)
     return de_baza
+
+
+def test_eticheta_sursa_acopera_toate_cele_trei_surse():
+    """Raportul trebuie sa spuna limpede de unde vin cifrele - in special
+    pentru bilantul ANAF, unde e esential ca cititorul sa stie ca sunt
+    anuale si decalate, nu din perioada evaluata."""
+    for sursa in ("saft_d406", "bilant_anaf", "manual"):
+        eticheta = rfr._eticheta_sursa(sursa)
+        assert len(eticheta) > 20
+        # Cheia interna (cu underscore) nu trebuie sa apara in textul afisat;
+        # cuvantul "manual" e in schimb perfect legitim intr-o fraza romaneasca.
+        assert "_" not in eticheta
+    assert "31 decembrie" in rfr._eticheta_sursa("bilant_anaf")
+
+
+def test_eticheta_sursa_nu_crapa_pe_valoare_lipsa_sau_necunoscuta():
+    assert rfr._eticheta_sursa(None)
+    assert rfr._eticheta_sursa("ceva_nou_nemapat") == "ceva_nou_nemapat"
+
+
+def test_generate_pdf_cu_sursa_bilant_anaf():
+    pdf = rfr.generate_pdf(firm_name="Firma Test SRL", firm_cui="RO12345678",
+                           client_name=None,
+                           perioada=_perioada(sursa_date="bilant_anaf"))
+    assert pdf[:4] == b"%PDF"
 
 
 def test_explicatie_flag_sectiune_b_raspunde_diferit_pe_da_si_nu():
@@ -52,7 +78,7 @@ def test_generate_pdf_nivel_complet_produce_pdf_valid():
         "fara_salariati": False, "fara_bunuri": False, "insolventa": False,
         "evidenta_speciala": False, "raport_inspectie_risc_mare": False,
         "comunicare_garda_financiara": False})
-    pdf = rfr.generate_pdf(firm_name="Firma Test SRL", firm_cui="RO44904111",
+    pdf = rfr.generate_pdf(firm_name="Firma Test SRL", firm_cui="RO12345678",
                            client_name=None, perioada=perioada)
     assert pdf[:4] == b"%PDF"
 
@@ -62,6 +88,6 @@ def test_generate_pdf_nivel_simplu_nu_afiseaza_sectiunea_b():
     explicatii nu trebuie construit (ar afisa 9 "Nu"-uri fara sens, cand de
     fapt nivelul nici nu colecteaza aceste date)."""
     perioada = _perioada(tip_raport="simplu", flaguri_sectiune_b={})
-    pdf = rfr.generate_pdf(firm_name="Firma Test SRL", firm_cui="RO44904111",
+    pdf = rfr.generate_pdf(firm_name="Firma Test SRL", firm_cui="RO12345678",
                            client_name="Client SRL", perioada=perioada)
     assert pdf[:4] == b"%PDF"

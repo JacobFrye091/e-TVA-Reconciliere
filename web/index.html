@@ -448,7 +448,7 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         0-100, <b>nu</b> e echivalent cu clasificarea oficială ANAF folosită la
         soluționarea cererilor de rambursare TVA.</p>
       <div class="field" id="campRfClient" style="display:none">
-        <label for="rfClient">Client</label><select id="rfClient" onchange="incarcaIstoricRiscFiscal()"></select>
+        <label for="rfClient">Client</label><select id="rfClient" onchange="incarcaIstoricRiscFiscal(); comutaSursaDateRiscFiscal()"></select>
       </div>
       <div class="field">
         <label>Sursa datelor financiare</label>
@@ -457,13 +457,18 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
             <input type="radio" name="rfSursaDate" id="rfSursaSaft" value="saft_d406" checked
                    onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Import din fișier SAF-T (D406)</label>
           <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
+            <input type="radio" name="rfSursaDate" id="rfSursaBilant" value="bilant_anaf"
+                   onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Bilanț depus la ANAF (automat)</label>
+          <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
             <input type="radio" name="rfSursaDate" id="rfSursaManual" value="manual"
                    onchange="comutaSursaDateRiscFiscal()" style="width:auto"> Completare manuală</label>
         </div>
         <p class="sub" style="margin-top:4px">Recomandăm SAF-T — cifrele vin direct din balanța contabilă
           (capitaluri proprii, datorii totale, cifra de afaceri, rezultat net), nu sunt tastate, deci rezultatul e
-          mai concret și mai aproape de realitate.</p>
+          mai concret și mai aproape de realitate. Bilanțul ANAF nu cere niciun fișier, dar e anual și decalat:
+          descrie situația la 31 decembrie a ultimului exercițiu depus, nu perioada curentă.</p>
       </div>
+      <div id="rfBilantInfo" class="sub" style="display:none;padding:10px 12px;border:1px solid var(--linie);border-radius:8px;margin-bottom:12px"></div>
       <div class="actiuni">
         <input id="rfPerioada" placeholder="Perioadă (ex: 2026-T2)" style="max-width:160px">
       </div>
@@ -511,9 +516,11 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="cazier_fiscal" style="width:auto"> Înscrieri în cazierul fiscal
             <span class="rf-hint" title="Firma sau administratorii ei au sancțiuni fiscale definitive înscrise în cazierul fiscal. Se cere exclusiv prin SPV-ul propriu al firmei (cu certificatul digital) - nu există o cautare publica dupa CUI, ca la TVA.">(?)</span></label>
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_salariati" style="width:auto"> Absența salariaților
-            <span class="rf-hint" title="Firma nu are niciun angajat cu carte de muncă. Se vede din REVISAL sau din declarația 112, dar de obicei o știi direct.">(?)</span></label>
+            <span class="chip neutru" style="font-size:10px;padding:1px 8px">precompletat din bilanț</span>
+            <span class="rf-hint" title="Firma nu are niciun angajat cu carte de muncă. Dacă alegi sursa 'Bilanț ANAF', precompletăm această bifă din numărul mediu de salariați raportat în bilanț - dar verific-o: bilanțul e anual, deci o angajare recentă nu apare încă în el.">(?)</span></label>
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="fara_bunuri" style="width:auto"> Lipsa bunurilor imobile sau mobile
-            <span class="rf-hint" title="Firma nu deține clădiri, terenuri, utilaje sau alte active semnificative. Se vede în bilanț, la imobilizări - dacă folosești SAF-T, îți arătăm după calcul soldul real al conturilor de imobilizări, ca să nu bifezi din memorie.">(?)</span></label>
+            <span class="chip neutru" style="font-size:10px;padding:1px 8px">precompletat din bilanț</span>
+            <span class="rf-hint" title="Firma nu deține clădiri, terenuri, utilaje sau alte active semnificative. Dacă alegi sursa 'Bilanț ANAF', precompletăm această bifă din totalul activelor imobilizate raportate - dar verific-o: bilanțul descrie 31 decembrie al ultimului exercițiu depus.">(?)</span></label>
           <label style="font-weight:normal"><input type="checkbox" class="rfFlag" value="insolventa" style="width:auto"> Procedură de insolvență deschisă
             <span class="rf-hint" title="Firma e în insolvență, reorganizare sau faliment. Se verifică public în Buletinul Procedurilor de Insolvență (BPI).">(?)</span></label>
         </div>
@@ -564,8 +571,55 @@ function comutaFormatJurnal() {
 
 function comutaSursaDateRiscFiscal() {
   const saft = document.getElementById('rfSursaSaft').checked;
-  document.getElementById('rfManualFields').style.display = saft ? 'none' : '';
+  const bilant = document.getElementById('rfSursaBilant').checked;
+  // La sursa "bilant ANAF" nu se completeaza si nu se incarca nimic -
+  // cifrele se iau server-side dupa CUI (vezi portal/app.py), deci ambele
+  // grupuri de campuri dispar.
+  document.getElementById('rfManualFields').style.display = (saft || bilant) ? 'none' : '';
   document.getElementById('rfSaftUpload').style.display = saft ? '' : 'none';
+  if (bilant) incarcaBilantRiscFiscal();
+  else document.getElementById('rfBilantInfo').style.display = 'none';
+}
+
+// Precompletare din ultimul bilant depus la ANAF. Deliberat NU suprascrie
+// bifele server-side, cum se intampla la "declarat inactiv"/"entitate noua":
+// acelea se verifica in timp real, pe cand bilantul e anual si decalat, deci
+// o firma care a angajat luna trecuta ar aparea gresit "fara salariati".
+// Precompletam, aratam anul de referinta, si lasam contabilul sa corecteze.
+async function incarcaBilantRiscFiscal() {
+  const info = document.getElementById('rfBilantInfo');
+  const clientId = campRfClient.style.display !== 'none' ? rfClient.value : '';
+  if (campRfClient.style.display !== 'none' && !clientId) {
+    info.style.display = 'none';
+    return;
+  }
+  info.style.display = '';
+  info.textContent = 'Se caută bilanțul depus la ANAF...';
+  const qs = clientId ? ('?client_id=' + encodeURIComponent(clientId)) : '';
+  let d;
+  try {
+    const r = await api('/api/risc-fiscal/bilant' + qs);
+    d = await r.json();
+  } catch (e) {
+    info.textContent = 'Nu am putut contacta serviciul de bilanț ANAF chiar acum.';
+    return;
+  }
+  if (!d.disponibil) {
+    info.textContent = 'Nu am găsit un bilanț depus la ANAF pentru acest CUI. '
+      + 'Folosește fișierul SAF-T sau completarea manuală.';
+    return;
+  }
+  const salariati = d.numar_salariati === 0 ? 'niciun salariat' : `${d.numar_salariati} salariați`;
+  info.innerHTML = `<b>Bilanț ANAF ${d.an}</b> — capitaluri proprii ${num(d.capitaluri_proprii)} RON, `
+    + `datorii ${num(d.datorii_totale)} RON, cifră de afaceri ${num(d.cifra_afaceri)} RON, `
+    + `rezultat net ${num(d.rezultat_net)} RON.<br>`
+    + `Am precompletat, din același bilanț, ${salariati} și `
+    + `${num(d.active_imobilizate)} RON active imobilizate. `
+    + `<b>Verifică cele două bife de mai jos</b> — bilanțul descrie 31 decembrie ${d.an}, `
+    + `deci poate fi depășit pentru perioada pe care o evaluezi.`;
+  const bifa = v => document.querySelector(`.rfFlag[value="${v}"]`);
+  if (bifa('fara_salariati')) bifa('fara_salariati').checked = d.numar_salariati === 0;
+  if (bifa('fara_bunuri')) bifa('fara_bunuri').checked = d.active_imobilizate === 0;
 }
 
 const TITLURI = { dashboard: 'Clienti si reconciliere', rezultate: 'Rezultate reconciliere',
@@ -960,17 +1014,20 @@ async function salveazaRiscFiscal() {
     return;
   }
   const sursaSaft = rfSursaSaft.checked;
+  const sursaBilant = rfSursaBilant.checked;
   const body = new FormData();
   if (campRfClient.style.display !== 'none') body.set('client_id', rfClient.value);
   body.set('perioada', rfPerioada.value.trim());
-  body.set('sursa_date', sursaSaft ? 'saft_d406' : 'manual');
+  body.set('sursa_date', sursaSaft ? 'saft_d406' : (sursaBilant ? 'bilant_anaf' : 'manual'));
   if (sursaSaft) {
     if (!rfSaftFile.files[0]) {
       rfEroare.textContent = 'Încarcă fișierul SAF-T (D406) sau treci pe completare manuală.';
       return;
     }
     body.set('saft_file', rfSaftFile.files[0]);
-  } else {
+  } else if (!sursaBilant) {
+    // La "bilant ANAF" nu trimitem nimic: serverul ia cifrele direct de la
+    // ANAF dupa CUI si ignora orice valoare din formular.
     body.set('capitaluri_proprii', rfCapitaluriProprii.value);
     body.set('datorii_totale', rfDatoriiTotale.value);
     body.set('cifra_afaceri', rfCifraAfaceri.value);

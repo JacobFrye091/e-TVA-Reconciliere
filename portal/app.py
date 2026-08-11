@@ -31,6 +31,7 @@ from etva import dbcompat
 from etva import pg
 from etva import audit, clients, cod_mappings
 from etva import anaf_cui
+from etva import anaf_bilant
 from etva import risc_fiscal
 from etva import risc_fiscal_store
 from etva import anaf_oauth
@@ -4409,6 +4410,49 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return None, "Alege clientul pentru care faci evaluarea de risc fiscal."
         return int(brut), None
 
+    def _cui_evaluat(fc, ident, client_id):
+        """CUI-ul entitatii evaluate: al clientului ales, sau al firmei
+        insasi cand se evalueaza pe sine (client_id None). Folosit de toate
+        verificarile automate la ANAF (inactivitate, data infiintarii,
+        bilant) - None daca clientul a disparut intre timp."""
+        if client_id is None:
+            return ident["firm_cui"]
+        rand = fc.execute(
+            "SELECT cui FROM clients WHERE id=?", (client_id,)).fetchone()
+        return rand["cui"] if rand else None
+
+    def _bilant_anaf(fc, ident, client_id):
+        """Ultimul bilant depus la ANAF pentru entitatea evaluata, sau None
+        daca nu exista / serviciul nu raspunde. Nu propaga niciodata
+        exceptii: bilantul e o comoditate (date luate automat), nu o
+        dependenta - o defectiune de retea nu trebuie sa blocheze o
+        evaluare pe care contabilul o poate face si din SAF-T sau manual."""
+        cui = _cui_evaluat(fc, ident, client_id)
+        if not cui:
+            return None
+        try:
+            return anaf_bilant.extrage_bilant(cui)
+        except (ValueError, anaf_bilant.AnafBilantError):
+            return None
+
+    @app.get("/api/risc-fiscal/bilant")
+    @require()
+    def bilant_risc_fiscal(ident):
+        """Datele din ultimul bilant depus la ANAF, pentru precompletarea
+        formularului (vezi web/index.html::incarcaBilantRiscFiscal). Doar
+        precompletare: alegerea finala ramane a contabilului, fiindca
+        bilantul e anual si decalat fata de perioada evaluata."""
+        if not ident.get("risc_fiscal_nivel"):
+            return jsonify({"errors": [
+                "Modulul Risc Fiscal nu e activat pentru firma ta."]}), 403
+        client_id, eroare = _client_id_din_request(ident)
+        if eroare:
+            return jsonify({"errors": [eroare]}), 400
+        bilant = _bilant_anaf(firm_conn(ident["firm_id"]), ident, client_id)
+        if bilant is None:
+            return jsonify({"disponibil": False})
+        return jsonify({"disponibil": True, **bilant})
+
     @app.post("/api/risc-fiscal/perioada")
     @require("reconciliere.creare")
     def salveaza_risc_fiscal_perioada(ident):
@@ -4426,12 +4470,30 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             return jsonify({"errors": ["Completeaza perioada (ex: 2026-T2)."]}), 400
 
         sursa_date = request.form.get("sursa_date", "manual").strip() or "manual"
-        if sursa_date not in ("manual", "saft_d406"):
+        if sursa_date not in ("manual", "saft_d406", "bilant_anaf"):
             return jsonify({"errors": [
-                "Sursa datelor financiare trebuie sa fie SAF-T sau manuala."]}), 400
+                "Sursa datelor financiare trebuie sa fie SAF-T, bilantul "
+                "ANAF sau completarea manuala."]}), 400
 
         saft_xml_original = None
-        if sursa_date == "saft_d406":
+        bilant = None
+        if sursa_date == "bilant_anaf":
+            # Datele vin DIRECT de la ANAF, pe baza CUI-ului - nu se preiau
+            # din formular nici macar partial, ca sa nu poata fi falsificate
+            # de client si prezentate apoi in raport drept "cifre oficiale".
+            bilant = _bilant_anaf(fc, ident, client_id)
+            if bilant is None:
+                return jsonify({"errors": [
+                    "Nu am gasit un bilant depus la ANAF pentru acest CUI "
+                    "(sau serviciul ANAF nu raspunde acum). Foloseste "
+                    "fisierul SAF-T sau completarea manuala."]}), 400
+            date_financiare = {
+                "capitaluri_proprii": bilant["capitaluri_proprii"],
+                "datorii_totale": bilant["datorii_totale"],
+                "cifra_afaceri": bilant["cifra_afaceri"],
+                "rezultat_net": bilant["rezultat_net"],
+            }
+        elif sursa_date == "saft_d406":
             fisier = request.files.get("saft_file")
             if fisier is None or not fisier.filename:
                 return jsonify({"errors": [
@@ -4484,12 +4546,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             # o bifa uitata/gresita cand putem intreba chiar sursa oficiala.
             # Daca serviciul ANAF nu raspunde acum, ramanem pe bifa manuala
             # (nu blocam evaluarea pentru o problema de retea trecatoare).
-            if client_id is not None:
-                rand_client = fc.execute(
-                    "SELECT cui FROM clients WHERE id=?", (client_id,)).fetchone()
-                cui_verificare = rand_client["cui"] if rand_client else None
-            else:
-                cui_verificare = ident["firm_cui"]
+            cui_verificare = _cui_evaluat(fc, ident, client_id)
             if cui_verificare:
                 try:
                     info_anaf_live = anaf_cui.verify_cui(cui_verificare)
@@ -4538,6 +4595,7 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 "entitate_noua_verificat_live": entitate_noua_verificat_live,
                 "data_inregistrare_anaf": (info_anaf_live or {}).get("data_inregistrare") or None,
                 "sold_imobilizari_saft": date_financiare.get("sold_imobilizari"),
+                "bilant_an": (bilant or {}).get("an"),
             }
         return jsonify({
             "id": rid, "scor_afisat": scor.scor_afisat,

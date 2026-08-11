@@ -64,12 +64,16 @@ _EXPLICATIE_FLAG_SECTIUNE_B = {
         "automat, la momentul fiecărei evaluări, din data reală de "
         "înregistrare - nu se bazează pe o declarație."),
     "fara_salariati": (
-        "Firma nu are niciun salariat cu carte de muncă înregistrat, conform "
-        "declarației contabilului.",
+        "Firma nu are niciun salariat cu carte de muncă înregistrat. Când "
+        "sursa datelor este bilanțul ANAF, acest răspuns este precompletat "
+        "din numărul mediu de salariați raportat în bilanț și confirmat "
+        "ulterior de contabil.",
         "Firma are cel puțin un salariat cu carte de muncă înregistrat."),
     "fara_bunuri": (
         "Firma nu deține bunuri imobile sau mobile semnificative (clădiri, "
-        "terenuri, utilaje) în patrimoniu, conform declarației contabilului.",
+        "terenuri, utilaje) în patrimoniu. Când sursa datelor este bilanțul "
+        "ANAF, acest răspuns este precompletat din totalul activelor "
+        "imobilizate raportate și confirmat ulterior de contabil.",
         "Firma deține bunuri imobile sau mobile înregistrate în patrimoniu."),
     "insolventa": (
         "Firma se află într-o procedură de insolvență, reorganizare judiciară "
@@ -104,6 +108,20 @@ def _explicatie_flag_sectiune_b(cheie: str, activ: bool) -> str:
     return da if activ else nu
 
 
+_ETICHETA_SURSA = {
+    "saft_d406": "fișier SAF-T (D406) încărcat de contabil, extras din "
+                 "balanța contabilă a perioadei evaluate",
+    "bilant_anaf": "bilanțul depus la ANAF, preluat automat pe baza CUI-ului "
+                   "din serviciul public de situații financiare anuale "
+                   "(cifre anuale, la 31 decembrie al ultimului exercițiu depus)",
+    "manual": "valori introduse manual de contabil",
+}
+
+
+def _eticheta_sursa(sursa_date: "str | None") -> str:
+    return _ETICHETA_SURSA.get(sursa_date or "manual", sursa_date or "necunoscută")
+
+
 def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
                  perioada: dict) -> bytes:
     """perioada: un rand din etva.risc_fiscal_store (dict cu scor_afisat/
@@ -135,6 +153,8 @@ def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
     elems.append(Paragraph(
         f"Evaluare {_ETICHETA_NIVEL.get(perioada['tip_raport'], perioada['tip_raport'])} "
         f"— perioada {perioada['perioada']}", body))
+    elems.append(Paragraph(
+        f"Sursa datelor financiare: {_eticheta_sursa(perioada.get('sursa_date'))}", small))
     elems.append(Spacer(1, 4 * mm))
 
     parti_tbl = Table([[
