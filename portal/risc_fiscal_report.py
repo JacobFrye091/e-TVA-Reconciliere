@@ -122,6 +122,29 @@ def _eticheta_sursa(sursa_date: "str | None") -> str:
     return _ETICHETA_SURSA.get(sursa_date or "manual", sursa_date or "necunoscută")
 
 
+TEXT_IN_DEZVOLTARE = (
+    "MODUL ÎN DEZVOLTARE — raport de test, nu de utilizat în relația cu "
+    "clientul sau cu autoritățile. Modulul nu este încă finalizat: unele "
+    "verificări sunt incomplete, iar modul de calcul se mai poate schimba."
+)
+
+
+def _caseta_in_dezvoltare(stil) -> Table:
+    """Bannerul de stadiu din capul raportului. Se afiseaza cat timp modulul
+    e in dezvoltare - PDF-ul circula independent de aplicatie (se salveaza,
+    se ataseaza pe email, ajunge in dosar), deci nu ne putem baza pe faptul
+    ca cititorul a vazut eticheta din interfata."""
+    tbl = Table([[Paragraph(TEXT_IN_DEZVOLTARE, stil)]], colWidths=[174 * mm])
+    tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.75, _ACCENT),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    return tbl
+
+
 def _ron(valoare) -> str:
     """Suma in format romanesc (punct la mii), pentru tabelul de evolutie."""
     if valoare is None:
@@ -156,6 +179,8 @@ def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
     scor_style = ParagraphStyle(
         "scor", fontName=pdf_fonts.BOLD, fontSize=28, leading=32,
         textColor=_CULOARE_CLASIFICARE.get(perioada["clasificare"], _INK))
+    avertisment = ParagraphStyle("avertisment", fontName=pdf_fonts.BOLD,
+                                 fontSize=9, textColor=_ACCENT, leading=12)
 
     elems = []
     elems.append(Paragraph("E-TVA RECONCILIERE", eyebrow))
@@ -165,6 +190,12 @@ def generate_pdf(*, firm_name: str, firm_cui: str, client_name: "str | None",
         f"— perioada {perioada['perioada']}", body))
     elems.append(Paragraph(
         f"Sursa datelor financiare: {_eticheta_sursa(perioada.get('sursa_date'))}", small))
+    elems.append(Spacer(1, 3 * mm))
+    # Avertisment de stadiu, obligatoriu cat timp modulul e in dezvoltare:
+    # raportul e un PDF care poate ajunge usor la clientul final sau intr-un
+    # dosar, deci nu se poate baza pe faptul ca cititorul a vazut eticheta
+    # "in dezvoltare" din aplicatie.
+    elems.append(_caseta_in_dezvoltare(avertisment))
     elems.append(Spacer(1, 4 * mm))
 
     parti_tbl = Table([[

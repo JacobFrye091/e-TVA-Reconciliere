@@ -244,6 +244,36 @@ ViewState, prea fragila de automatizat) si lista trimestriala de restantieri
 (publica doar sumele mari, 100.000-500.000 RON dupa categorie, deci ar rata
 sistematic clientii tipici ai aplicatiei).
 
+STARE ACTUALA A MODULULUI (2026-08-11, decizie Andrei): **RISC FISCAL E
+MARCAT "IN DEZVOLTARE"** - nu e gata pentru utilizatori. Marcajul e pus in
+TOATE locurile unde modulul se prezinta sau produce iesiri vizibile:
+- `docs/index.html` (pagina publica): cardul de prezentare, cardul de pret
+  (unde se spune explicit ca nu poate fi contractat si ca preturile sunt
+  orientative) si intrarea de FAQ.
+- `web/index.html` (SPA): eticheta pe titlul tab-ului + caseta de avertisment.
+- `portal/templates/alege_plan.html`: avertisment inainte de alegerea
+  nivelului (locul unde firma il contracteaza efectiv).
+- `portal/templates/master_nomenclator.html`: avertisment la configurarea
+  preturilor.
+- `portal/risc_fiscal_report.py`: banner in capul raportului PDF
+  (`TEXT_IN_DEZVOLTARE` + `_caseta_in_dezvoltare`). Obligatoriu fiindca
+  PDF-ul circula independent de aplicatie - se salveaza, se trimite pe
+  email, ajunge in dosar - deci cititorul poate sa nu fi vazut niciodata
+  eticheta din interfata.
+- `portal/risk_alerts.py`: prefix "[IN DEZVOLTARE]" in SUBIECTUL emailului
+  de alerta + avertisment in corp. Alerta pleaca automat, fara ca cineva
+  s-o citeasca inainte, deci stadiul trebuie vizibil din inbox.
+La lansare, cauta sirul "IN DEZVOLTARE" / "în dezvoltare" in aceste fisiere
+ca sa le scoti pe toate odata.
+
+ATENTIE la promovarea in productie: productia NU ruleaza pe acest VPS
+(cutover 2026-08-04 catre 92.114.3.68 - vezi [[etva-capacitate-server]]).
+Pe acest server, `etva-productie.service` e inactiv si dezactivat, iar
+checkout-ul din /opt/etva-productie/app e vechi (nu contine deloc modulul).
+Site-ul public ereconciliere.ro, servit de celalalt server, PREZINTA INCA
+modulul ca disponibil si vandabil - marcajele de mai sus ajung acolo doar
+la o promovare explicita in productie.
+
 Actualizat manual 2026-08-11 (a doua interventie): **verificare incrucisata
 + istoric multi-anual**, ambele pe acelasi serviciu de bilant.
 

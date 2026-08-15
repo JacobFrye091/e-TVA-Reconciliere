@@ -35,9 +35,16 @@ def _semnatura(perioada: dict) -> str:
 
 
 def _continut_email(client_nume: str, perioada: dict) -> "tuple[str, str]":
-    subiect = f"Risc fiscal ridicat detectat - {client_nume} ({perioada['perioada']})"
+    # Prefixul de stadiu ramane in SUBIECT cat timp modulul e in dezvoltare:
+    # alerta pleaca automat, fara ca cineva sa o citeasca inainte, deci
+    # destinatarul trebuie sa vada din inbox ca e un semnal de test.
+    subiect = (f"[IN DEZVOLTARE] Risc fiscal ridicat detectat - "
+               f"{client_nume} ({perioada['perioada']})")
     continut = (
         f"Buna ziua,\n\n"
+        f"ATENTIE: modulul de Risc Fiscal este inca IN DEZVOLTARE. Aceasta "
+        f"alerta e generata pentru testare - nu o folositi ca baza in relatia "
+        f"cu clientul sau cu autoritatile.\n\n"
         f"Evaluarea de risc fiscal pentru {client_nume}, perioada "
         f"{perioada['perioada']}, a fost clasificata RISC RIDICAT "
         f"(scor {perioada['scor_afisat']}/100).\n\n"

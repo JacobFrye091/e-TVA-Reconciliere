@@ -84,12 +84,17 @@
   </div>
 
   <div class="card">
-    <h2>Modul premium — Risc Fiscal</h2>
+    <h2>Modul premium — Risc Fiscal
+      <span class="chip" style="color:var(--warn);background:var(--warn-bg)">în dezvoltare</span></h2>
+    <p class="sub"><b>Modulul nu e încă gata de utilizare</b> — deocamdată se
+      activează doar pentru testare internă, nu pentru clienți reali.
+      Prețurile de mai jos se pot configura de pe acum, dar nu ar trebui
+      facturate până la lansare.</p>
     <p class="sub">Add-on lunar, separat de abonamentul standard — o firmă îl
       alege din <a href="/panou/plan">/panou/plan</a> (sau e forțat din
       tabelul de firme de mai sus). Nivelul „Simplu" oferă doar indicatorii
-      automatizabili (SAF-T + verificare ANAF); „Complet" adaugă și vectorul
-      fiscal completat manual de contabil.</p>
+      automatizabili (SAF-T, bilanțul ANAF sau completare manuală);
+      „Complet" adaugă și vectorul fiscal completat manual de contabil.</p>
     <form method="post" action="/master/nomenclator/risc-fiscal">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <table>

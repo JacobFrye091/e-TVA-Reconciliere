@@ -16,6 +16,30 @@ def _perioada(**suprascrie):
     return de_baza
 
 
+def test_raportul_poarta_avertismentul_de_modul_in_dezvoltare():
+    """Cat timp modulul e in dezvoltare, PDF-ul trebuie sa spuna asta pe el:
+    circula independent de aplicatie (se salveaza, se trimite pe email,
+    ajunge in dosar), deci cititorul poate sa nu fi vazut niciodata eticheta
+    din interfata."""
+    assert "DEZVOLTARE" in rfr.TEXT_IN_DEZVOLTARE.upper()
+    assert "nu de utilizat" in rfr.TEXT_IN_DEZVOLTARE
+
+    # Bannerul chiar ajunge in documentul generat, nu doar in constanta.
+    perioada = _perioada()
+    cu_banner = len(rfr.generate_pdf(
+        firm_name="Firma Test SRL", firm_cui="RO12345678",
+        client_name=None, perioada=perioada))
+    original = rfr._caseta_in_dezvoltare
+    try:
+        rfr._caseta_in_dezvoltare = lambda stil: rfr.Spacer(1, 0)
+        fara_banner = len(rfr.generate_pdf(
+            firm_name="Firma Test SRL", firm_cui="RO12345678",
+            client_name=None, perioada=perioada))
+    finally:
+        rfr._caseta_in_dezvoltare = original
+    assert cu_banner > fara_banner
+
+
 def test_eticheta_sursa_acopera_toate_cele_trei_surse():
     """Raportul trebuie sa spuna limpede de unde vin cifrele - in special
     pentru bilantul ANAF, unde e esential ca cititorul sa stie ca sunt
