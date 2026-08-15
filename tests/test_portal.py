@@ -7183,3 +7183,41 @@ def test_cost_modul_risc_fiscal_adauga_supliment_peste_pragul_inclus(app, monkey
         "SELECT suma FROM payments WHERE id=?", (plata2_id,)).fetchone()
     # abonament direct lunar (59) + risc fiscal simplu (200 + 2*50) = 359
     assert plata2["suma"] == round((59 + 200 + 100) * _multiplicator_tva(app), 2)
+
+
+@doar_postgres
+def test_conexiunea_de_rezerva_se_reconecteaza_dupa_ce_cade(app):
+    """Regresie: o conexiune de rezerva cazuta ramanea moarta pana la
+    repornirea procesului, iar TOATE firele de fundal (backup, remindere
+    trial, alerte risc fiscal, schimbari de plan) esuau tacut la fiecare
+    tick - observat pe testare 2026-08-15, 5 ore si jumatate.
+
+    Cererile HTTP nu erau afectate (iau conexiuni din pool), deci nimic nu
+    era vizibil in aplicatie - de aceea testul ataca exact calea folosita in
+    afara unui request."""
+    conn = app.portal_conn
+    # Sanatoasa inainte.
+    assert conn.execute("SELECT 1 AS x").fetchone()["x"] == 1
+
+    # Simuleaza caderea legaturii, exact cum o vede psycopg dupa ce serverul
+    # inchide conexiunea: obiectul ramane, dar marcat inchis.
+    vechi = conn._fallback
+    vechi.raw.close()
+    assert vechi.raw.closed
+
+    # Urmatoarea folosire trebuie sa se auto-vindece, nu sa arunce.
+    assert conn.execute("SELECT 1 AS x").fetchone()["x"] == 1
+    assert conn._fallback is not vechi, "trebuia inlocuita conexiunea moarta"
+    assert not conn._fallback.raw.closed
+
+
+@doar_postgres
+def test_conexiunea_de_rezerva_nu_se_inlocuieste_cand_e_sanatoasa(app):
+    """Reconectarea e doar o plasa de siguranta - nu trebuie sa arunce si
+    sa refaca legatura la fiecare apel (ar insemna o conexiune noua pe
+    fiecare comanda de scheduler)."""
+    conn = app.portal_conn
+    conn.execute("SELECT 1")
+    aceeasi = conn._fallback
+    conn.execute("SELECT 1")
+    assert conn._fallback is aceeasi

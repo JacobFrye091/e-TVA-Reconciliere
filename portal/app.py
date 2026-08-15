@@ -243,10 +243,36 @@ class _ReqScopedConn(dbcompat.ConnCompat):
     def __init__(self, fallback):
         self._fallback = fallback  # nu ConnCompat.__init__: nicio conexiune fizica statica aici
 
+    def _fallback_viu(self):
+        """Conexiunea de rezerva, reconectata daca a murit intre timp.
+
+        Fara asta, o conexiune cazuta ramanea moarta pana la repornirea
+        procesului, iar TOATE firele de fundal (backup, remindere trial,
+        alerte risc fiscal, schimbari de plan programate) esuau tacut la
+        fiecare tick - observat pe testare 2026-08-15: 5 ore si jumatate de
+        `OperationalError: the connection is closed` la fiecare 30 de
+        minute, reparat abia de un restart intamplator. Cererile HTTP nu
+        erau afectate (ele iau conexiuni din pool, care se reface singur),
+        deci nimic nu era vizibil in aplicatie.
+
+        Reconectarea e proactiva doar dupa ce psycopg a marcat conexiunea
+        inchisa - adica din al doilea tick dupa cadere. Nu incercam sa
+        reluam automat comanda care tocmai a esuat: pe un commit, de
+        exemplu, nu putem sti daca tranzactia a ajuns pe server inainte sa
+        cada legatura, iar o reluare oarba ar putea aplica de doua ori sau
+        raporta succes fals. Un singur tick pierdut, apoi auto-vindecare.
+        """
+        raw = getattr(self._fallback, "raw", None)
+        if raw is not None and getattr(raw, "closed", False):
+            print("[db] conexiunea de rezerva era inchisa - reconectez",
+                  flush=True)
+            self._fallback = dbcompat.connect(pg.dsn_from_env())
+        return self._fallback
+
     def _current(self):
         if has_request_context() and "db_conn" in g:
             return g.db_conn
-        return self._fallback
+        return self._fallback_viu()
 
     @property
     def raw(self):

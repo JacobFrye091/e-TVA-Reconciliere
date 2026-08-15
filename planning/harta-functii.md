@@ -244,6 +244,35 @@ ViewState, prea fragila de automatizat) si lista trimestriala de restantieri
 (publica doar sumele mari, 100.000-500.000 RON dupa categorie, deci ar rata
 sistematic clientii tipici ai aplicatiei).
 
+Actualizat manual 2026-08-15: **firele de fundal se reconecteaza la
+Postgres** (`portal/app.py::_ReqScopedConn._fallback_viu`).
+
+Bug gasit din intamplare, verificand log-urile dupa un deploy: conexiunea
+de rezerva (cea folosita in afara unui request HTTP) nu se reconecta
+niciodata. Odata cazuta, ramanea moarta pana la repornirea procesului, iar
+TOATE firele de fundal esuau tacut la fiecare tick - backup, remindere
+trial, alerte de risc fiscal, schimbari de plan programate. Masurat pe
+testare: `OperationalError: the connection is closed` la fiecare 30 de
+minute, din 18:08 pana la 23:38 (5 ore si jumatate), reparat abia de un
+restart intamplator. Postgres NU repornise in acel interval.
+
+De ce a trecut neobservat atat: cererile HTTP nu sunt afectate deloc - ele
+iau conexiuni din pool, care se reface singur - deci aplicatia parea
+perfect sanatoasa din exterior.
+
+Fix: `_current()` verifica `raw.closed` inainte sa intoarca conexiunea de
+rezerva si o reface daca a murit, cu o linie de log cand se intampla.
+Reconectarea e proactiva doar DUPA ce psycopg a marcat conexiunea inchisa
+(adica din al doilea tick dupa cadere) - deliberat NU se reia automat
+comanda esuata: pe un `commit`, de exemplu, nu se poate sti daca
+tranzactia a ajuns pe server inainte sa cada legatura, iar o reluare oarba
+ar putea aplica de doua ori sau raporta succes fals. Deci: un singur tick
+pierdut, apoi auto-vindecare, in loc de blocare pana la restart.
+
+Testele (`test_conexiunea_de_rezerva_*`, doar Postgres) au fost verificate
+ca prind chiar bug-ul: cu comportamentul vechi injectat, esueaza cu exact
+`OperationalError: the connection is closed`.
+
 Actualizat manual 2026-08-15: **facturile cu probleme se vad imediat**, la
 cererea lui Andrei ("utilizatorul trebuie sa stie imediat care sunt
 facturile cu probleme").
