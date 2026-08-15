@@ -1511,6 +1511,115 @@ def test_facturi_endpoint_marks_matching_invoice_as_candidat(app):
     assert by_doc["F2"]["candidat"] is True
 
 
+def test_facturi_suspecte_aduna_candidatii_din_toate_liniile(app):
+    """Lista consolidata raspunde direct la "care facturi am de verificat",
+    fara sa fie nevoie sa deschizi linie cu linie."""
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         100.0, 21.0, _eticheta_model("vanzari", "9")),
+        ("2026-06-02", "F2", "Client B", "RO222",
+         60.5, 12.705, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 100.0, "RD9_TVA": 21.0}).encode()
+    rid = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data").get_json()["id"]
+
+    d = c.get(f"/api/reconciliations/{rid}/facturi-suspecte").get_json()
+    docs = {f["invoice_no"]: f for f in d["facturi"]}
+    # Doar factura care explica diferenta apare, nu si cea corecta.
+    assert set(docs) == {"F2"}
+    assert docs["F2"]["motiv"] == "candidat"
+    # Fiecare factura stie de pe ce linie vine, ca sa fie gasita in decont.
+    assert docs["F2"]["line_no"] == "9"
+
+
+def test_facturi_suspecte_explica_liniile_unde_anaf_are_mai_mult(app):
+    """Cazul care altfel ar trece tacut: cand ANAF are mai mult decat
+    jurnalul, heuristica nici nu cauta (vinovatul lipseste din jurnal), deci
+    linia trebuie sa apara cu explicatie, nu sa dispara ca "fara probleme"."""
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         100.0, 21.0, _eticheta_model("vanzari", "9")),
+    ])
+    # ANAF are 500/105, firma doar 100/21 -> delta negativa.
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 500.0, "RD9_TVA": 105.0}).encode()
+    rid = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data").get_json()["id"]
+
+    d = c.get(f"/api/reconciliations/{rid}/facturi-suspecte").get_json()
+    assert d["facturi"] == []
+    assert len(d["linii_neelucidate"]) == 1
+    linie = d["linii_neelucidate"][0]
+    assert linie["line_no"] == "9"
+    assert linie["motiv"] == "lipsa_in_jurnal"
+    assert "lipsa din jurnal" in linie["explicatie"]
+
+
+def test_facturi_suspecte_gol_cand_totul_corespunde(app):
+    import json as _json
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    company_file = _model_bytes("vanzari", [
+        ("2026-06-01", "F1", "Client A", "RO111",
+         100.0, 21.0, _eticheta_model("vanzari", "9")),
+    ])
+    anaf_json = _json.dumps({"CIF": "111", "AN": 2026, "LUNA": 6,
+                            "RD9_VAL": 100.0, "RD9_TVA": 21.0}).encode()
+    rid = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06", "format_jurnal": "model",
+        "company_file": (company_file, "vanzari.xlsx"),
+        "anaf_file": (_io.BytesIO(anaf_json), "decont.json"),
+    }, content_type="multipart/form-data").get_json()["id"]
+
+    d = c.get(f"/api/reconciliations/{rid}/facturi-suspecte").get_json()
+    assert d == {"facturi": [], "linii_neelucidate": []}
+
+
+def test_facturi_suspecte_refuza_modul_pe_categorii(app):
+    """In modul pe categorii diferentele sunt deja per factura, deci lista
+    consolidata n-are rost - frontend-ul trateaza 404 ca "nu se aplica"."""
+    import pandas as _pd
+    c = app.test_client()
+    inregistreaza(c)
+    cid = c.post("/api/clients",
+                 json={"cui": "RO999", "name": "Client X", "gdpr_confirmat": True}).get_json()["id"]
+    randuri = _pd.DataFrame({
+        "cui_partener": ["RO999"], "nr_factura": ["F1"], "data": ["2026-06-01"],
+        "baza": [100.0], "tva": [19.0], "categorie": ["livrari_interne"]})
+    company_buf, anaf_buf = _io.BytesIO(), _io.BytesIO()
+    randuri.to_csv(company_buf, index=False); company_buf.seek(0)
+    randuri.to_csv(anaf_buf, index=False); anaf_buf.seek(0)
+
+    r = c.post("/api/reconciliations", data={
+        "client_id": str(cid), "period": "2026-06",
+        "company_file": (company_buf, "j.csv"),
+        "anaf_file": (anaf_buf, "a.csv"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200 and r.get_json()["mode"] == "invoices"
+    rid = r.get_json()["id"]
+    assert c.get(f"/api/reconciliations/{rid}/facturi-suspecte").status_code == 404
+
+
 def test_facturi_endpoint_marks_three_invoices_as_candidat(app):
     import json as _json
     c = app.test_client()

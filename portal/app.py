@@ -4335,16 +4335,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                 return d
         return None
 
-    @app.get("/api/reconciliations/<int:rid>/facturi")
-    @require()
-    def get_reconciliation_facturi(ident, rid):
-        fc = firm_conn(ident["firm_id"])
-        if _reconciliation_mode(fc, rid) != "d300_lines":
-            return jsonify({"error": "Detaliul pe facturi e disponibil doar "
-                                     "pentru reconcilierile pe linii D300."}), 404
-        linie = (request.args.get("linie") or "").strip()
-        if linie not in D300_LINES:
-            return jsonify({"error": "Linie D300 necunoscuta."}), 400
+    def _facturi_liniei(fc, rid, linie):
+        """Facturile firmei de pe `linie`, fiecare marcata candidat/
+        aproximativ dupa heuristica din etva/engine.py. Extras ca helper ca
+        sa fie folosit si de drill-down-ul per linie, si de lista
+        consolidata a facturilor de verificat."""
         rows = _load_company_invoices(fc, rid, resolve_invoice_lines(linie))
         delta = _load_line_delta(fc, rid, linie)
         candidati = (find_candidate_invoices(rows, delta["delta_base"], delta["delta_vat"])
@@ -4356,7 +4351,104 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         for i, r in enumerate(rows):
             r["candidat"] = i in candidati
             r["aproximativ"] = i in apropiate
-        return jsonify(rows)
+        return rows
+
+    @app.get("/api/reconciliations/<int:rid>/facturi")
+    @require()
+    def get_reconciliation_facturi(ident, rid):
+        fc = firm_conn(ident["firm_id"])
+        if _reconciliation_mode(fc, rid) != "d300_lines":
+            return jsonify({"error": "Detaliul pe facturi e disponibil doar "
+                                     "pentru reconcilierile pe linii D300."}), 404
+        linie = (request.args.get("linie") or "").strip()
+        if linie not in D300_LINES:
+            return jsonify({"error": "Linie D300 necunoscuta."}), 400
+        return jsonify(_facturi_liniei(fc, rid, linie))
+
+    # Plafon de siguranta pentru cautarea automata la incarcarea paginii.
+    # Masurat pe cazul cel mai prost (delta care nu se potriveste cu nimic,
+    # deci se epuizeaza toate marimile de subset): ~0.06s pentru o linie cu
+    # 50-200 de facturi, si SCADE sub 0.01s peste 500, fiindca plafonul de
+    # combinatii din etva/engine.py taie cautarea devreme. Deci 12 linii
+    # inseamna sub o secunda in cel mai rau caz - plafonul e o plasa de
+    # siguranta pentru date patologice, nu o optimizare necesara. Liniile
+    # peste plafon raman disponibile la cerere ("Vezi facturile").
+    MAX_LINII_CAUTATE_AUTOMAT = 12
+
+    def _facturi_suspecte(fc, rid):
+        """(facturi, linii_neelucidate) pentru o reconciliere pe linii D300.
+
+        `facturi` sunt cele de verificat, adunate dintr-o singura trecere
+        peste liniile cu diferente, ca utilizatorul sa vada imediat CARE
+        facturi conteaza fara sa deschida linie cu linie.
+
+        `linii_neelucidate` sunt liniile cu diferenta reala pentru care nu
+        exista (sau nu s-a putut identifica) o factura vinovata printre cele
+        ale firmei. Fara ele, o linie cu problema ar disparea tacut din
+        raport ca "nimic de verificat" - vezi motivele din _motiv_linie."""
+        diferente = [json.loads(r["details"]) for r in fc.execute(
+            "SELECT details FROM differences WHERE reconciliation_id=?", (rid,))]
+        diferente.sort(key=lambda d: abs(d.get("delta_vat") or 0), reverse=True)
+
+        facturi, neelucidate = [], []
+        for poz, d in enumerate(diferente):
+            linie = d.get("line_no")
+            if not linie:
+                continue
+            if poz >= MAX_LINII_CAUTATE_AUTOMAT:
+                neelucidate.append({**_rezumat_linie(d),
+                                    "motiv": "necautat",
+                                    "explicatie": "Prea multe linii cu diferente pentru "
+                                                  "cautare automata - deschide linia din "
+                                                  "tabelul de mai jos."})
+                continue
+            marcate = [f for f in _facturi_liniei(fc, rid, linie)
+                      if f["candidat"] or f["aproximativ"]]
+            if marcate:
+                for f in marcate:
+                    facturi.append({**f, "line_no": linie,
+                                    "label": d.get("label", ""),
+                                    "motiv": "candidat" if f["candidat"] else "aproximativ"})
+            else:
+                neelucidate.append({**_rezumat_linie(d), **_motiv_linie(d)})
+        return facturi, neelucidate
+
+    @app.get("/api/reconciliations/<int:rid>/facturi-suspecte")
+    @require()
+    def get_reconciliation_facturi_suspecte(ident, rid):
+        fc = firm_conn(ident["firm_id"])
+        if _reconciliation_mode(fc, rid) != "d300_lines":
+            return jsonify({"error": "Detaliul pe facturi e disponibil doar "
+                                     "pentru reconcilierile pe linii D300."}), 404
+        facturi, neelucidate = _facturi_suspecte(fc, rid)
+        return jsonify({"facturi": facturi, "linii_neelucidate": neelucidate})
+
+    def _rezumat_linie(d):
+        return {"line_no": d.get("line_no"), "label": d.get("label", ""),
+                "delta_base": d.get("delta_base"), "delta_vat": d.get("delta_vat"),
+                "diff_type": d.get("diff_type")}
+
+    def _motiv_linie(d):
+        """De ce n-avem nicio factura de aratat pentru o linie cu diferenta.
+
+        Cazul important e delta negativa: heuristica nici nu cauta atunci
+        (vezi find_candidate_invoices), fiindca daca ANAF are mai mult decat
+        firma, vinovatul nu poate fi printre facturile firmei - lipseste una.
+        Fara explicatia asta, linia ar parea rezolvata."""
+        delta_base = d.get("delta_base") or 0
+        if d.get("diff_type") == "lipsa_la_companie" or delta_base < 0:
+            return {"motiv": "lipsa_in_jurnal",
+                    "explicatie": "ANAF are inregistrat mai mult decat jurnalul firmei — "
+                                  "cauza e o factura lipsa din jurnal, nu una dintre cele "
+                                  "existente."}
+        if d.get("diff_type") == "lipsa_in_anaf":
+            return {"motiv": "lipsa_la_anaf",
+                    "explicatie": "Linia exista in jurnalul firmei, dar deloc in evidenta "
+                                  "ANAF — de verificat daca facturile au ajuns la ANAF."}
+        return {"motiv": "fara_potrivire",
+                "explicatie": "Nicio combinatie de facturi nu explica diferenta — "
+                              "posibil mai multe cauze simultan sau o eroare de "
+                              "incadrare pe linie."}
 
     @app.get("/api/reconciliations/<int:rid>/export")
     @require("rapoarte.export")
@@ -4380,8 +4472,11 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
             comp = _load_lines(fc, rid, "invoices_company")
             anaf = _load_lines(fc, rid, "invoices_anaf")
             result = reconcile_d300(comp, anaf)
+            facturi, neelucidate = _facturi_suspecte(fc, rid)
             export_mod.write_report_lines(result, suggest_d300_lines(result),
-                                          path, nume_raport, row["period"])
+                                          path, nume_raport, row["period"],
+                                          facturi_suspecte=facturi,
+                                          linii_neelucidate=neelucidate)
         else:
             comp = _load_rows(fc, rid, "invoices_company")
             anaf = _load_rows(fc, rid, "invoices_anaf")

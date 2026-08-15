@@ -244,6 +244,47 @@ ViewState, prea fragila de automatizat) si lista trimestriala de restantieri
 (publica doar sumele mari, 100.000-500.000 RON dupa categorie, deci ar rata
 sistematic clientii tipici ai aplicatiei).
 
+Actualizat manual 2026-08-15: **facturile cu probleme se vad imediat**, la
+cererea lui Andrei ("utilizatorul trebuie sa stie imediat care sunt
+facturile cu probleme").
+
+Context masurat inainte de a decide: in productie, TOATE cele 16
+reconcilieri reale sunt in modul `d300_lines` - modul pe categorii e
+practic nefolosit. In modul pe categorii diferentele erau deja per factura
+(deci intrebarea era deja rezolvata acolo), dar in `d300_lines` utilizatorul
+vedea doar LINII cu delta si trebuia sa apese "Vezi facturile" pe fiecare,
+una cate una, ca sa descopere care factura e de vina. Informatia exista
+(heuristica din `etva/engine.py`), dar era ascunsa in spatele a N click-uri.
+
+Ce s-a adaugat:
+- `portal/app.py::_facturi_liniei` - extras din ruta de drill-down, ca sa
+  fie refolosit; `_facturi_suspecte(fc, rid)` aduna candidatii din TOATE
+  liniile cu diferente intr-o singura trecere.
+- Ruta noua `GET /api/reconciliations/<id>/facturi-suspecte`, plus cardul
+  "Facturi de verificat" si contorul din capul paginii (`web/index.html`),
+  incarcate automat dupa rezultate.
+- Foaia "Facturi de verificat" in exportul Excel, asezata PRIMA
+  (`etva/export.py::write_report_lines`, argumente noi optionale deci
+  apelantii vechi primesc acelasi fisier ca inainte).
+
+Decizia care conteaza cel mai mult aici - `linii_neelucidate`: heuristica
+NU cauta cand delta e negativa (daca ANAF are mai mult decat firma,
+vinovatul nu poate fi printre facturile firmei - lipseste una). Fara
+tratare explicita, o astfel de linie ar aparea tacut ca "nimic de
+verificat", desi are o problema reala. De aceea liniile fara candidat sunt
+raportate separat, cu motivul lor (`_motiv_linie`): lipsa in jurnal, lipsa
+la ANAF, fara potrivire, sau necautat (peste plafon).
+
+Plafonul `MAX_LINII_CAUTATE_AUTOMAT = 12` e o plasa de siguranta, nu o
+optimizare: masurat pe cazul cel mai prost (delta care nu se potriveste cu
+nimic), o linie costa ~0.06s la 50-200 de facturi si SCADE sub 0.01s peste
+500, fiindca plafonul de combinatii din engine taie devreme.
+
+NU s-a facut lista completa a tuturor facturilor cu cele problematice
+colorate (varianta ceruta literal): la sute-mii de facturi pe perioada ar
+muta aceeasi frustrare in alta parte. Ramane disponibila daca Andrei o cere
+explicit.
+
 STARE ACTUALA A MODULULUI (2026-08-11, decizie Andrei): **RISC FISCAL E
 MARCAT "IN DEZVOLTARE"** - nu e gata pentru utilizatori. Marcajul e pus in
 TOATE locurile unde modulul se prezinta sau produce iesiri vizibile:

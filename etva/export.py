@@ -13,6 +13,14 @@ _SUMAR_HEADER = ["Categorie", "Baza firma", "TVA firma", "Baza ANAF",
 _DIFF_HEADER = ["Tip diferenta", "CUI partener", "Nr factura", "Categorie",
                 "Baza firma", "TVA firma", "Baza ANAF", "TVA ANAF",
                 "Delta baza", "Delta TVA"]
+_SUSPECTE_HEADER = ["Document", "Data", "CUI partener", "Baza", "TVA",
+                    "Linie D300", "De ce"]
+_NEELUCIDATE_HEADER = ["Linie", "Denumire", "Delta baza", "Delta TVA",
+                       "Explicatie"]
+_MOTIV_SUSPECT = {
+    "candidat": "Posibila cauza — suma explica exact diferenta",
+    "aproximativ": "Cea mai apropiata suma gasita (nu explica exact diferenta)",
+}
 
 
 def write_report(result, suggestions, path, client_name, period) -> None:
@@ -57,9 +65,17 @@ _DIFF_HEADER_LINII = ["Tip diferenta", "Linie D300", "Denumire",
                       "Delta baza", "Delta TVA"]
 
 
-def write_report_lines(result, suggestions, path, client_name, period) -> None:
+def write_report_lines(result, suggestions, path, client_name, period,
+                       facturi_suspecte=None, linii_neelucidate=None) -> None:
     """Same report layout as write_report, but for D300-line-level results
-    (real ANAF e-TVA precompleted document — no invoice detail)."""
+    (real ANAF e-TVA precompleted document — no invoice detail).
+
+    `facturi_suspecte`/`linii_neelucidate` (optionale, vezi
+    portal/app.py::_facturi_suspecte) adauga foaia "Facturi de verificat",
+    asezata PRIMA fiindca e raspunsul la intrebarea cu care incepe orice
+    verificare: de unde incep. Fara ea, raportul dus la dosar ar arata doar
+    liniile cu diferente, iar contabilul ar trebui sa revina in aplicatie ca
+    sa afle care facturi sunt de fapt de verificat."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sumar"
@@ -89,4 +105,30 @@ def write_report_lines(result, suggestions, path, client_name, period) -> None:
                    c["base"] if c else "", c["vat"] if c else "",
                    a["base"] if a else "", a["vat"] if a else "",
                    d["delta_base"], d["delta_vat"]])
+
+    if facturi_suspecte or linii_neelucidate:
+        wf = wb.create_sheet("Facturi de verificat", 0)
+        wf.append(_SUSPECTE_HEADER)
+        for cell in wf[1]:
+            cell.font = _BOLD
+        for f in (facturi_suspecte or []):
+            wf.append([f.get("invoice_no", ""), f.get("date", ""),
+                       f.get("partner_cui", ""), f.get("base"), f.get("vat"),
+                       f.get("line_no", ""),
+                       _MOTIV_SUSPECT.get(f.get("motiv"), f.get("motiv", ""))])
+            if f.get("motiv") == "candidat":
+                for cell in wf[wf.max_row]:
+                    cell.fill = _RED
+        if linii_neelucidate:
+            wf.append([])
+            wf.append(["Linii cu diferenta fara factura identificabila — "
+                       "cauza nu e printre facturile din jurnal:"])
+            wf[wf.max_row][0].font = _BOLD
+            wf.append(_NEELUCIDATE_HEADER)
+            for cell in wf[wf.max_row]:
+                cell.font = _BOLD
+            for l in linii_neelucidate:
+                wf.append([l.get("line_no", ""), l.get("label", ""),
+                           l.get("delta_base"), l.get("delta_vat"),
+                           l.get("explicatie", "")])
     wb.save(path)

@@ -398,6 +398,12 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       </div>
       <p id="mapareErr" class="eroare"></p>
     </div>
+    <div class="card" id="cardFacturiSuspecte" style="display:none">
+      <h3>Facturi de verificat</h3>
+      <p class="sub" id="subFacturiSuspecte"></p>
+      <table id="tabelFacturiSuspecte"></table>
+      <div id="liniiNeelucidate"></div>
+    </div>
     <div class="card">
       <h3 id="titluSumar">Sumar pe categorii</h3>
       <p class="sub" id="subSumar">Valorile sugerate pentru D300 pornesc de la datele ANAF acolo unde exista diferente — de verificat inainte de depunere.</p>
@@ -1203,6 +1209,9 @@ async function ruleazaReconciliere() {
     navRezultate.style.display = '';
     afiseazaRezultate(body);
     navigheaza('rezultate');
+    // Necesita reconCurent deja setat; nu se asteapta dupa ea, ca rezultatele
+    // sa apara imediat, iar lista de facturi sa se completeze cand e gata.
+    incarcaFacturiSuspecte();
   } catch (e) {
     reconErr.textContent = 'A aparut o eroare neasteptata. Incearca din nou sau contacteaza suportul.';
   } finally {
@@ -1268,7 +1277,13 @@ function afiseazaRezultate(b) {
        <div class="sub-val">firma minus ANAF</div></div>` +
     `<div><div class="et">Diferente gasite</div>
        <div class="val ${nProbleme ? 'rau' : 'bun'}">${nProbleme}</div>
-       <div class="sub-val">${nProbleme ? 'necesita verificare' : 'totul corespunde'}</div></div>`;
+       <div class="sub-val">${nProbleme ? (peLinii ? 'linii de verificat' : 'necesita verificare')
+                                        : 'totul corespunde'}</div></div>` +
+    (peLinii
+      ? `<div><div class="et">Facturi de verificat</div>
+           <div class="val" id="valFacturiSuspecte">—</div>
+           <div class="sub-val" id="subValFacturiSuspecte">se cauta...</div></div>`
+      : '');
 
   ultimulUnmapped = b.unmapped || [];
   ultimulValidLines = b.valid_lines || {};
@@ -1355,6 +1370,66 @@ function afiseazaRezultate(b) {
       `<td class="num ${d.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(d.delta_vat)}</td></tr>`).join('') ||
     '<tr><td colspan="6" class="gol">Nicio diferenta — jurnalul firmei corespunde cu evidenta ANAF.</td></tr>') +
     '</tbody>';
+}
+
+// Lista consolidata a facturilor de verificat, incarcata automat dupa
+// afisarea rezultatelor: fara ea, utilizatorul ar trebui sa deschida linie
+// cu linie ca sa afle CARE facturi sunt de verificat.
+async function incarcaFacturiSuspecte() {
+  cardFacturiSuspecte.style.display = 'none';
+  if (!reconCurent) return;
+  let d;
+  try {
+    const r = await api(`/api/reconciliations/${reconCurent}/facturi-suspecte`);
+    if (!r.ok) return;              // mod pe categorii: diferentele sunt deja pe factura
+    d = await r.json();
+  } catch (e) { return; }
+
+  const facturi = d.facturi || [], neelucidate = d.linii_neelucidate || [];
+  const contor = document.getElementById('valFacturiSuspecte');
+  if (contor) {
+    contor.textContent = facturi.length;
+    contor.className = 'val ' + (facturi.length ? 'rau' : 'bun');
+    document.getElementById('subValFacturiSuspecte').textContent =
+      facturi.length ? 'posibile cauze' : (neelucidate.length ? 'niciuna identificata' : 'nimic de verificat');
+  }
+  if (!facturi.length && !neelucidate.length) return;
+  cardFacturiSuspecte.style.display = '';
+
+  subFacturiSuspecte.textContent = facturi.length
+    ? `${facturi.length} ${facturi.length === 1 ? 'factură identificată' : 'facturi identificate'} ` +
+      'ca posibilă cauză a diferențelor. Verifică-le pe acestea întâi.'
+    : 'Nu am putut identifica facturi anume — vezi explicațiile de mai jos.';
+
+  tabelFacturiSuspecte.style.display = facturi.length ? '' : 'none';
+  tabelFacturiSuspecte.innerHTML = !facturi.length ? '' :
+    '<thead><tr><th>Document</th><th>Data</th><th>CUI partener</th>' +
+    '<th class="num">Baza</th><th class="num">TVA</th><th>Linie D300</th>' +
+    '<th>De ce</th></tr></thead><tbody>' +
+    facturi.map(f =>
+      `<tr class="${f.motiv === 'candidat' ? 'factura-problema' : 'factura-apropiata'}">` +
+      `<td class="cod">${f.invoice_no || ''}</td><td>${f.date || ''}</td>` +
+      `<td class="cod">${f.partner_cui || ''}</td>` +
+      `<td class="num">${num(f.base)}</td><td class="num">${num(f.vat)}</td>` +
+      `<td class="cod" title="${f.label || ''}">${f.line_no}</td>` +
+      `<td>${f.motiv === 'candidat'
+              ? '<span class="chip problema">Posibilă cauză</span>'
+              : '<span class="chip atentie" title="Nu explică exact diferența, dar e cea ' +
+                'mai apropiată sumă găsită.">Cea mai apropiată</span>'}</td></tr>`
+    ).join('') + '</tbody>';
+
+  liniiNeelucidate.innerHTML = !neelucidate.length ? '' :
+    '<p class="sub" style="margin-top:14px"><b>Linii cu diferență fără factură identificabilă</b> — ' +
+    'nu înseamnă că sunt în regulă, ci că vinovatul nu e printre facturile din jurnal:</p>' +
+    '<table style="margin:0"><thead><tr><th>Linie</th><th>Denumire</th>' +
+    '<th class="num">Delta baza</th><th class="num">Delta TVA</th><th>Explicație</th>' +
+    '</tr></thead><tbody>' +
+    neelucidate.map(l =>
+      `<tr><td class="cod">${l.line_no}</td><td>${l.label || ''}</td>` +
+      `<td class="num ${l.delta_base < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(l.delta_base || 0)}</td>` +
+      `<td class="num ${l.delta_vat < 0 ? 'delta-neg' : 'delta-poz'}">${numDelta(l.delta_vat || 0)}</td>` +
+      `<td class="sub" style="margin:0">${l.explicatie || ''}</td></tr>`
+    ).join('') + '</tbody></table>';
 }
 
 function exporta() {
