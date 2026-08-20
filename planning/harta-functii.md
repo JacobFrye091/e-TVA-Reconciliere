@@ -458,6 +458,32 @@ Notatie: `->` inseamna "apeleaza". Functiile cu prefix `_` sunt helper-e
 private (nu sunt rute/API public). `(extern)` = apelata doar din afara
 modulului ei, fara sa apeleze nimic notabil intern.
 
+Actualizat manual 2026-08-20: **sugestie de mapare pentru codurile TVA
+neclasificate** ("opinia platformei"). Modul nou `etva/cod_sugestii.py`
+(§5t) - un al DOILEA strat de clasificare, care ruleaza exclusiv peste
+codurile ramase in lista `unmapped` dupa `d300.suggest_line()` si propune
+o linie D300 cu incredere (`ridicata`/`medie`/`scazuta`) si motiv scris in
+romana. `suggest_line()` NU a fost atins: el ramane conservator tocmai
+pentru ca rezultatul lui se aplica automat, pe cand sugestiile trec
+obligatoriu prin confirmarea manuala existenta. Ruta noua
+`POST /api/cod-mapari/sugestii` (§3, `sugestii_cod_mapare`) cu doua moduri
+de intrare - JSON (lista deja stiuta de browser, din cardul "Coduri TVA
+neclasificate") si multipart (parseaza jurnalele DOAR pentru analiza, fara
+sa creeze o reconciliere si fara decont ANAF, pentru butonul din formular).
+In SPA, picker-ul de mapare a devenit un component partajat de cele doua
+ecrane (§2), iar `POST /api/cod-mapari` primeste un camp optional `sursa`
+(`sugestie`/`manual`) inregistrat doar in jurnalul de audit. Zero schimbari
+de schema - sugestiile nu se persista, iar maparea confirmata intra tot in
+tabela `cod_mappings` existenta.
+
+Constatare ramasa deschisa, gasita cu ocazia asta: `D300_LINES` e asimetric
+pe cota de 9% - sectiunea colectata are rd.11 (livrari cu 9%), dar cea
+deductibila are doar rd.24 (21%) si rd.25 (11%), deci un cod de cumparari
+cu cota dedusa 9% nu poate fi mapat pe nimic. Nu s-a "reparat" pe ghicite;
+motorul raporteaza cazul ca refuz explicit, cu motiv. De confirmat fata de
+formularul D300 in vigoare daca rd.25 acopera si 9% sau daca lipseste o
+linie din catalog.
+
 ## Cuprins
 
 1. [Secventa de pornire](#1-secventa-de-pornire)
@@ -1029,6 +1055,10 @@ promote_to_productie (doar pe mediul testare): verifica
 | POST | `/api/clients` | `add_client` |
 | DELETE | `/api/clients/<int:cid>` | `del_client` |
 | POST | `/api/assignments` | `assign_client` |
+| POST | `/api/cod-mapari` | `save_cod_mapare` |
+| GET | `/api/cod-mapari` | `list_cod_mapari` |
+| DELETE | `/api/cod-mapari/<int:mapping_id>` | `sterge_cod_mapare` |
+| POST | `/api/cod-mapari/sugestii` | `sugestii_cod_mapare` |
 | GET | `/api/sabloane/jurnal/<directie>` | `descarca_sablon_jurnal` |
 | POST | `/api/reconciliations` | `new_reconciliation` |
 | GET | `/api/reconciliations/<int:rid>` | `get_reconciliation` |
@@ -1049,6 +1079,24 @@ activeze plata modulul.
 descarca_sablon_jurnal: require() -> valideaza directie (404 daca
   invalida) -> build_model_template(directie)  [etva/importer/model.py]
   -> Response (xlsx)
+
+sugestii_cod_mapare: require("reconciliere.creare") -> firm_conn ->
+  _client_id_pentru_sugestii(ident, ...) (client obligatoriu doar pentru
+  firmele de contabilitate, ca la save_cod_mapare) -> doua moduri:
+  - request.is_json (din cardul "Coduri TVA neclasificate"): valideaza
+    lista `coduri` (max _MAX_CODURI_SUGESTII, directie + cod obligatorii,
+    sume numerice) si o foloseste ca atare
+  - multipart (din butonul de sub textarea "Corectie mapare coduri TVA
+    firma"): per fisier _save_upload -> parse_saga_journal /
+    parse_model_journal -> cod_mappings.load_for_client (maparile deja
+    confirmate se scad din lista) -> classify_legend(...) doar pentru
+    lista `unmapped`; fisierele temporare se sterg in `finally` (spre
+    deosebire de new_reconciliation, care le pastreaza)
+  -> cod_sugestii.sugereaza_lot(...)  [etva/cod_sugestii.py, §5t] ->
+     audit.log(..., "cod_mapare.sugestie") -> jsonify({sugestii,
+     valid_lines})
+  NU scrie nimic in cod_mappings - persistenta ramane exclusiv pe
+  POST /api/cod-mapari, dupa "Confirma".
 
 new_reconciliation (cel mai complex handler):
   require("reconciliere.creare") -> firm_conn(firm_id) ->
@@ -1430,10 +1478,48 @@ perioade_cu_risc_ridicat(conn) -> toate perioadele (orice client) cu
 obtine_perioada(conn, client_id, perioada) -> un rand, sau None
 ```
 
+### 5t. etva/cod_sugestii.py (stratul 2 - opinia platformei, pur)
+
+```
+cota_dedusa(baza, tva) -> cota "lipita" de cea mai apropiata cota cunoscuta
+  (toleranta 0.3 pp, pentru rotunjirile per factura); None cand baza <= 0
+
+citeste_semnale(directie, eticheta, baza, tva) -> Semnale (dataclass):
+  cota + flaguri de text (scutit, intracomunitar, taxare_inversa,
+  simplificare, bunuri, servicii, export, distanta, regularizare,
+  la_incasare). Deliberat MAI STRICT decat suggest_line pe TVA la incasare:
+  "beneficiarul obligat la plata TVA" e taxare inversa, nu TVA neexigibila
+  (suggest_line il confunda prin testul lui pe "la plata", motiv pentru
+  care astfel de coduri ajung neclasificate si deci aici)
+
+sugereaza(direction, cod, label, base, vat) -> dict:
+  citeste_semnale -> _potriveste (prima regula din _REGULI care se
+  potriveste castiga; ordinea conteaza) -> filtreaza linia propusa si
+  alternativele prin valid_lines_for_direction() [etva/d300.py] ->
+  {line_no|None, incredere, motiv, alternative, regula, cota, ...}
+  line_no None = REFUZ motivat (TVA la incasare, cota fara linie, TVA 0
+  fara indicii) - deliberat, nu o sugestie slaba
+
+sugereaza_lot(coduri) -> list (`coduri` are exact forma listei `unmapped`
+  intoarsa de classify_legend, ca sa poata fi pasata direct)
+
+reguli_invalide() -> regulile care ar propune o linie inexistenta sau din
+  sectiunea opusa; trebuie sa fie mereu goala - verificata in
+  tests/test_cod_sugestii.py, NU la import, ca o greseala de catalog sa nu
+  poata impiedica pornirea aplicatiei
+```
+
+Modul pur, fara I/O si fara acces la baza - singurele importuri sunt
+`D300_LINES`, `valid_lines_for_direction` si `_norm` din `etva/d300.py`
+(`_norm` reutilizat deliberat: o copie separata a normalizarii de
+diacritice ar diverge tacut de regulile stratului 1, care citesc aceleasi
+etichete).
+
 **Observatii structurale**: `etva/d300.py` e un hub - importat de
 `advisor.py`, `engine.py` (doar `D300_LINES`) si
-`importer/anaf_p300_json.py` (doar `D300_LINES`), dar `suggest_line`/
-`classify_legend` sunt apelate exclusiv din `portal/app.py`.
+`importer/anaf_p300_json.py` (doar `D300_LINES`) si `cod_sugestii.py`
+(§5t), dar `suggest_line`/`classify_legend` sunt apelate exclusiv din
+`portal/app.py`.
 `importer/model.py` traverseaza intotdeauna `importer/saga.py` (helper-e
 reutilizate), chiar si cand utilizatorul foloseste modelul e-TVA, nu SAGA.
 

@@ -371,6 +371,32 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
       <div class="field"><label for="codMapare">Corectie mapare coduri TVA firma (JSON, optional — pentru coduri pe care aplicatia nu le poate clasifica automat)</label>
         <textarea id="codMapare" rows="2"
           placeholder='{"10":"3", "14":"29.1"}'></textarea></div>
+      <div class="field" id="campSugestiiMapare">
+        <div class="actiuni" style="margin:0">
+          <button class="secundar" id="btnSugestiiFormular"
+                  onclick="cereSugestiiDinFormular(this)">Cere opinia platformei pentru codurile neclasificate</button>
+        </div>
+        <p class="sub" style="margin:6px 0 0">Optional, si poate fi sarit: analizeaza jurnalele incarcate mai sus,
+          iti arata codurile pe care aplicatia nu le poate clasifica automat si propune pentru fiecare o linie din
+          D300, cu motivul afisat. Nimic nu se salveaza pana nu apesi „Confirma".</p>
+        <div id="panouSugestiiFormular" style="display:none;margin-top:12px">
+          <p class="sub" id="sugestiiFormularStare"></p>
+          <table id="sugestiiFormularTabel"></table>
+          <div id="sugestiiFormularActiuniSugestii" style="display:none;margin-top:12px">
+            <div class="actiuni" style="margin:0">
+              <button class="secundar"
+                      onclick="confirmaToateSugestiile('sugestiiFormular', this)">Confirma toate liniile alese</button>
+            </div>
+            <p class="sub" style="margin:6px 0 0">Sugestiile sunt orientative si nu inlocuiesc verificarea ta:
+              raspunderea pentru ce se declara ramane a firmei/contabilului.</p>
+          </div>
+          <div id="sugestiiFormularDupaConfirmare" style="display:none;margin-top:10px">
+            <p class="sub">Maparile confirmate se aplica automat la rularile urmatoare ale acestui client —
+              apasa „Ruleaza reconcilierea" ca sa vezi raportul cu ele aplicate.</p>
+          </div>
+          <p id="sugestiiFormularErr" class="eroare"></p>
+        </div>
+      </div>
       <div class="actiuni">
         <button id="btnRuleaza" onclick="ruleazaReconciliere()">Ruleaza reconcilierea</button>
       </div>
@@ -392,11 +418,25 @@ td.delta-poz { color: var(--warn); font-weight: 600; }
         din D300 (situatii legal ambigue — nu se ghiceste). Alege linia corecta pentru fiecare cod
         si apasa „Confirma" — maparea ramane valabila automat la reconcilierile viitoare ale
         acestui client.</p>
-      <table id="tabelNeclasificate"></table>
-      <div class="actiuni" id="actiuniMapareConfirmata" style="display:none;margin-top:12px">
+      <div class="actiuni" style="margin:0 0 12px">
+        <button class="secundar" id="btnSugestiiRezultate"
+                onclick="cereSugestii('neclasificate', this)">Cere opinia platformei</button>
+        <span class="sub">Optional — platforma propune o linie pentru fiecare cod, cu motivul la vedere.</span>
+      </div>
+      <table id="neclasificateTabel"></table>
+      <div id="neclasificateActiuniSugestii" style="display:none;margin-top:12px">
+        <div class="actiuni" style="margin:0">
+          <button class="secundar"
+                  onclick="confirmaToateSugestiile('neclasificate', this)">Confirma toate liniile alese</button>
+        </div>
+        <p class="sub" style="margin:6px 0 0">Sugestiile sunt orientative si nu inlocuiesc verificarea ta:
+          raspunderea pentru ce se declara ramane a firmei/contabilului. Codurile la care platforma nu a
+          putut decide au ramas cu lista goala — acolo alegerea e integral a ta.</p>
+      </div>
+      <div class="actiuni" id="neclasificateDupaConfirmare" style="display:none;margin-top:12px">
         <button class="secundar" onclick="reiaVerificareSiScroleaza()">Reia verificarea cu mapările confirmate</button>
       </div>
-      <p id="mapareErr" class="eroare"></p>
+      <p id="neclasificateErr" class="eroare"></p>
     </div>
     <div class="card" id="cardFacturiSuspecte" style="display:none">
       <h3>Facturi de verificat</h3>
@@ -796,18 +836,25 @@ function pasiiTurului() {
       'PDF/JSON) cu alte denumiri de coloane decat cele asteptate.'});
   pasi.push({view: 'dashboard', sel: '#codMapare', titlu: 'Corectie mapare coduri TVA firma',
     text: 'Optional - foloseste-l doar daca preferi sa scrii direct JSON. Metoda ' +
-      'recomandata e picker-ul din ecranul de Rezultate, la cardul "Coduri TVA ' +
-      'neclasificate" - alegi linia dintr-o lista, fara sa mai tastezi nimic.'});
+      'recomandata e butonul de mai jos, sau picker-ul din ecranul de Rezultate ' +
+      '- alegi linia dintr-o lista, fara sa mai tastezi nimic.'});
+  pasi.push({view: 'dashboard', sel: '#campSugestiiMapare', titlu: 'Opinia platformei despre mapare',
+    text: 'Optional si poate fi sarit. Analizeaza jurnalele incarcate mai sus si iti ' +
+      'arata codurile pe care aplicatia nu le clasifica automat, cu o propunere de ' +
+      'linie D300 pentru fiecare si motivul din spate. Confirmarea ramane a ta - ' +
+      'nimic nu se salveaza pana nu apesi "Confirma".'});
   pasi.push({view: 'dashboard', sel: '#btnRuleaza', titlu: 'Ruleaza reconcilierea',
     text: 'Cand ai fisierele incarcate, apesi aici. Rezultatul apare imediat, cu ' +
       'toate diferentele explicate clar' + (poateExport ? ' si un buton de export Excel.' : '.')});
   if (areRezultate) {
     pasi.push({view: 'rezultate', sel: '#registruTotal', titlu: 'Rezultatul reconcilierii',
       text: 'Aici vezi totalurile si numarul de diferente dintr-o privire.'});
-    pasi.push({view: 'rezultate', sel: '#tabelNeclasificate', titlu: 'Coduri TVA neclasificate',
+    pasi.push({view: 'rezultate', sel: '#cardNeclasificate', titlu: 'Coduri TVA neclasificate',
       text: 'Cateva coduri din jurnalul tau pot ramane neclasificate (situatii legal ' +
         'ambigue). Alegi linia corecta din lista pentru fiecare si apesi "Confirma" - ' +
-        'maparea ramane valabila automat si la reconcilierile viitoare ale acestui client.'});
+        'maparea ramane valabila automat si la reconcilierile viitoare ale acestui client. ' +
+        'Butonul "Cere opinia platformei" completeaza in prealabil liniile pe care le ' +
+        'considera corecte, cu motivul afisat, ca sa ai de la ce porni.'});
     pasi.push({view: 'rezultate', sel: '#tabelSumar', titlu: 'Sumar pe linii D300',
       text: 'Valorile sugerate pentru decont, linie cu linie - de la firma acolo unde ' +
         'corespunde cu ANAF, de la ANAF acolo unde exista diferenta.'});
@@ -1231,32 +1278,259 @@ async function reiaVerificareSiScroleaza() {
   }
 }
 
-let ultimulUnmapped = [], ultimulValidLines = {};
+/* ---------- Picker de mapare pentru codurile TVA neclasificate ----------
+   Un singur component, folosit din DOUA ecrane: cardul "Coduri TVA
+   neclasificate" din Rezultate (codurile vin din raspunsul reconcilierii)
+   si panoul de sub "Corectie mapare coduri TVA firma" din formular
+   (codurile vin din analiza jurnalelor, inainte de orice rulare). Doua
+   implementari paralele ar diverge la prima modificare si utilizatorul ar
+   vedea doua comportamente diferite pentru acelasi pas. */
+const pickere = {};
 
-function opDropdown(directie) {
-  const linii = ultimulValidLines[directie] || {};
-  return '<option value="">— alege linia D300 —</option>' +
-    Object.entries(linii).map(([ln, lbl]) => `<option value="${ln}">${ln} — ${lbl}</option>`).join('');
+function esc(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-async function confirmaMapare(i) {
-  mapareErr.textContent = '';
-  const u = ultimulUnmapped[i];
-  const sel = document.getElementById('selMap' + i);
-  if (!sel.value) return;
-  const r = await api('/api/cod-mapari', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({client_id: firmaDirecta ? null : +selClient.value,
-                          direction: u.direction, cod: u.cod, line_no: sel.value})});
-  if (!r.ok) {
-    const body = await r.json();
-    mapareErr.textContent = body.error || 'Maparea nu a putut fi salvata.';
+// Etichetele de linii vin dintr-un set Python, deci intr-o ordine
+// arbitrara - fara sortare, lista derulanta arata rd.22.1 inaintea lui
+// rd.20, ceea ce face alegerea manuala inutil de grea.
+function _cmpLinii(a, b) {
+  const parti = ln => ln.replace('+', '.').split('.').map(Number);
+  const pa = parti(a), pb = parti(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+function _cheieCod(u) { return u.direction + '|' + u.cod; }
+
+function initPicker(id, coduri, validLines) {
+  pickere[id] = {coduri: coduri || [], validLines: validLines || {},
+                 sugestii: {}, eroare: '', gata: false};
+  randeazaPicker(id);
+}
+
+function _dropdown(id, idx, u) {
+  const p = pickere[id];
+  const linii = p.validLines[u.direction] || {};
+  const sug = p.sugestii[_cheieCod(u)];
+  // La incredere scazuta platforma spune explicit ca nu poate decide -
+  // atunci nu preselectam nimic, ca alegerea sa ramana vizibil a omului.
+  const preselectat = sug && sug.line_no
+    && (sug.incredere === 'ridicata' || sug.incredere === 'medie')
+    ? sug.line_no : '';
+  return `<select id="${id}Sel${idx}">` +
+    '<option value="">— alege linia D300 —</option>' +
+    Object.keys(linii).sort(_cmpLinii).map(ln =>
+      `<option value="${esc(ln)}"${ln === preselectat ? ' selected' : ''}>` +
+      `${esc(ln)} — ${esc(linii[ln])}</option>`).join('') +
+    '</select>';
+}
+
+const _CHIP_INCREDERE = {ridicata: 'ok', medie: 'atentie', scazuta: 'neutru'};
+
+function _celulaSugestie(id, u) {
+  const sug = pickere[id].sugestii[_cheieCod(u)];
+  if (!sug) return '<td class="sub">—</td>';
+  const chip = sug.line_no
+    ? `<span class="chip ${_CHIP_INCREDERE[sug.incredere] || 'neutru'}">` +
+      `rd.${esc(sug.line_no)} · incredere ${esc(sug.incredere)}</span>`
+    : '<span class="chip neutru">fara sugestie</span>';
+  const alt = (sug.alternative || []).map(a =>
+    `<div class="sub">Alternativa rd.${esc(a.line_no)}: ${esc(a.motiv)}</div>`
+  ).join('');
+  return `<td class="sugestie">${chip}<div class="sub">${esc(sug.motiv)}</div>${alt}</td>`;
+}
+
+function randeazaPicker(id) {
+  const p = pickere[id];
+  const tabel = document.getElementById(id + 'Tabel');
+  if (!p || !tabel) return;
+  const cuSugestii = p.gata;
+  if (!p.coduri.length) {
+    // Fara coduri nu are ce randa - un tabel doar cu antet ar arata a
+    // eroare in panoul din formular, inainte sa vina raspunsul.
+    tabel.innerHTML = '';
+    const golActiuni = document.getElementById(id + 'ActiuniSugestii');
+    if (golActiuni) golActiuni.style.display = 'none';
+    const golErr = document.getElementById(id + 'Err');
+    if (golErr) golErr.textContent = p.eroare;
     return;
   }
-  document.getElementById('btnMap' + i).textContent = 'Salvat';
-  document.getElementById('btnMap' + i).disabled = true;
+  tabel.innerHTML =
+    '<thead><tr><th>Cod</th><th>Denumire (din jurnal)</th><th>Directie</th>' +
+    '<th class="num">Baza</th><th class="num">TVA</th>' +
+    (cuSugestii ? '<th>Sugestia platformei</th>' : '') +
+    '<th>Mapeaza pe linia D300</th><th></th></tr></thead><tbody>' +
+    p.coduri.map((u, i) =>
+      `<tr><td class="cod">${esc(u.cod)}</td><td>${esc(u.label)}</td>` +
+      `<td>${esc(u.direction)}</td>` +
+      `<td class="num">${num(u.base)}</td><td class="num">${num(u.vat)}</td>` +
+      (cuSugestii ? _celulaSugestie(id, u) : '') +
+      `<td>${_dropdown(id, i, u)}</td>` +
+      `<td><button class="secundar" id="${id}Btn${i}" ` +
+      `onclick="confirmaMapare('${id}', ${i})">Confirma</button></td></tr>`
+    ).join('') + '</tbody>';
+  const err = document.getElementById(id + 'Err');
+  if (err) err.textContent = p.eroare;
+  const actiuni = document.getElementById(id + 'ActiuniSugestii');
+  if (actiuni) actiuni.style.display = cuSugestii ? '' : 'none';
+}
+
+function _clientPentruMapare() {
+  return firmaDirecta ? null : +selClient.value;
+}
+
+// Cere opinia platformei pentru coduri deja cunoscute in browser (ecranul
+// de Rezultate). Panoul din formular are propria functie, fiindca acolo
+// lista de coduri nici nu exista inca - vezi cereSugestiiDinFormular.
+async function cereSugestii(id, buton) {
+  const p = pickere[id];
+  p.eroare = '';
+  const initial = buton.textContent;
+  buton.disabled = true; buton.textContent = 'Se analizeaza...';
+  try {
+    const r = await api('/api/cod-mapari/sugestii', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({client_id: _clientPentruMapare(),
+                            coduri: p.coduri})});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      p.eroare = body.error || 'Sugestiile nu au putut fi generate.';
+      randeazaPicker(id);
+      return;
+    }
+    aplicaSugestii(id, body);
+  } catch (e) {
+    p.eroare = 'A aparut o eroare la generarea sugestiilor. Incearca din nou.';
+    randeazaPicker(id);
+  } finally {
+    buton.disabled = false; buton.textContent = initial;
+  }
+}
+
+// Varianta din formularul de reconciliere: aici lista codurilor
+// neclasificate nici nu exista inca, asa ca jurnalele deja alese se trimit
+// la server DOAR pentru analiza - nu se creeaza nicio reconciliere si nu e
+// nevoie de decontul ANAF.
+async function cereSugestiiDinFormular(buton) {
+  panouSugestiiFormular.style.display = '';
+  sugestiiFormularErr.textContent = '';
+  sugestiiFormularStare.textContent = '';
+  sugestiiFormularDupaConfirmare.style.display = 'none';
+  initPicker('sugestiiFormular', [], {});
+  const fisiere = [...fisierVanzari.files, ...fisierCumparari.files];
+  if (!fisiere.length) {
+    sugestiiFormularErr.textContent = 'Incarca intai cel putin un jurnal '
+      + '(de vanzari sau de cumparari).';
+    return;
+  }
+  if (!firmaDirecta && !selClient.value) {
+    sugestiiFormularErr.textContent = 'Alege intai clientul pentru care '
+      + 'ceri sugestiile.';
+    return;
+  }
+  const initial = buton.textContent;
+  buton.disabled = true; buton.textContent = 'Se analizeaza jurnalele...';
+  sugestiiFormularStare.textContent = 'Se analizeaza jurnalele...';
+  try {
+    const fd = new FormData();
+    if (!firmaDirecta) fd.append('client_id', selClient.value);
+    fd.append('format_jurnal', formatJurnal());
+    for (const f of fisiere) fd.append('company_file', f);
+    const r = await api('/api/cod-mapari/sugestii', {method: 'POST', body: fd});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      sugestiiFormularStare.textContent = '';
+      sugestiiFormularErr.textContent = body.error
+        || 'Sugestiile nu au putut fi generate.';
+      return;
+    }
+    const sugestii = body.sugestii || [];
+    if (!sugestii.length) {
+      sugestiiFormularStare.textContent = 'Toate codurile din jurnalele '
+        + 'incarcate au putut fi clasificate automat — nu ai nimic de mapat '
+        + 'inainte de rulare.';
+      return;
+    }
+    sugestiiFormularStare.textContent = sugestii.length + ' cod(uri) pe care '
+      + 'aplicatia nu le clasifica automat. Verifica sugestiile si confirma '
+      + 'ce ti se pare corect — restul le poti lasa pentru ecranul de '
+      + 'rezultate.';
+    // Raspunsul poarta chiar campurile cod/direction/label/base/vat, deci e
+    // si lista de coduri a picker-ului, si sursa sugestiilor.
+    initPicker('sugestiiFormular', sugestii, body.valid_lines || {});
+    aplicaSugestii('sugestiiFormular', body);
+  } catch (e) {
+    sugestiiFormularStare.textContent = '';
+    sugestiiFormularErr.textContent = 'A aparut o eroare la analiza '
+      + 'jurnalelor. Incearca din nou.';
+  } finally {
+    buton.disabled = false; buton.textContent = initial;
+  }
+}
+
+function aplicaSugestii(id, body) {
+  const p = pickere[id];
+  p.validLines = body.valid_lines || p.validLines;
+  p.sugestii = {};
+  for (const s of body.sugestii || []) p.sugestii[_cheieCod(s)] = s;
+  p.gata = true;
+  randeazaPicker(id);
+}
+
+async function confirmaMapare(id, i) {
+  const p = pickere[id];
+  p.eroare = '';
+  const u = p.coduri[i];
+  const sel = document.getElementById(id + 'Sel' + i);
+  const err = document.getElementById(id + 'Err');
+  if (!sel.value) {
+    if (err) err.textContent = 'Alege intai o linie D300 pentru acest cod.';
+    return false;
+  }
+  const sug = p.sugestii[_cheieCod(u)];
+  const r = await api('/api/cod-mapari', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({client_id: _clientPentruMapare(),
+                          direction: u.direction, cod: u.cod,
+                          line_no: sel.value,
+                          sursa: (sug && sug.line_no === sel.value)
+                                 ? 'sugestie' : 'manual'})});
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    if (err) err.textContent = body.error || 'Maparea nu a putut fi salvata.';
+    return false;
+  }
+  const btn = document.getElementById(id + 'Btn' + i);
+  btn.textContent = 'Salvat'; btn.disabled = true;
   sel.disabled = true;
-  actiuniMapareConfirmata.style.display = '';
+  const dupa = document.getElementById(id + 'DupaConfirmare');
+  if (dupa) dupa.style.display = '';
+  return true;
+}
+
+// Confirma dintr-o data DOAR randurile care au deja o linie selectata -
+// deci sugestiile preselectate (incredere ridicata/medie) si alegerile
+// manuale facute intre timp. Cele lasate goale de platforma raman
+// neatinse: nimic nu se salveaza fara ca cineva sa fi ales linia.
+async function confirmaToateSugestiile(id, buton) {
+  const p = pickere[id];
+  const initial = buton.textContent;
+  buton.disabled = true; buton.textContent = 'Se salveaza...';
+  try {
+    for (let i = 0; i < p.coduri.length; i++) {
+      const sel = document.getElementById(id + 'Sel' + i);
+      if (!sel || sel.disabled || !sel.value) continue;
+      if (!await confirmaMapare(id, i)) break;
+    }
+  } finally {
+    buton.disabled = false; buton.textContent = initial;
+  }
 }
 
 function afiseazaRezultate(b) {
@@ -1285,22 +1559,11 @@ function afiseazaRezultate(b) {
            <div class="sub-val" id="subValFacturiSuspecte">se cauta...</div></div>`
       : '');
 
-  ultimulUnmapped = b.unmapped || [];
-  ultimulValidLines = b.valid_lines || {};
-  mapareErr.textContent = '';
-  actiuniMapareConfirmata.style.display = 'none';
-  if (ultimulUnmapped.length) {
+  const neclasificate = b.unmapped || [];
+  neclasificateDupaConfirmare.style.display = 'none';
+  if (neclasificate.length) {
     cardNeclasificate.style.display = '';
-    tabelNeclasificate.innerHTML =
-      '<thead><tr><th>Cod</th><th>Denumire (din jurnal)</th><th>Directie</th>' +
-      '<th class="num">Baza</th><th class="num">TVA</th><th>Mapeaza pe linia D300</th>' +
-      '<th></th></tr></thead><tbody>' +
-      ultimulUnmapped.map((u, i) =>
-        `<tr><td class="cod">${u.cod}</td><td>${u.label}</td><td>${u.direction}</td>` +
-        `<td class="num">${num(u.base)}</td><td class="num">${num(u.vat)}</td>` +
-        `<td><select id="selMap${i}">${opDropdown(u.direction)}</select></td>` +
-        `<td><button class="secundar" id="btnMap${i}" onclick="confirmaMapare(${i})">Confirma</button></td></tr>`
-      ).join('') + '</tbody>';
+    initPicker('neclasificate', neclasificate, b.valid_lines || {});
   } else {
     cardNeclasificate.style.display = 'none';
   }
