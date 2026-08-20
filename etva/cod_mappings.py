@@ -8,6 +8,14 @@ mapare coduri TVA firma"): acela a produs exact bug-ul care a motivat acest
 modul (o mapare gresita, ghicita din memorie, fara nicio validare) -
 persistenta se intampla doar prin save_mapping(), apelat din picker dupa
 ce utilizatorul alege dintr-o lista deja restransa la liniile valide.
+
+Din 2026-08-20, linia poate veni PRESELECTATA in picker de motorul de
+sugestii (etva/cod_sugestii.py). Asta nu slabeste regula de mai sus:
+sugestia e vizibila, motivata in scris, restransa la aceleasi linii valide
+si nu ajunge in tabela decat prin acelasi save_mapping(), dupa un click
+explicit pe "Confirma". Ce ramane interzis e scrierea automata a unei
+mapari pe care nu a vazut-o nimeni - la incredere scazuta motorul nici nu
+preselecteaza, tocmai ca alegerea sa ramana vizibil a utilizatorului.
 """
 from datetime import datetime, timezone
 

@@ -29,7 +29,7 @@ from portal import risc_fiscal_report
 from etva import db as fdb
 from etva import dbcompat
 from etva import pg
-from etva import audit, clients, cod_mappings
+from etva import audit, clients, cod_mappings, cod_sugestii
 from etva import anaf_cui
 from etva import anaf_bilant
 from etva import risc_fiscal
@@ -4025,8 +4025,15 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
                                       ident["username"])
         except cod_mappings.MappingError as e:
             return jsonify({"error": str(e)}), 400
+        # `sursa` distinge o mapare aleasa din lista goala de una acceptata
+        # dupa sugestia platformei (etva/cod_sugestii.py). Nu are coloana
+        # proprie - intra in jurnalul de audit, care e oricum append-only -
+        # ca sa se poata masura ulterior cat de des e urmata sugestia, fara
+        # o migrare de schema.
+        sursa = data.get("sursa")
+        sursa = sursa if sursa in ("sugestie", "manual") else "manual"
         audit.log(fc, ident["username"], "cod_mapare.confirmare", "cod_mapping",
-                 f"{client_id}:{direction}:{cod}")
+                 f"{client_id}:{direction}:{cod}:{sursa}")
         return jsonify({"ok": True})
 
     @app.get("/api/cod-mapari")
@@ -4049,6 +4056,128 @@ def create_app(data_dir: str, enable_backup_scheduler: bool = False,
         path = os.path.join(upload_dir, secrets.token_hex(8) + "_" + f.filename)
         f.save(path)
         return path
+
+    # Numarul de coduri neclasificate dintr-o luna e de ordinul zecilor;
+    # plafonul opreste doar cererile absurde, nu un caz real.
+    _MAX_CODURI_SUGESTII = 200
+
+    def _client_id_pentru_sugestii(ident, citeste):
+        """(client_id, eroare). Aceeasi regula ca la salvarea maparii: o
+        firma 'directa' lucreaza pe scope-ul ei (None), una de
+        contabilitate trebuie sa spuna pentru ce client cere."""
+        if ident["firm_tip"] == pdb.FIRM_TIP_DIRECT:
+            return None, None
+        brut = citeste()
+        if brut is None or str(brut).strip() == "":
+            return None, "Alege intai clientul pentru care ceri sugestiile."
+        try:
+            return int(brut), None
+        except (TypeError, ValueError):
+            return None, "Client invalid."
+
+    # Opinia platformei despre codurile TVA pe care clasificatorul automat
+    # le-a lasat neclasificate (etva/cod_sugestii.py). Doua moduri de
+    # intrare, acelasi raspuns - ca cele doua ecrane care il folosesc sa nu
+    # diverga in timp:
+    #  - JSON, din cardul "Coduri TVA neclasificate": browserul are deja
+    #    lista din rezultatul reconcilierii si o trimite ca atare;
+    #  - multipart, din formularul de reconciliere: jurnalele se parseaza
+    #    aici DOAR ca sa aflam lista, fara sa se creeze vreo reconciliere
+    #    si fara sa fie nevoie de decontul ANAF.
+    # Ruta nu scrie nimic in cod_mappings: maparea se persista tot prin
+    # POST /api/cod-mapari, dupa ce utilizatorul apasa "Confirma".
+    @app.post("/api/cod-mapari/sugestii")
+    @require("reconciliere.creare")
+    def sugestii_cod_mapare(ident):
+        fc = firm_conn(ident["firm_id"])
+
+        if request.is_json:
+            data = request.get_json(force=True)
+            client_id, eroare = _client_id_pentru_sugestii(
+                ident, lambda: data.get("client_id"))
+            if eroare:
+                return jsonify({"error": eroare}), 400
+            brute = data.get("coduri") or []
+            if not isinstance(brute, list) or not brute:
+                return jsonify({"error":
+                    "Lipseste lista codurilor neclasificate."}), 400
+            if len(brute) > _MAX_CODURI_SUGESTII:
+                return jsonify({"error":
+                    "Prea multe coduri intr-o singura cerere."}), 400
+            coduri = []
+            for c in brute:
+                if not isinstance(c, dict):
+                    return jsonify({"error": "Cod invalid in lista."}), 400
+                directie = c.get("direction")
+                cod = str(c.get("cod") or "").strip()
+                if directie not in ("vanzari", "cumparari") or not cod:
+                    return jsonify({"error":
+                        "Fiecare cod are nevoie de directie si de cod."}), 400
+                try:
+                    baza = float(c.get("base") or 0)
+                    tva = float(c.get("vat") or 0)
+                except (TypeError, ValueError):
+                    return jsonify({"error":
+                        "Sume invalide pentru codul '%s'." % cod}), 400
+                coduri.append({"direction": directie, "cod": cod,
+                              "label": str(c.get("label") or ""),
+                              "base": baza, "vat": tva})
+        else:
+            client_id, eroare = _client_id_pentru_sugestii(
+                ident, lambda: request.form.get("client_id"))
+            if eroare:
+                return jsonify({"error": eroare}), 400
+            format_jurnal = request.form.get("format_jurnal", "saga")
+            company_files = request.files.getlist("company_file")
+            if not company_files:
+                return jsonify({"error":
+                    "Incarca intai cel putin un jurnal (de vanzari sau de "
+                    "cumparari)."}), 400
+            persisted = cod_mappings.load_for_client(fc, client_id)
+            coduri = []
+            cai = []
+            try:
+                for f in company_files:
+                    cale = _save_upload(f)
+                    cai.append(cale)
+                    if format_jurnal == "model":
+                        journal = parse_model_journal(cale)
+                        base_overrides = {cod: cod for cod in journal.legend
+                                         if cod in D300_LINES}
+                    else:
+                        journal = parse_saga_journal(cale)
+                        base_overrides = {}
+                    persisted_dir = {cod: ln for (d, cod), ln in persisted.items()
+                                    if d == journal.direction}
+                    _, neclasificate = classify_legend(
+                        journal.direction, journal.legend,
+                        {**base_overrides, **persisted_dir})
+                    coduri.extend(neclasificate)
+            except NotSagaFormat as e:
+                return jsonify({"error": str(e) + " " + _HINT_MODEL}), 400
+            except NotModelFormat as e:
+                return jsonify({"error": str(e)}), 400
+            except MappingSectionError as e:
+                return jsonify({"error": "; ".join(e.errors)}), 400
+            finally:
+                # Spre deosebire de calea de reconciliere, aici fisierul nu
+                # mai e nevoie dupa parsare - nu lasam analize "de proba" sa
+                # umple uploads/.
+                for cale in cai:
+                    try:
+                        os.remove(cale)
+                    except OSError:
+                        pass
+
+        sugestii = cod_sugestii.sugereaza_lot(coduri)
+        audit.log(fc, ident["username"], "cod_mapare.sugestie", "cod_mapping",
+                 f"{client_id}:{len(sugestii)}")
+        return jsonify({
+            "sugestii": sugestii,
+            "valid_lines": {
+                "vanzari": valid_lines_for_direction("vanzari"),
+                "cumparari": valid_lines_for_direction("cumparari")}})
+
 
     def _persist(fc, username, client_id, period, comp_rows, anaf_rows):
         rid = dbcompat.insert_id(

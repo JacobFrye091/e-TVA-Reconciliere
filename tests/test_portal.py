@@ -1965,6 +1965,161 @@ def test_cod_mapari_rejects_cross_section_line(app):
     assert r.status_code == 400
 
 
+# ---------- Sugestii de mapare (opinia platformei, etva/cod_sugestii.py) ----
+
+def _client_nou(c, cui="RO999"):
+    return c.post("/api/clients", json={"cui": cui, "name": "Client X",
+                                        "gdpr_confirmat": True}).get_json()["id"]
+
+
+def test_sugestii_din_lista_trimisa_de_browser(app):
+    # Modul folosit de cardul "Coduri TVA neclasificate": browserul are deja
+    # lista din rezultatul reconcilierii si o trimite ca atare.
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    r = c.post("/api/cod-mapari/sugestii", json={"client_id": cid, "coduri": [
+        {"direction": "vanzari", "cod": "17",
+         "label": "Livrari intracomunitare de bunuri", "base": 100.0, "vat": 0.0},
+        {"direction": "cumparari", "cod": "14",
+         "label": "Achizitii cu TVA neexigibil", "base": 50.0, "vat": 0.0},
+    ]})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert [s["line_no"] for s in body["sugestii"]] == ["1", None]
+    assert body["sugestii"][0]["incredere"] == "ridicata"
+    # Si refuzul e motivat, nu un rand gol.
+    assert body["sugestii"][1]["motiv"]
+    assert "9" in body["valid_lines"]["vanzari"]
+
+
+def test_sugestiile_nu_persista_nimic_singure(app):
+    # Miezul regulii: platforma propune, dar maparea se scrie doar prin
+    # POST /api/cod-mapari, dupa ce utilizatorul apasa "Confirma".
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    r = c.post("/api/cod-mapari/sugestii", json={"client_id": cid, "coduri": [
+        {"direction": "vanzari", "cod": "17",
+         "label": "Livrari intracomunitare de bunuri", "base": 100.0, "vat": 0.0}]})
+    assert r.status_code == 200
+    assert c.get(f"/api/cod-mapari?client_id={cid}").get_json() == []
+
+
+def test_sugestiile_nu_propun_niciodata_linii_din_sectiunea_opusa(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    coduri = [{"direction": d, "cod": "1", "label": et, "base": 100.0, "vat": v}
+              for d in ("vanzari", "cumparari")
+              for et, v in (("Operatiune neclara", 21.0),
+                           ("Achizitii intracomunitare de bunuri", 0.0),
+                           ("Livrari scutite", 0.0))]
+    body = c.post("/api/cod-mapari/sugestii",
+                  json={"client_id": cid, "coduri": coduri}).get_json()
+    for s in body["sugestii"]:
+        valide = body["valid_lines"][s["direction"]]
+        for linie in ([s["line_no"]] if s["line_no"] else []) + \
+                     [a["line_no"] for a in s["alternative"]]:
+            assert linie in valide
+
+
+def test_sugestii_din_formular_parseaza_jurnalele(app, monkeypatch):
+    # Modul folosit de butonul din formular: jurnalele se analizeaza fara sa
+    # se creeze vreo reconciliere si fara decont ANAF.
+    import portal.app as app_module
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="cumparari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"14": {"label": "Achizitii intracomunitare de bunuri",
+                                          "base": 662.0, "vat": 0.0},
+                                   "2": {"label": "Achizitii taxabile cu cota 21%",
+                                         "base": 100.0, "vat": 21.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    r = c.post("/api/cod-mapari/sugestii", data={
+        "client_id": str(cid), "format_jurnal": "saga",
+        "company_file": (_io.BytesIO(b"placeholder"), "cumparari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    sugestii = r.get_json()["sugestii"]
+    # Codul "2" e clasificat automat de stratul 1, deci nici nu apare aici.
+    assert [s["cod"] for s in sugestii] == ["14"]
+    assert sugestii[0]["line_no"] == "20.1"
+    # Analiza nu creeaza nicio reconciliere - jurnalele se citesc si atat.
+    actiuni = [e["action"] for e in c.get("/api/audit").get_json()]
+    assert "reconciliere.creare" not in actiuni
+    assert "cod_mapare.sugestie" in actiuni
+
+
+def test_sugestii_din_formular_sterg_fisierele_temporare(app, tmp_path,
+                                                        monkeypatch):
+    import os
+    import portal.app as app_module
+
+    def _fake_saga(path):
+        from etva.importer.saga import SagaJournal
+        return SagaJournal(direction="vanzari", company_name="Exemplu Test SRL",
+                           company_cui="RO111", entries=[],
+                           legend={"9": {"label": "Cod ambiguu", "base": 1.0,
+                                         "vat": 0.0}})
+    monkeypatch.setattr(app_module, "parse_saga_journal", _fake_saga)
+
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    uploads = os.path.join(str(tmp_path), "uploads")
+    inainte = set(os.listdir(uploads)) if os.path.isdir(uploads) else set()
+    r = c.post("/api/cod-mapari/sugestii", data={
+        "client_id": str(cid), "format_jurnal": "saga",
+        "company_file": (_io.BytesIO(b"placeholder"), "vanzari.xlsx"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    dupa = set(os.listdir(uploads)) if os.path.isdir(uploads) else set()
+    # O analiza "de proba" nu are voie sa lase fisiere in urma.
+    assert dupa == inainte
+
+
+def test_sugestii_fara_jurnal_si_fara_coduri(app):
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    r = c.post("/api/cod-mapari/sugestii", data={"client_id": str(cid)},
+               content_type="multipart/form-data")
+    assert r.status_code == 400
+    r2 = c.post("/api/cod-mapari/sugestii", json={"client_id": cid, "coduri": []})
+    assert r2.status_code == 400
+
+
+def test_sugestii_cer_client_pentru_firma_de_contabilitate(app):
+    c = app.test_client()
+    inregistreaza(c)
+    r = c.post("/api/cod-mapari/sugestii", json={"coduri": [
+        {"direction": "vanzari", "cod": "1", "label": "orice",
+         "base": 1.0, "vat": 0.0}]})
+    assert r.status_code == 400
+
+
+def test_confirmarea_retine_sursa_in_audit(app):
+    # Fara coloana noua in cod_mappings: sursa (sugestie/manual) intra in
+    # jurnalul de audit, ca sa se poata masura cat de des e urmata sugestia.
+    c = app.test_client()
+    inregistreaza(c)
+    cid = _client_nou(c)
+    r = c.post("/api/cod-mapari", json={
+        "client_id": cid, "direction": "vanzari", "cod": "17",
+        "line_no": "14+15", "sursa": "sugestie"})
+    assert r.status_code == 200
+    intrari = c.get("/api/audit").get_json()
+    confirmari = [e for e in intrari if e["action"] == "cod_mapare.confirmare"]
+    assert confirmari and confirmari[0]["entity_id"].endswith(":sugestie")
+
+
 # ---------- Model e-TVA journal format (alternativa la SAGA) ----------
 
 def _model_bytes(directie, randuri):
